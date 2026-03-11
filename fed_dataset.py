@@ -1,9 +1,11 @@
 """Data partitioning strategies for federated grokking.
 
-Three partition modes, all operating on the training set:
-  - iid:     random equal-sized shards
-  - operand: partition by first operand n (fragments Fourier input structure)
-  - target:  partition by output class f(n,m) mod p (fragments output space)
+Four partition modes, all operating on the training set:
+  - iid:       random equal-sized shards
+  - operand:   partition by first operand n (fragments Fourier input structure)
+  - target:    partition by output class f(n,m) mod p (fragments output space)
+  - dirichlet: Dirichlet(dirichlet_alpha) over target classes — continuously
+               interpolates between IID (alpha→∞) and one class per client (alpha→0)
 
 The test set stays global for server-side evaluation.
 """
@@ -59,6 +61,8 @@ def make_federated_datasets(cfg: FedConfig):
         client_indices = _partition_by_operand(nn_train, p, K)
     elif cfg.partition == "target":
         client_indices = _partition_by_target(y_train_all, p, K)
+    elif cfg.partition == "dirichlet":
+        client_indices = _partition_dirichlet(y_train_all, p, K, cfg.dirichlet_alpha, rng)
     else:
         raise ValueError(f"Unknown partition: {cfg.partition}")
 
@@ -106,3 +110,29 @@ def _partition_by_target(y_train, p, num_clients):
         mask = (y_train % num_clients) == i
         client_indices.append(np.where(mask)[0])
     return client_indices
+
+
+def _partition_dirichlet(y_train, p, num_clients, dirichlet_alpha, rng):
+    """Dirichlet-based non-IID partition over target classes.
+
+    For each class c, sample a proportion vector q ~ Dir(dirichlet_alpha)
+    of length K and allocate that fraction of class-c samples to each client.
+
+    dirichlet_alpha → ∞ : approaches IID
+    dirichlet_alpha → 0 : each client receives samples from ~1 class only
+    Typical values: 0.1 (very non-IID), 0.5, 1.0, 10.0 (near-IID)
+    """
+    client_indices = [[] for _ in range(num_clients)]
+
+    for c in range(p):
+        class_idx = np.where(y_train == c)[0]
+        if len(class_idx) == 0:
+            continue
+        rng.shuffle(class_idx)
+        proportions = rng.dirichlet(np.full(num_clients, dirichlet_alpha))
+        # Convert proportions to cumulative split points
+        splits = (np.cumsum(proportions) * len(class_idx)).astype(int)[:-1]
+        for k, chunk in enumerate(np.split(class_idx, splits)):
+            client_indices[k].extend(chunk.tolist())
+
+    return [np.array(idx) for idx in client_indices]

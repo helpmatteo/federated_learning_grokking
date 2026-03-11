@@ -39,12 +39,21 @@ def make_targets_onehot(labels, p):
 def train(cfg: Config):
     """Run the full training loop. Returns the history dict."""
     torch.manual_seed(cfg.seed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
-    # Data
+    # Data (build one-hots on CPU, then move everything to device)
     x_train, y_train, x_test, y_test = make_dataset(cfg)
     p = cfg.p
     y_train_oh = make_targets_onehot(y_train, p)
     y_test_oh = make_targets_onehot(y_test, p)
+
+    x_train  = x_train.to(device)
+    y_train  = y_train.to(device)
+    y_train_oh = y_train_oh.to(device)
+    x_test   = x_test.to(device)
+    y_test   = y_test.to(device)
+    y_test_oh = y_test_oh.to(device)
 
     # Model
     model = GrokNet(
@@ -52,7 +61,7 @@ def train(cfg: Config):
         hidden_width=cfg.hidden_width,
         output_dim=p,
         activation=cfg.activation,
-    )
+    ).to(device)
 
     optimizer = make_optimizer(model, cfg)
     loss_fn = nn.MSELoss()

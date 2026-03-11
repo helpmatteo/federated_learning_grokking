@@ -13,8 +13,10 @@ class FedConfig(Config):
     local_epochs: int = 5                 # local SGD steps per client per round
     fraction_train: float = 1.0           # fraction of clients selected per round
     partition: Literal[
-        "iid", "operand", "target"
+        "iid", "operand", "target", "dirichlet"
     ] = "iid"
+    dirichlet_alpha: float = 0.5          # concentration param for Dirichlet partition
+                                          # (α→∞: IID, α→0: one class per client)
 
     # Override defaults for federated setting
     hidden_width: int = 128               # slightly overparameterized for FL

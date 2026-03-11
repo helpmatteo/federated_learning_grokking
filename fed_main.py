@@ -28,6 +28,9 @@ from fed_visualize import (
     plot_fed_vs_centralized,
     plot_partition_comparison,
     plot_client_scaling,
+    plot_local_epochs,
+    plot_dirichlet_sweep,
+    plot_participation_sweep,
     load_history,
 )
 
@@ -53,10 +56,12 @@ def parse_args():
     parser.add_argument("--local_epochs", type=int, default=5)
     parser.add_argument("--fraction_train", type=float, default=1.0)
     parser.add_argument("--partition", type=str, default="iid",
-                        choices=["iid", "operand", "target"])
+                        choices=["iid", "operand", "target", "dirichlet"])
+    parser.add_argument("--dirichlet_alpha", type=float, default=0.5,
+                        help="Dirichlet concentration parameter (only used when --partition dirichlet)")
     parser.add_argument("--no_plot", action="store_true")
     parser.add_argument("--sweep", type=str, default=None,
-                        choices=["partition", "num_clients"],
+                        choices=["partition", "num_clients", "local_epochs", "dirichlet", "participation"],
                         help="Run a sweep instead of a single experiment")
     return parser.parse_args()
 
@@ -72,7 +77,7 @@ def build_config(args) -> FedConfig:
         output_dir=args.output_dir, save_weights=args.save_weights,
         num_clients=args.num_clients, num_rounds=args.num_rounds,
         local_epochs=args.local_epochs, fraction_train=args.fraction_train,
-        partition=args.partition,
+        partition=args.partition, dirichlet_alpha=args.dirichlet_alpha,
         _lr_set=args.lr is not None,
         _wd_set=args.weight_decay is not None,
     )
@@ -149,6 +154,78 @@ def sweep_num_clients(base_cfg: FedConfig):
     plot_client_scaling(histories, client_counts, base_cfg.output_dir)
 
 
+def sweep_local_epochs(base_cfg: FedConfig):
+    """Compare grokking dynamics across local epoch counts (IID partition)."""
+    local_epoch_counts = [1, 5, 10, 20, 50]
+    histories = []
+    for le in local_epoch_counts:
+        cfg = FedConfig(
+            p=base_cfg.p, task=base_cfg.task, alpha=base_cfg.alpha,
+            hidden_width=base_cfg.hidden_width, activation=base_cfg.activation,
+            optimizer=base_cfg.optimizer, lr=base_cfg.lr,
+            weight_decay=base_cfg.weight_decay, momentum=base_cfg.momentum,
+            seed=base_cfg.seed, output_dir=base_cfg.output_dir,
+            num_clients=base_cfg.num_clients, num_rounds=base_cfg.num_rounds,
+            local_epochs=le, fraction_train=base_cfg.fraction_train,
+            partition="iid",
+            _lr_set=True, _wd_set=True,
+        )
+        h = single_run(cfg, plot=False)
+        histories.append(h)
+
+    plot_local_epochs(histories, local_epoch_counts, base_cfg.output_dir)
+
+
+def sweep_dirichlet(base_cfg: FedConfig):
+    """Sweep Dirichlet concentration parameter to explore heterogeneity effects."""
+    dirichlet_alphas = [0.1, 0.5, 1.0, 5.0, 100.0]
+    histories = []
+    for da in dirichlet_alphas:
+        cfg = FedConfig(
+            p=base_cfg.p, task=base_cfg.task, alpha=base_cfg.alpha,
+            hidden_width=base_cfg.hidden_width, activation=base_cfg.activation,
+            optimizer=base_cfg.optimizer, lr=base_cfg.lr,
+            weight_decay=base_cfg.weight_decay, momentum=base_cfg.momentum,
+            seed=base_cfg.seed, output_dir=base_cfg.output_dir,
+            num_clients=base_cfg.num_clients, num_rounds=base_cfg.num_rounds,
+            local_epochs=base_cfg.local_epochs, fraction_train=base_cfg.fraction_train,
+            partition="dirichlet", dirichlet_alpha=da,
+            _lr_set=True, _wd_set=True,
+        )
+        h = single_run(cfg, plot=False)
+        histories.append(h)
+
+    plot_dirichlet_sweep(histories, dirichlet_alphas, base_cfg.output_dir)
+
+
+def sweep_participation(base_cfg: FedConfig):
+    """Sweep participation rate on a non-IID partition to reveal heterogeneity effects.
+
+    With full participation (1.0), client gradients cancel and partition is irrelevant.
+    Reducing fraction_train breaks this cancellation and exposes the non-IID structure.
+    Uses the partition specified in base_cfg (default: target).
+    """
+    fractions = [0.2, 0.4, 0.6, 0.8, 1.0]
+    partition = base_cfg.partition if base_cfg.partition != "iid" else "target"
+    histories = []
+    for ft in fractions:
+        cfg = FedConfig(
+            p=base_cfg.p, task=base_cfg.task, alpha=base_cfg.alpha,
+            hidden_width=base_cfg.hidden_width, activation=base_cfg.activation,
+            optimizer=base_cfg.optimizer, lr=base_cfg.lr,
+            weight_decay=base_cfg.weight_decay, momentum=base_cfg.momentum,
+            seed=base_cfg.seed, output_dir=base_cfg.output_dir,
+            num_clients=base_cfg.num_clients, num_rounds=base_cfg.num_rounds,
+            local_epochs=base_cfg.local_epochs, fraction_train=ft,
+            partition=partition, dirichlet_alpha=base_cfg.dirichlet_alpha,
+            _lr_set=True, _wd_set=True,
+        )
+        h = single_run(cfg, plot=False)
+        histories.append(h)
+
+    plot_participation_sweep(histories, fractions, partition, base_cfg.output_dir)
+
+
 def main():
     args = parse_args()
     cfg = build_config(args)
@@ -157,6 +234,12 @@ def main():
         sweep_partition(cfg)
     elif args.sweep == "num_clients":
         sweep_num_clients(cfg)
+    elif args.sweep == "local_epochs":
+        sweep_local_epochs(cfg)
+    elif args.sweep == "dirichlet":
+        sweep_dirichlet(cfg)
+    elif args.sweep == "participation":
+        sweep_participation(cfg)
     else:
         single_run(cfg, plot=not args.no_plot)
 

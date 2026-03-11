@@ -66,6 +66,7 @@ def _cfg_to_fit_config(cfg: FedConfig, server_round: int):
         "seed": cfg.seed,
         "num_clients": cfg.num_clients,
         "partition": cfg.partition,
+        "dirichlet_alpha": cfg.dirichlet_alpha,
         "local_epochs": cfg.local_epochs,
         "lr": cfg.lr,
         "optimizer": cfg.optimizer,
@@ -85,6 +86,7 @@ def _fit_config_to_cfg(config: dict) -> FedConfig:
         seed=int(config["seed"]),
         num_clients=int(config["num_clients"]),
         partition=config["partition"],
+        dirichlet_alpha=float(config["dirichlet_alpha"]),
         local_epochs=int(config["local_epochs"]),
         lr=float(config["lr"]),
         optimizer=config["optimizer"],
@@ -106,14 +108,19 @@ class GrokClient(NumPyClient):
     def fit(self, parameters, config):
         cfg = _fit_config_to_cfg(config)
         p = cfg.p
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Load this client's data partition
+        # Load this client's data partition (build one-hots on CPU first)
         client_data, _, _, _, _ = make_federated_datasets(cfg)
         x_local, y_local = client_data[self.partition_id]
         y_local_oh = make_targets_onehot(y_local, p)
 
+        x_local    = x_local.to(device)
+        y_local    = y_local.to(device)
+        y_local_oh = y_local_oh.to(device)
+
         # Build model and load global weights
-        model = _make_model(cfg)
+        model = _make_model(cfg).to(device)
         state_dict = _ndarrays_to_state_dict(parameters, model)
         model.load_state_dict(state_dict)
 
@@ -150,11 +157,21 @@ class GrokClient(NumPyClient):
 def fed_train(cfg: FedConfig):
     """Run FedAvg via Flower simulation. Returns history dict and final model."""
     torch.manual_seed(cfg.seed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
     # Precompute global test data (for server-side evaluation)
+    # Build one-hots on CPU first, then move all tensors to device
     _, x_train_full, y_train_full, x_test, y_test = make_federated_datasets(cfg)
     y_test_oh = make_targets_onehot(y_test, cfg.p)
     y_train_full_oh = make_targets_onehot(y_train_full, cfg.p)
+
+    x_test        = x_test.to(device)
+    y_test        = y_test.to(device)
+    y_test_oh     = y_test_oh.to(device)
+    x_train_full  = x_train_full.to(device)
+    y_train_full  = y_train_full.to(device)
+    y_train_full_oh = y_train_full_oh.to(device)
 
     # Print partition sizes
     client_data, _, _, _, _ = make_federated_datasets(cfg)
@@ -175,7 +192,7 @@ def fed_train(cfg: FedConfig):
 
     def evaluate_fn(server_round, parameters, config):
         """Centralized evaluation after each aggregation round."""
-        model = _make_model(cfg)
+        model = _make_model(cfg).to(device)
         state_dict = _ndarrays_to_state_dict(parameters, model)
         model.load_state_dict(state_dict)
 
@@ -255,8 +272,10 @@ def fed_train(cfg: FedConfig):
 
     # ── Save results ─────────────────────────────────────────────────────
     os.makedirs(cfg.output_dir, exist_ok=True)
+    dirichlet_suffix = f"_dir{cfg.dirichlet_alpha}" if cfg.partition == "dirichlet" else ""
     tag = (f"fed_{cfg.task}_{cfg.optimizer}_p{cfg.p}_N{cfg.hidden_width}"
-           f"_a{cfg.alpha}_K{cfg.num_clients}_{cfg.partition}")
+           f"_a{cfg.alpha}_K{cfg.num_clients}_le{cfg.local_epochs}"
+           f"_ft{cfg.fraction_train}_{cfg.partition}{dirichlet_suffix}")
     history_path = os.path.join(cfg.output_dir, f"history_{tag}.json")
     with open(history_path, "w") as f:
         json.dump(history, f)
