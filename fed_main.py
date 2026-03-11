@@ -1,7 +1,7 @@
 """Entry point for federated grokking experiments.
 
 Usage examples:
-    # Default: FedAvg with 5 IID clients, GD, 200 rounds
+    # Default: FedAvg with 5 IID clients, GD, 2000 rounds
     python fed_main.py
 
     # Non-IID by operand (fragments Fourier structure)
@@ -22,9 +22,9 @@ Usage examples:
 
 import argparse
 import os
-from fed_config import FedConfig
-from fed_train import fed_train
-from fed_visualize import (
+from federated.config import FedConfig
+from federated.train import fed_train
+from federated.visualize import (
     plot_fed_vs_centralized,
     plot_partition_comparison,
     plot_client_scaling,
@@ -48,7 +48,7 @@ def parse_args():
     parser.add_argument("--weight_decay", type=float, default=None)
     parser.add_argument("--momentum", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output_dir", type=str, default="results")
+    parser.add_argument("--output_dir", type=str, default="results/federated")
     parser.add_argument("--save_weights", action="store_true")
     # FL config
     parser.add_argument("--num_clients", type=int, default=5)
@@ -89,7 +89,7 @@ def single_run(cfg: FedConfig, plot=True):
           f"|  K={cfg.num_clients}")
     print(f"Rounds: {cfg.num_rounds}  |  Local epochs: {cfg.local_epochs}  "
           f"|  Optimizer: {cfg.optimizer}  |  lr={cfg.lr}")
-    print(f"p={cfg.p}  |  N={cfg.hidden_width}  |  α={cfg.alpha}")
+    print(f"p={cfg.p}  |  N={cfg.hidden_width}  |  \u03b1={cfg.alpha}")
     print(f"{'='*60}\n")
 
     history, model = fed_train(cfg)
@@ -97,7 +97,7 @@ def single_run(cfg: FedConfig, plot=True):
     if plot:
         # Try to load centralized baseline for comparison
         central_tag = f"{cfg.task}_{cfg.optimizer}_p{cfg.p}_N{cfg.hidden_width}_a{cfg.alpha}"
-        central_path = os.path.join(cfg.output_dir, f"history_{central_tag}.json")
+        central_path = os.path.join("results/centralized", f"history_{central_tag}.json")
         if os.path.exists(central_path):
             central_history = load_history(central_path)
             tag = f"{cfg.partition}_K{cfg.num_clients}"
@@ -199,12 +199,7 @@ def sweep_dirichlet(base_cfg: FedConfig):
 
 
 def sweep_participation(base_cfg: FedConfig):
-    """Sweep participation rate on a non-IID partition to reveal heterogeneity effects.
-
-    With full participation (1.0), client gradients cancel and partition is irrelevant.
-    Reducing fraction_train breaks this cancellation and exposes the non-IID structure.
-    Uses the partition specified in base_cfg (default: target).
-    """
+    """Sweep participation rate on a non-IID partition to reveal heterogeneity effects."""
     fractions = [0.2, 0.4, 0.6, 0.8, 1.0]
     partition = base_cfg.partition if base_cfg.partition != "iid" else "target"
     histories = []

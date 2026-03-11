@@ -10,7 +10,7 @@ def load_history(path):
         return json.load(f)
 
 
-def plot_fed_vs_centralized(fed_history, central_history, output_dir="results", tag=""):
+def plot_fed_vs_centralized(fed_history, central_history, output_dir="results/federated", tag=""):
     """Compare federated and centralized training dynamics.
 
     Uses 'total_steps' (rounds * local_epochs) for federated x-axis
@@ -65,7 +65,7 @@ def plot_fed_vs_centralized(fed_history, central_history, output_dir="results", 
     print(f"Saved {path}")
 
 
-def plot_partition_comparison(histories, labels, output_dir="results"):
+def plot_partition_comparison(histories, labels, output_dir="results/federated"):
     """Compare different partition strategies (IID, operand, target)."""
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
@@ -97,7 +97,7 @@ def plot_partition_comparison(histories, labels, output_dir="results"):
     print(f"Saved {path}")
 
 
-def plot_client_scaling(histories, client_counts, output_dir="results"):
+def plot_client_scaling(histories, client_counts, output_dir="results/federated"):
     """Compare grokking dynamics across different numbers of clients."""
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
@@ -127,7 +127,7 @@ def plot_client_scaling(histories, client_counts, output_dir="results"):
     print(f"Saved {path}")
 
 
-def plot_dirichlet_sweep(histories, dirichlet_alphas, output_dir="results"):
+def plot_dirichlet_sweep(histories, dirichlet_alphas, output_dir="results/federated"):
     """Compare grokking dynamics across Dirichlet concentration values.
 
     Lower alpha = more heterogeneous; higher alpha = closer to IID.
@@ -137,22 +137,22 @@ def plot_dirichlet_sweep(histories, dirichlet_alphas, output_dir="results"):
     ax = axes[0]
     for h, da in zip(histories, dirichlet_alphas):
         x = h.get("total_steps", h.get("round", range(len(h["test_acc"]))))
-        ax.plot(x, h["test_acc"], label=f"α={da}")
+        ax.plot(x, h["test_acc"], label=f"\u03b1={da}")
     ax.set_xlabel("Total gradient steps")
     ax.set_ylabel("Test Accuracy (%)")
-    ax.set_title("Test Accuracy vs Dirichlet α")
+    ax.set_title("Test Accuracy vs Dirichlet \u03b1")
     ax.legend()
 
     ax = axes[1]
     for h, da in zip(histories, dirichlet_alphas):
         x = h.get("total_steps", h.get("round", range(len(h["ipr"]))))
-        ax.plot(x, h["ipr"], label=f"α={da}")
+        ax.plot(x, h["ipr"], label=f"\u03b1={da}")
     ax.set_xlabel("Total gradient steps")
     ax.set_ylabel("IPR")
-    ax.set_title("IPR vs Dirichlet α")
+    ax.set_title("IPR vs Dirichlet \u03b1")
     ax.legend()
 
-    fig.suptitle("Dirichlet Heterogeneity Sweep (lower α = more non-IID)", fontsize=14)
+    fig.suptitle("Dirichlet Heterogeneity Sweep (lower \u03b1 = more non-IID)", fontsize=14)
     fig.tight_layout()
     path = os.path.join(output_dir, "fed_dirichlet_sweep.png")
     fig.savefig(path, dpi=150)
@@ -160,7 +160,7 @@ def plot_dirichlet_sweep(histories, dirichlet_alphas, output_dir="results"):
     print(f"Saved {path}")
 
 
-def plot_participation_sweep(histories, fractions, partition, output_dir="results"):
+def plot_participation_sweep(histories, fractions, partition, output_dir="results/federated"):
     """Compare grokking dynamics across participation rates on a fixed non-IID partition.
 
     fraction_train=1.0 is the full-participation baseline where non-IID effects cancel.
@@ -194,7 +194,7 @@ def plot_participation_sweep(histories, fractions, partition, output_dir="result
     print(f"Saved {path}")
 
 
-def plot_local_epochs(histories, local_epoch_counts, output_dir="results"):
+def plot_local_epochs(histories, local_epoch_counts, output_dir="results/federated"):
     """Compare grokking dynamics across different numbers of local epochs (IID)."""
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 

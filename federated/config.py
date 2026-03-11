@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from typing import Literal
-from config import Config
+from core.config import Config
 
 
 @dataclass
@@ -20,3 +20,7 @@ class FedConfig(Config):
 
     # Override defaults for federated setting
     hidden_width: int = 128               # slightly overparameterized for FL
+    output_dir: str = "results/federated"
+
+    # NOTE: `epochs`, `log_every`, and `_epochs_set` are inherited from Config
+    # but unused in the federated setting (replaced by num_rounds/local_epochs).

@@ -12,8 +12,8 @@ The test set stays global for server-side evaluation.
 
 import numpy as np
 import torch
-from fed_config import FedConfig
-from dataset import TASKS
+from federated.config import FedConfig
+from core.dataset import TASKS
 
 
 def make_federated_datasets(cfg: FedConfig):

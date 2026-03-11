@@ -6,7 +6,7 @@ The target is f(n, m) mod p, encoded as a one-hot vector (size p).
 
 import torch
 import numpy as np
-from config import Config
+from core.config import Config
 
 
 # ── Task functions ──────────────────────────────────────────────────────────

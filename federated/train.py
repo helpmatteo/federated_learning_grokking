@@ -21,33 +21,49 @@ import torch.nn as nn
 
 import flwr as fl
 from flwr.client import NumPyClient, ClientApp
-from flwr.common import Context, ndarrays_to_parameters, parameters_to_ndarrays
+from flwr.common import Context, ndarrays_to_parameters
 from flwr.server import ServerApp, ServerConfig, ServerAppComponents
 from flwr.server.strategy import FedAvg
 from flwr.simulation import run_simulation
 
-from fed_config import FedConfig
-from fed_dataset import make_federated_datasets
-from model import GrokNet
-from train import make_targets_onehot, make_optimizer
-from metrics import weight_norms, compute_ipr, compute_accuracy
+from federated.config import FedConfig
+from federated.dataset import make_federated_datasets
+from core.model import GrokNet
+from core.utils import make_targets_onehot, make_optimizer, get_device
+from core.metrics import weight_norms, compute_ipr, compute_accuracy
+
+
+# ── Dataset cache ────────────────────────────────────────────────────────────
+# Avoids rebuilding the dataset on every client fit() call. Each unique config
+# produces one cached entry; clients and server share the same CPU tensors.
+
+_dataset_cache = {}
+
+
+def _get_cached_datasets(cfg):
+    """Return federated datasets, caching by config to avoid redundant work."""
+    cache_key = (cfg.p, cfg.task, cfg.alpha, cfg.seed, cfg.num_clients, cfg.partition,
+                 getattr(cfg, 'dirichlet_alpha', None))
+    if cache_key not in _dataset_cache:
+        _dataset_cache[cache_key] = make_federated_datasets(cfg)
+    return _dataset_cache[cache_key]
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _model_to_ndarrays(model):
-    """Extract model weights as list of numpy arrays."""
+    """Extract model weights as list of numpy arrays (always on CPU)."""
     return [val.cpu().numpy() for _, val in model.state_dict().items()]
 
 
 def _ndarrays_to_state_dict(ndarrays, model):
     """Convert numpy arrays back to a state dict matching model's keys."""
     keys = list(model.state_dict().keys())
-    return OrderedDict({k: torch.tensor(v) for k, v in zip(keys, ndarrays)})
+    return OrderedDict({k: torch.from_numpy(v) for k, v in zip(keys, ndarrays)})
 
 
 def _make_model(cfg):
-    """Create a fresh GrokNet from config."""
+    """Create a fresh GrokNet from config (on CPU)."""
     return GrokNet(
         input_dim=2 * cfg.p,
         hidden_width=cfg.hidden_width,
@@ -107,27 +123,32 @@ class GrokClient(NumPyClient):
 
     def fit(self, parameters, config):
         cfg = _fit_config_to_cfg(config)
+        device = get_device()
         p = cfg.p
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Load this client's data partition (build one-hots on CPU first)
-        client_data, _, _, _, _ = make_federated_datasets(cfg)
+        # Load this client's data partition (cached across rounds)
+        client_data, _, _, _, _ = _get_cached_datasets(cfg)
         x_local, y_local = client_data[self.partition_id]
         y_local_oh = make_targets_onehot(y_local, p)
 
-        x_local    = x_local.to(device)
-        y_local    = y_local.to(device)
+        # Move data to device
+        x_local = x_local.to(device)
         y_local_oh = y_local_oh.to(device)
+        y_local = y_local.to(device)
 
-        # Build model and load global weights
-        model = _make_model(cfg).to(device)
+        # Build model on CPU, load global weights, then move to device
+        model = _make_model(cfg)
         state_dict = _ndarrays_to_state_dict(parameters, model)
         model.load_state_dict(state_dict)
+        model.to(device)
 
-        # Local training
+        # NOTE: Optimizer state (momentum, Adam moments) is not preserved across
+        # rounds. For SGD with momentum=0 this is fine. For AdamW, adaptive
+        # estimates restart each round — a known limitation of vanilla FedAvg.
         optimizer = make_optimizer(model, cfg)
         loss_fn = nn.MSELoss()
 
+        model.train()
         for _ in range(cfg.local_epochs):
             out = model(x_local)
             loss = loss_fn(out, y_local_oh)
@@ -135,7 +156,8 @@ class GrokClient(NumPyClient):
             loss.backward()
             optimizer.step()
 
-        # Return updated weights and metrics
+        # Return updated weights (moved to CPU) and metrics
+        model.eval()
         with torch.no_grad():
             out = model(x_local)
             local_loss = loss_fn(out, y_local_oh).item()
@@ -157,24 +179,23 @@ class GrokClient(NumPyClient):
 def fed_train(cfg: FedConfig):
     """Run FedAvg via Flower simulation. Returns history dict and final model."""
     torch.manual_seed(cfg.seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
     print(f"Using device: {device}")
 
-    # Precompute global test data (for server-side evaluation)
-    # Build one-hots on CPU first, then move all tensors to device
-    _, x_train_full, y_train_full, x_test, y_test = make_federated_datasets(cfg)
+    # Precompute global data (single call, also populates cache for clients)
+    client_data, x_train_full, y_train_full, x_test, y_test = _get_cached_datasets(cfg)
     y_test_oh = make_targets_onehot(y_test, cfg.p)
     y_train_full_oh = make_targets_onehot(y_train_full, cfg.p)
 
-    x_test        = x_test.to(device)
-    y_test        = y_test.to(device)
-    y_test_oh     = y_test_oh.to(device)
-    x_train_full  = x_train_full.to(device)
-    y_train_full  = y_train_full.to(device)
+    # Move evaluation data to device
+    x_test = x_test.to(device)
+    y_test = y_test.to(device)
+    y_test_oh = y_test_oh.to(device)
+    x_train_full = x_train_full.to(device)
+    y_train_full = y_train_full.to(device)
     y_train_full_oh = y_train_full_oh.to(device)
 
     # Print partition sizes
-    client_data, _, _, _, _ = make_federated_datasets(cfg)
     print(f"Clients: {cfg.num_clients}, partition: {cfg.partition}, "
           f"samples per client: {[len(y) for _, y in client_data]}")
 
@@ -187,15 +208,22 @@ def fed_train(cfg: FedConfig):
         "ipr": [],
     }
 
+    # Mutable container to capture final model parameters from evaluate_fn
+    _final_ndarrays = [None]
+
     loss_fn = nn.MSELoss()
     start_time = time.time()
 
     def evaluate_fn(server_round, parameters, config):
         """Centralized evaluation after each aggregation round."""
-        model = _make_model(cfg).to(device)
+        _final_ndarrays[0] = parameters  # capture for final model reconstruction
+
+        model = _make_model(cfg)
         state_dict = _ndarrays_to_state_dict(parameters, model)
         model.load_state_dict(state_dict)
+        model.to(device)
 
+        model.eval()
         with torch.no_grad():
             out_test = model(x_test)
             test_loss = loss_fn(out_test, y_test_oh).item()
@@ -208,6 +236,8 @@ def fed_train(cfg: FedConfig):
         ipr = compute_ipr(model)
 
         history["round"].append(server_round)
+        # total_steps = rounds * local_epochs; counts per-model gradient steps
+        # (accurate when fraction_train=1.0; approximate otherwise)
         history["total_steps"].append(server_round * cfg.local_epochs)
         history["train_loss"].append(train_loss)
         history["test_loss"].append(test_loss)
@@ -263,12 +293,25 @@ def fed_train(cfg: FedConfig):
     print(f"\nStarting Flower simulation: {cfg.num_rounds} rounds, "
           f"{cfg.num_clients} clients, {cfg.local_epochs} local epochs\n")
 
+    # Allocate fractional CUDA GPUs across clients; MPS is used via PyTorch
+    # directly (not managed by Ray), so num_gpus stays 0 for MPS.
+    num_gpus = 0.0
+    if torch.cuda.is_available():
+        num_gpus = 1.0 / cfg.num_clients
+
     run_simulation(
         server_app=server_app,
         client_app=client_app,
         num_supernodes=cfg.num_clients,
-        backend_config={"client_resources": {"num_cpus": 1, "num_gpus": 0.0}},
+        backend_config={"client_resources": {"num_cpus": 1, "num_gpus": num_gpus}},
     )
+
+    # ── Reconstruct final trained model ──────────────────────────────────
+    final_model = _make_model(cfg)
+    if _final_ndarrays[0] is not None:
+        state_dict = _ndarrays_to_state_dict(_final_ndarrays[0], final_model)
+        final_model.load_state_dict(state_dict)
+    final_model.to(device)
 
     # ── Save results ─────────────────────────────────────────────────────
     os.makedirs(cfg.output_dir, exist_ok=True)
@@ -281,7 +324,9 @@ def fed_train(cfg: FedConfig):
         json.dump(history, f)
     print(f"\nHistory saved to {history_path}")
 
-    # Reconstruct final model from last evaluation
-    final_model = init_model  # placeholder; real weights are in history
+    if cfg.save_weights:
+        weights_path = os.path.join(cfg.output_dir, f"weights_{tag}.pt")
+        torch.save(final_model.state_dict(), weights_path)
+        print(f"Weights saved to {weights_path}")
 
     return history, final_model

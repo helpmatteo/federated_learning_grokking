@@ -11,7 +11,7 @@ def load_history(path):
         return json.load(f)
 
 
-def plot_training_dynamics(history, output_dir="results", tag=""):
+def plot_training_dynamics(history, output_dir="results/centralized", tag=""):
     """Reproduce Figure 1: loss, weight norms, accuracy, gradient norms."""
     epochs = history["epoch"]
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
@@ -60,7 +60,7 @@ def plot_training_dynamics(history, output_dir="results", tag=""):
     print(f"Saved {path}")
 
 
-def plot_ipr(history, output_dir="results", tag=""):
+def plot_ipr(history, output_dir="results/centralized", tag=""):
     """Reproduce Figure 5: IPR overlaid with train/test accuracy."""
     epochs = history["epoch"]
     fig, ax1 = plt.subplots(figsize=(8, 5))
@@ -90,7 +90,7 @@ def plot_ipr(history, output_dir="results", tag=""):
     print(f"Saved {path}")
 
 
-def plot_compare_histories(history_paths, labels, output_dir="results", title=""):
+def plot_compare_histories(history_paths, labels, output_dir="results/centralized", title=""):
     """Plot test accuracy curves from multiple runs (for comparing optimizers/widths)."""
     fig, ax = plt.subplots(figsize=(8, 5))
     for path, label in zip(history_paths, labels):

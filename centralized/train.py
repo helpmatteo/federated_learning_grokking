@@ -5,41 +5,17 @@ import os
 import time
 import torch
 import torch.nn as nn
-from config import Config
-from dataset import make_dataset
-from model import GrokNet
-from metrics import weight_norms, gradient_norms, compute_ipr, compute_accuracy
-
-
-def make_optimizer(model, cfg: Config):
-    if cfg.optimizer == "gd":
-        return torch.optim.SGD(
-            model.parameters(),
-            lr=cfg.lr,
-            momentum=cfg.momentum,
-            weight_decay=cfg.weight_decay,
-        )
-    elif cfg.optimizer == "adamw":
-        return torch.optim.AdamW(
-            model.parameters(),
-            lr=cfg.lr,
-            weight_decay=cfg.weight_decay,
-        )
-    else:
-        raise ValueError(f"Unknown optimizer: {cfg.optimizer}")
-
-
-def make_targets_onehot(labels, p):
-    """Convert class labels to one-hot for MSE loss."""
-    onehot = torch.zeros(labels.size(0), p)
-    onehot.scatter_(1, labels.unsqueeze(1), 1.0)
-    return onehot
+from core.config import Config
+from core.dataset import make_dataset
+from core.model import GrokNet
+from core.metrics import weight_norms, gradient_norms, compute_ipr, compute_accuracy
+from core.utils import get_device, make_optimizer, make_targets_onehot
 
 
 def train(cfg: Config):
     """Run the full training loop. Returns the history dict."""
     torch.manual_seed(cfg.seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
     print(f"Using device: {device}")
 
     # Data (build one-hots on CPU, then move everything to device)
@@ -48,11 +24,12 @@ def train(cfg: Config):
     y_train_oh = make_targets_onehot(y_train, p)
     y_test_oh = make_targets_onehot(y_test, p)
 
-    x_train  = x_train.to(device)
-    y_train  = y_train.to(device)
+    # Move data to device
+    x_train = x_train.to(device)
+    y_train = y_train.to(device)
     y_train_oh = y_train_oh.to(device)
-    x_test   = x_test.to(device)
-    y_test   = y_test.to(device)
+    x_test = x_test.to(device)
+    y_test = y_test.to(device)
     y_test_oh = y_test_oh.to(device)
 
     # Model

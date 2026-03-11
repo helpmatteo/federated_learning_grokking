@@ -32,7 +32,7 @@ class Config:
     log_every: int = 100                 # log metrics every N epochs
 
     # --- Output ---
-    output_dir: str = "results"
+    output_dir: str = "results/centralized"
     save_weights: bool = False           # save final model weights
 
     # Set to True internally when user explicitly passes a value

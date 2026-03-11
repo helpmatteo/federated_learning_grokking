@@ -1,7 +1,7 @@
 """Entry point for reproducing Gromov (2023) grokking experiments.
 
 Usage examples:
-    # Default: GD on modular addition, p=97, N=100, α=0.5, 40k epochs
+    # Default: GD on modular addition, p=97, N=100, α=0.5, 10k epochs
     python main.py
 
     # AdamW (auto-sets lr=1e-3, wd=1.0, fewer epochs needed)
@@ -19,9 +19,9 @@ Usage examples:
 
 import argparse
 import os
-from config import Config
-from train import train
-from visualize import plot_training_dynamics, plot_ipr, plot_compare_histories
+from core.config import Config
+from centralized.train import train
+from centralized.visualize import plot_training_dynamics, plot_ipr, plot_compare_histories
 
 
 def parse_args():
@@ -42,7 +42,7 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--log_every", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output_dir", type=str, default="results")
+    parser.add_argument("--output_dir", type=str, default="results/centralized")
     parser.add_argument("--save_weights", action="store_true")
     parser.add_argument("--no_plot", action="store_true")
     parser.add_argument("--sweep", type=str, default=None,
