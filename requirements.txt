@@ -1,3 +1,4 @@
 torch>=2.0
 numpy
 matplotlib
+flwr[simulation]>=1.27
