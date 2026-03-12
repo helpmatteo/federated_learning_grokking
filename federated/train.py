@@ -90,6 +90,7 @@ def _cfg_to_fit_config(cfg: FedConfig, server_round: int):
         "momentum": cfg.momentum,
         "hidden_width": cfg.hidden_width,
         "activation": cfg.activation,
+        "proximal_mu": cfg.proximal_mu,
     }
 
 
@@ -110,6 +111,7 @@ def _fit_config_to_cfg(config: dict) -> FedConfig:
         momentum=float(config["momentum"]),
         hidden_width=int(config["hidden_width"]),
         activation=config["activation"],
+        proximal_mu=float(config.get("proximal_mu", 0.0)),
     )
 
 
@@ -148,10 +150,22 @@ class GrokClient(NumPyClient):
         optimizer = make_optimizer(model, cfg)
         loss_fn = nn.MSELoss()
 
+        # FedProx: save global weights for proximal term
+        proximal_mu = cfg.proximal_mu
+        if proximal_mu > 0:
+            global_params = [p.detach().clone() for p in model.parameters()]
+
         model.train()
         for _ in range(cfg.local_epochs):
             out = model(x_local)
             loss = loss_fn(out, y_local_oh)
+            # FedProx proximal term: (mu/2) * ||w - w_global||^2
+            if proximal_mu > 0:
+                prox = sum(
+                    torch.sum((p - gp) ** 2)
+                    for p, gp in zip(model.parameters(), global_params)
+                )
+                loss = loss + (proximal_mu / 2.0) * prox
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -290,8 +304,9 @@ def fed_train(cfg: FedConfig):
     server_app = ServerApp(server_fn=server_fn)
 
     # ── Run simulation ───────────────────────────────────────────────────
+    prox_info = f", proximal_mu={cfg.proximal_mu}" if cfg.proximal_mu > 0 else ""
     print(f"\nStarting Flower simulation: {cfg.num_rounds} rounds, "
-          f"{cfg.num_clients} clients, {cfg.local_epochs} local epochs\n")
+          f"{cfg.num_clients} clients, {cfg.local_epochs} local epochs{prox_info}\n")
 
     # Allocate fractional CUDA GPUs across clients; MPS is used via PyTorch
     # directly (not managed by Ray), so num_gpus stays 0 for MPS.
@@ -316,9 +331,10 @@ def fed_train(cfg: FedConfig):
     # ── Save results ─────────────────────────────────────────────────────
     os.makedirs(cfg.output_dir, exist_ok=True)
     dirichlet_suffix = f"_dir{cfg.dirichlet_alpha}" if cfg.partition == "dirichlet" else ""
+    prox_suffix = f"_mu{cfg.proximal_mu}" if cfg.proximal_mu > 0 else ""
     tag = (f"fed_{cfg.task}_{cfg.optimizer}_p{cfg.p}_N{cfg.hidden_width}"
            f"_a{cfg.alpha}_K{cfg.num_clients}_le{cfg.local_epochs}"
-           f"_ft{cfg.fraction_train}_{cfg.partition}{dirichlet_suffix}")
+           f"_ft{cfg.fraction_train}_{cfg.partition}{dirichlet_suffix}{prox_suffix}")
     history_path = os.path.join(cfg.output_dir, f"history_{tag}.json")
     with open(history_path, "w") as f:
         json.dump(history, f)

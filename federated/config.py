@@ -17,6 +17,8 @@ class FedConfig(Config):
     ] = "iid"
     dirichlet_alpha: float = 0.5          # concentration param for Dirichlet partition
                                           # (α→∞: IID, α→0: one class per client)
+    proximal_mu: float = 0.0              # FedProx proximal term strength
+                                          # (0.0 = FedAvg, >0 = FedProx)
 
     # Override defaults for federated setting
     hidden_width: int = 128               # slightly overparameterized for FL

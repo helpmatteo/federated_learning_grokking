@@ -222,3 +222,101 @@ def plot_local_epochs(histories, local_epoch_counts, output_dir="results/federat
     fig.savefig(path, dpi=150)
     plt.close(fig)
     print(f"Saved {path}")
+
+
+def plot_breaking_point(results, output_dir="results/federated"):
+    """Combined 3-row figure showing where federated grokking breaks.
+
+    results: dict with keys 'clients', 'participation', 'local_epochs',
+             each containing {'histories': [...], 'labels': [...]}
+    """
+    fig, axes = plt.subplots(3, 3, figsize=(18, 14))
+
+    # Row 0: Client scaling (IID, full participation)
+    if "clients" in results:
+        data = results["clients"]
+        for h, label in zip(data["histories"], data["labels"]):
+            x = h.get("total_steps", h.get("round", range(len(h["test_acc"]))))
+            axes[0, 0].plot(x, h["test_acc"], label=label, alpha=0.8)
+            axes[0, 1].plot(x, h["ipr"], label=label, alpha=0.8)
+            axes[0, 2].plot(x, h["train_acc"], label=label, alpha=0.8)
+        axes[0, 0].set_title("Test Accuracy")
+        axes[0, 1].set_title("IPR")
+        axes[0, 2].set_title("Train Accuracy")
+        for ax in axes[0]:
+            ax.set_xlabel("Total gradient steps")
+            ax.legend(fontsize=8)
+        axes[0, 0].set_ylabel("Client Scaling\n(IID, ft=1.0)\n\nAccuracy (%)")
+        axes[0, 1].set_ylabel("IPR")
+        axes[0, 2].set_ylabel("Accuracy (%)")
+
+    # Row 1: Partial participation (K=20, target partition)
+    if "participation" in results:
+        data = results["participation"]
+        for h, label in zip(data["histories"], data["labels"]):
+            x = h.get("total_steps", h.get("round", range(len(h["test_acc"]))))
+            axes[1, 0].plot(x, h["test_acc"], label=label, alpha=0.8)
+            axes[1, 1].plot(x, h["ipr"], label=label, alpha=0.8)
+            axes[1, 2].plot(x, h["train_acc"], label=label, alpha=0.8)
+        for ax in axes[1]:
+            ax.set_xlabel("Total gradient steps")
+            ax.legend(fontsize=8)
+        axes[1, 0].set_ylabel("Partial Participation\n(K=20, target)\n\nAccuracy (%)")
+        axes[1, 1].set_ylabel("IPR")
+        axes[1, 2].set_ylabel("Accuracy (%)")
+
+    # Row 2: Extreme local epochs (K=5, IID)
+    if "local_epochs" in results:
+        data = results["local_epochs"]
+        for h, label in zip(data["histories"], data["labels"]):
+            x = h.get("total_steps", h.get("round", range(len(h["test_acc"]))))
+            axes[2, 0].plot(x, h["test_acc"], label=label, alpha=0.8)
+            axes[2, 1].plot(x, h["ipr"], label=label, alpha=0.8)
+            axes[2, 2].plot(x, h["train_acc"], label=label, alpha=0.8)
+        for ax in axes[2]:
+            ax.set_xlabel("Total gradient steps")
+            ax.legend(fontsize=8)
+        axes[2, 0].set_ylabel("Extreme Local Epochs\n(K=5, IID)\n\nAccuracy (%)")
+        axes[2, 1].set_ylabel("IPR")
+        axes[2, 2].set_ylabel("Accuracy (%)")
+
+    fig.suptitle("Breaking Point: Where Does Federated Grokking Fail?", fontsize=16, y=1.01)
+    fig.tight_layout()
+    path = os.path.join(output_dir, "fed_breaking_point.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved {path}")
+
+
+def plot_fedprox_sweep(histories, mu_values, output_dir="results/federated"):
+    """Compare FedAvg (mu=0) vs FedProx across proximal strength values.
+
+    Tests whether the proximal regularization that reduces client drift
+    also suppresses the weight growth needed for grokking.
+    """
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+    for h, mu in zip(histories, mu_values):
+        label = "FedAvg" if mu == 0 else f"\u03bc={mu}"
+        x = h.get("total_steps", h.get("round", range(len(h["test_acc"]))))
+        axes[0].plot(x, h["test_acc"], label=label, alpha=0.8)
+        axes[1].plot(x, h["ipr"], label=label, alpha=0.8)
+        axes[2].plot(x, h["weight_norm_layer1"], label=label, alpha=0.8)
+
+    axes[0].set_ylabel("Test Accuracy (%)")
+    axes[0].set_title("Test Accuracy")
+    axes[1].set_ylabel("IPR")
+    axes[1].set_title("Inverse Participation Ratio")
+    axes[2].set_ylabel("||W1||_F")
+    axes[2].set_title("Weight Norm (Layer 1)")
+
+    for ax in axes:
+        ax.set_xlabel("Total gradient steps")
+        ax.legend(fontsize=8)
+
+    fig.suptitle("FedProx: Does Proximal Regularization Kill Grokking?", fontsize=14)
+    fig.tight_layout()
+    path = os.path.join(output_dir, "fed_fedprox_sweep.png")
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"Saved {path}")
