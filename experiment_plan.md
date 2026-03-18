@@ -323,7 +323,7 @@ Sweep:
 | Parameter | Values |
 |-----------|--------|
 | α | {α_crit − δ, α_crit, α_crit + δ, α_crit + 2δ, 0.5} where δ is chosen after Exp 1 to span the transition; fallback grid: {0.05, 0.1, 0.15, 0.2, 0.3, 0.5} |
-| K | {5, 10, 20, 50} |
+| K | {2, 5, 10, 20, 50, 97} |
 | E | 5 (default) |
 | f | 1.0 (full participation) |
 | seeds | {42, 123, 456} |
@@ -335,24 +335,32 @@ Sweep:
   If T_max = 30 000 → S_FL = 45 000, R = 9 000 → ~50 min/run.
   If T_max = 12 000 → S_FL = 18 000, R = 3 600 → ~20 min/run.
 
-**Runs.** 6 α × 4 K × 3 conditions × 3 seeds = **216 runs.**
+**Runs.** 6α × 6K × 3 conditions × 3 seeds = **324 runs.**
 (Condition (a) doesn't depend on K, so reuse: 6α × 1 × 3 seeds = 18 unique.
-Condition (b): 6α × 4K × 3 seeds = 72. Condition (c): same 72. Total unique: **162 runs.**)
+Condition (b): 6α × 6K × 3 seeds = 108. Condition (c): same 108. Total unique: **234 runs.**)
 
 **Key per-client data sizes (α = 0.1, n_train = 940, N = 256):**
 
-| K | n_client | params/data (client) |
-|---|----------|----------------------|
-| 5 | 188 | 396.3 |
-| 10 | 94 | 792.5 |
-| 20 | 47 | 1 585.0 |
-| 50 | 18 | 4 138.7 |
+| K | n_client | params/data (client) | Notes |
+|---|----------|----------------------|-------|
+| 2 | 470 | 158.5 | near-centralized |
+| 5 | 188 | 396.3 | |
+| 10 | 94 | 792.5 | |
+| 20 | 47 | 1 585.0 | |
+| 50 | 18 | 4 138.7 | fewer samples than output classes |
+| 97 | 9 | 8 277.3 | extreme: ~9 samples per client |
+
+K = 2 anchors the "near-centralized" end (each client has half the data). K = 97
+is the natural ceiling for p = 97 — one client per residue class, with each client
+seeing only ~n_train/97 ≈ 9 training pairs at α = 0.1. At α = 0.5, K = 97 still
+gives ~48 samples per client (our breaking-point results confirmed grokking here).
 
 **Note on extreme regimes.** The centralized-reduced condition at high K and low α
-produces very small training sets. For example, α = 0.1 / K = 50 gives
-n_reduced = ⌊0.002 × 9409⌋ = 18 samples — fewer than the 97 output classes.
-These settings will almost certainly fail to grok, which is informative: if FL
-*does* grok with the same per-client data, it proves aggregation is essential.
+produces very small training sets. For example, α = 0.1 / K = 97 gives
+n_reduced = ⌊0.001 × 9409⌋ = 9 samples — far fewer than the 97 output classes.
+These settings will almost certainly fail to grok in centralized-reduced, which is
+informative: if FL *does* grok with the same per-client data, it proves aggregation
+is essential.
 
 **Outputs.**
 - **Figure 2 (main result):** For each α, plot grokking step vs K with three
@@ -380,42 +388,67 @@ the *type* of heterogeneity matter?
 structure that the model must learn. Target-based partition disrupts the output space
 but preserves input structure and may be less harmful.
 
-**Design.** Fix K from Exp 2 (choose the K value that showed the most interesting
-behaviour; default: K = 10). Use α values near α_crit from Exp 1.
+**Design.** Use K values from Exp 2: a primary K (the most informative value,
+default K = 10) and a secondary K (higher, default K = 50) to validate that
+heterogeneity effects don't vanish or qualitatively change at different scales.
+Use α values near α_crit from Exp 1.
 
 **Sub-experiment 3a: Dirichlet sweep (continuous heterogeneity knob).**
+
+Primary sweep at K_primary:
 
 | Parameter | Values |
 |-----------|--------|
 | α | {α_crit − δ, α_crit, α_crit + δ, 0.3, 0.5} (~5 values) |
 | α_dir | {0.01, 0.1, 0.5, 1.0, 10.0, 1000.0} (6 values, 1000 ≈ IID) |
-| K | fixed (from Exp 2) |
+| K | K_primary (from Exp 2, default 10) |
 | E | 5, f = 1.0 |
 | S_max | S_FL (adaptive, from §3.2) |
 | seeds | {42, 123, 456} |
+
+**Runs (primary).** 5 × 6 × 3 = **90 runs.**
+
+K-validation at K_secondary (reduced sweep — only test the extremes to confirm
+the phase boundary doesn't qualitatively shift):
+
+| Parameter | Values |
+|-----------|--------|
+| α | {α_crit, α_crit + δ, 0.5} (3 values — boundary + comfortable) |
+| α_dir | {0.1, 1.0, 1000.0} (3 values — hard, moderate, IID) |
+| K | K_secondary (from Exp 2, default 50) |
+| E | 5, f = 1.0 |
+| S_max | S_FL |
+| seeds | {42, 123, 456} |
+
+**Runs (K-validation).** 3 × 3 × 3 = **27 runs.**
 
 **Step budget rationale.** Same as Exp 2 FL. Non-IID may delay grokking vs IID,
 but since S_FL already includes 1.5× headroom over centralized T_max, this should
 be sufficient. Extreme heterogeneity (α_dir = 0.01) at low α will likely trigger
 early abort (no memorisation), saving compute.
 
-**Runs.** 5 × 6 × 3 = **90 runs.**
+**Why K-validation matters.** At K = 50, each client has n_train/50 data points.
+With non-IID on top of this data scarcity, the per-client distribution may be so
+degenerate that grokking fails even at α = 0.5. Alternatively, more clients means
+more diverse "views" of the data, which could make aggregation MORE effective. The
+K-validation sub-sweep tests which effect dominates without requiring a full K ×
+α_dir × α grid.
 
 **Sub-experiment 3b: Structured partition (operand vs target vs IID).**
 
 | Parameter | Values |
 |-----------|--------|
-| α | same 5 values as 3a |
+| α | same 5 values as 3a primary |
 | partition | {iid, operand, target} |
-| K | same as 3a |
+| K | K_primary |
 | E | 5, f = 1.0 |
 | seeds | {42, 123, 456} |
 
 **Runs.** 5 × 3 × 3 = 45. IID runs overlap with 3a (α_dir = 1000), so
 5 × 3 = 15 are reused. **30 new runs.**
 
-**Combined Exp 3 unique runs:** 90 + 30 = **~120 runs.**
-Estimated runtime: ~120 × ~50 min × 0.7 (early abort savings) ≈ **~70 hr sequential.**
+**Combined Exp 3 unique runs:** 90 + 27 + 30 = **~147 runs.**
+Estimated runtime: ~147 × ~50 min × 0.7 (early abort savings) ≈ **~86 hr sequential.**
 
 **Outputs.**
 - **Figure 3a:** Phase diagram heatmap — x-axis: Dirichlet α_dir (log scale),
@@ -425,70 +458,128 @@ Estimated runtime: ~120 × ~50 min × 0.7 (early abort savings) ≈ **~70 hr seq
   showing grokking step for IID / operand / target. If operand partition is
   worse than Dirichlet-matched heterogeneity, this supports the Fourier
   fragmentation hypothesis.
+- **Figure 3c (appendix):** K-validation — overlay K = 10 and K = 50 phase
+  boundaries. If they overlap, heterogeneity effects are K-independent.
+  If K = 50 boundary shifts right (needs more data), K amplifies heterogeneity.
 
 ---
 
-### Experiment 4 — Communication Efficiency at the Phase Boundary
+### Experiment 4 — Optimization Fragmentation
 
-**Question.** How much can communication (rounds) be reduced before grokking breaks?
-Is the communication budget or the total computation budget the binding constraint?
+**Question.** How do client drift and partial participation interact with data
+heterogeneity to affect grokking? Is grokking compute-limited or
+communication-limited?
 
-**Hypothesis.** Grokking requires a minimum number of aggregation events (rounds) to
-align client representations. In the easy regime (α = 0.5), this minimum is very low
-(our breaking-point results show E = 200 / R = 100 still works). Near the phase
-boundary, more frequent aggregation (lower E or higher f) should be necessary.
+**Why the previous design was insufficient.** Varying E and f under a single
+heterogeneity setting only tests "communication efficiency" — which is obvious
+(more communication helps). The core prediction of optimization fragmentation is:
 
-**Design.** Run two matched sub-experiments to disentangle communication from
-computation.
+> Under IID, client drifts are *correlated* (all clients optimise the same loss
+> landscape), so aggregation of drifted models preserves global structure.
+> Under non-IID, drifts are *conflicting* (clients move toward incompatible local
+> optima), so aggregation after many local steps *destroys* the Fourier features
+> that grokking requires.
 
-**Sub-experiment 4a: Fixed total steps (S = S_FL), vary communication frequency.**
-Measures the effect of communication at constant total computation.
+**The E × heterogeneity interaction is therefore the primary test.** A secondary
+effect is partial participation (f < 1): with f < 1, the global model is updated
+from a random client subset, introducing aggregation noise. This noise compounds
+with drift under non-IID.
 
-Uses S_FL from §3.2. Example with S_FL = 45 000:
+**Design.** Three sub-experiments, each isolating one axis of optimisation
+fragmentation. All use K from Exp 2 and α values from Exp 1.
 
-| E | R = S_FL / E | Runtime/run | Notes |
-|---|-------------|-------------|-------|
-| 5 | 9 000 | ~50 min | baseline |
-| 10 | 4 500 | ~25 min | |
-| 25 | 1 800 | ~10 min | |
-| 50 | 900 | ~5 min | |
+---
 
-E = 1 is excluded from the fixed-S design because R = S_FL rounds is impractical
-(~5 hr per run). It is tested in Sub-experiment 4b instead, where R is capped.
+**Sub-experiment 4a: Drift accumulation × heterogeneity (the key interaction).**
 
-**Step budget rationale.** Using S_FL (not a smaller value) is critical — otherwise
-grokking failure could be attributed to insufficient total steps rather than
-insufficient communication. The whole point is to hold total compute constant
-and vary only communication frequency.
+Fixed total steps S = S_FL. Full participation f = 1.0. Vary E and heterogeneity.
+
+| E | R = S_FL / E | Per-round drift | Notes |
+|---|-------------|----------------|-------|
+| 5 | 9 000 | low | baseline |
+| 10 | 4 500 | moderate | |
+| 25 | 1 800 | high | |
+| 50 | 900 | very high | |
+
+(Example R values assume S_FL = 45 000.)
 
 | Parameter | Values |
 |-----------|--------|
 | α | {α_crit + δ, 0.3, 0.5} (one near-boundary, two comfortable) |
-| f | {0.4, 1.0} |
+| heterogeneity | {IID, non-IID*} |
+| f | 1.0 (isolate drift from participation noise) |
 | K | same as Exp 3 |
+| S_max | S_FL |
 | seeds | {42, 123, 456} |
 
-**Runs.** 4E × 3α × 2f × 3 seeds = **72 runs.** (All federated.)
-Average runtime ~23 min/run (weighted by E distribution) → **~28 hr sequential.**
+*Non-IID setting chosen from Exp 3 — the mildest heterogeneity that showed
+measurable grokking delay. Using the mildest (not hardest) ensures we can observe
+the E interaction before grokking fails entirely.
 
-**Sub-experiment 4b: Fixed total rounds (R = 2 000), vary local computation.**
-Measures the practical tradeoff: more local work per round vs fixed comm budget.
-Also the only place E = 1 is tested (R = 2 000 is practical at ~12 min/run).
+**Runs.** 4E × 3α × 2het × 3 seeds = **72 runs.**
+Average runtime ~23 min/run (weighted by E) → **~28 hr sequential.**
+
+**Predictions.**
+- IID: grokking step roughly constant across E (drift is correlated, aggregation
+  of parallel trajectories is benign). Breaking-point results at α = 0.5 already
+  suggest this.
+- Non-IID: grokking step increases sharply with E, or grokking fails at high E.
+  The critical E_max (maximum tolerable local epochs) is lower near α_crit.
+- If confirmed, this demonstrates that **drift direction, not drift magnitude,
+  determines whether grokking survives** — a mechanistic insight.
+
+---
+
+**Sub-experiment 4b: Partial participation × heterogeneity.**
+
+Fixed total steps S = S_FL. Fixed E = 5. Vary f and heterogeneity.
+
+| Parameter | Values |
+|-----------|--------|
+| α | same 3 values |
+| f | {0.2, 0.4, 0.6, 1.0} |
+| heterogeneity | {IID, non-IID*} (same as 4a) |
+| E | 5 |
+| K | same as Exp 3 |
+| S_max | S_FL |
+| seeds | {42, 123, 456} |
+
+**Runs.** 4f × 3α × 2het × 3 seeds = **72 runs.**
+R = S_FL / 5 for all → ~50 min/run → **~60 hr sequential.**
+(f = 1.0 IID runs overlap with 4a baseline and Exp 2 — reuse where possible.)
+
+**Predictions.**
+- IID: grokking tolerates low f (our breaking-point results show f = 0.2 works
+  at α = 0.5). The aggregation of random client subsets still averages to the
+  full-data gradient in expectation.
+- Non-IID: low f is more damaging because the subset of sampled clients may be
+  unrepresentative of the full data distribution. The global model oscillates
+  as different client subsets pull it in different directions.
+
+---
+
+**Sub-experiment 4c: Compute vs communication budget.**
+
+Fixed R = 2 000 rounds, f = 1.0, IID only. Vary E (which varies total compute).
+This answers: is grokking compute-limited or communication-limited?
 
 | E | S = R × E | Grok expected? | Notes |
 |---|-----------|----------------|-------|
-| 1 | 2 000 | Unlikely (S ≪ T_base) | Establishes minimum-comm baseline |
+| 1 | 2 000 | Unlikely (S ≪ T_base) | Establishes minimum-compute baseline |
 | 5 | 10 000 | Maybe (S ≈ T_base) | Depends on α |
 | 10 | 20 000 | Likely at α ≥ 0.3 | |
 | 25 | 50 000 | Likely (S ≈ S_FL) | |
 
-**Step budget rationale.** Here S is not fixed — it grows with E. The question is
-whether more local computation (at fixed communication) helps. E = 1 at R = 2 000
-gives only S = 2 000 steps, which is well below T_base ≈ 8 000. If it doesn't
-grok, that's the step budget's fault, not E = 1's. But E = 25 gives S = 50 000
-(≈ S_FL), so if it groks here but not at E = 5 (S = 10 000), we know 10 000
-total steps is simply insufficient. **The comparison across E values in 4b
-disentangles "not enough total steps" from "not enough communication."**
+**Step budget rationale.** S grows with E at fixed R. E = 1 gives only S = 2 000
+steps (well below T_base). E = 25 gives S = 50 000 (≈ S_FL). If E = 25 groks
+but E = 5 doesn't, it's a compute limitation (10 000 steps insufficient), not a
+communication problem (both have R = 2 000 rounds).
+
+**Cross-comparison with 4a.** This is the critical logic:
+- 4a at E = 50: S = S_FL, R = 900. Total compute is high but communication is low.
+- 4c at E = 25: S = 50 000, R = 2 000. Both compute and communication are adequate.
+- If 4a-E50 fails but 4c-E25 succeeds (at same α), the bottleneck is communication
+  frequency, not total compute.
 
 | Parameter | Values |
 |-----------|--------|
@@ -499,12 +590,21 @@ disentangles "not enough total steps" from "not enough communication."**
 
 **Runs.** 4E × 3α × 3 seeds = **36 runs** (all at R = 2 000, ~12 min each = **~7 hr**).
 
+---
+
+**Combined Exp 4: 72 + 72 + 36 = ~180 runs** (minus overlaps ≈ **~160 unique runs**).
+
 **Outputs.**
-- **Figure 4a:** Grokking step vs local epochs (log scale), one line per (α, f) combo.
-  Steeper rise near α_crit means communication matters more at the boundary.
-- **Figure 4b:** Same, but x-axis is communication rounds (= R), showing the practical
-  cost. Mark: "communication rounds to grokking" (R_grok = T_grok / E) — the actual
-  number of server-client exchanges needed.
+- **Figure 4a (main):** Grokking step vs E, two lines (IID vs non-IID), one panel
+  per α. The gap between lines IS the optimization fragmentation effect. If the
+  lines diverge at high E, drift direction matters. If they're parallel, it doesn't.
+- **Figure 4b:** Grokking step vs f, two lines (IID vs non-IID). Shows whether
+  partial participation compounds with heterogeneity.
+- **Figure 4c:** Grokking step vs E at fixed R. Shows compute vs communication
+  tradeoff. Mark the "sufficient compute" threshold.
+- **Combined insight:** If IID is robust to both high E and low f, but non-IID
+  breaks, the conclusion is: **optimization fragmentation only matters when
+  combined with data heterogeneity**. This is a strong, specific, testable claim.
 
 ---
 
@@ -616,25 +716,30 @@ S_FL = 45 000, S_rescue = 60 000). See §3.2 for the adaptive formulas.
 |-----|-------|-------|------|----|-------|-------------|
 | 0 | Width validation | 50k (cent.) | 12 | 0 | 12 | ~24 min |
 | 1 | Centralized boundary | 100k (cent.) | 24 | 0 | 24 | ~96 min |
-| 2 | Aggregation & FL boundary | 100k (cent.) / S_FL (FL) | 162 | 72 | 90 | ~66 hr |
-| 3 | Heterogeneity | S_FL | ~120 | ~105 | ~15 | ~70 hr |
-| 4a | Comm. (fixed S) | S_FL | 72 | 72 | 0 | ~28 hr |
-| 4b | Comm. (fixed R) | R × E (variable) | 36 | 36 | 0 | ~7 hr |
+| 2 | Aggregation & FL boundary | 100k (cent.) / S_FL (FL) | 234 | 108 | 126 | ~102 hr |
+| 3 | Heterogeneity (+ K validation) | S_FL | ~147 | ~132 | ~15 | ~86 hr |
+| 4a | Drift × heterogeneity | S_FL | 72 | 72 | 0 | ~28 hr |
+| 4b | Participation × heterogeneity | S_FL | 72 | 72 | 0 | ~60 hr |
+| 4c | Compute vs communication | R × E (variable) | 36 | 36 | 0 | ~7 hr |
 | 5 | Algorithm rescue | S_rescue | 99 | 99 | 0 | ~110 hr |
 | 6 | Mechanistic | — | 0 | 0 | 0 | — |
-| **Total** | | | **~525** | **~384** | **~141** | **~283 hr** |
+| **Total** | | | **~696** | **~519** | **~177** | **~395 hr** |
+
+(After deducting overlaps — 4a/4b baseline runs shared with Exp 2/3, f = 1.0 IID
+runs reused — effective unique runs ≈ **~650**.)
 
 #### Runtime breakdown by scenario
 
 | Scenario | T_max | S_FL | S_rescue | FL min/run (E=5) | Total seq. | 4-way parallel |
 |----------|-------|------|----------|-----------------|-----------|---------------|
-| High α_crit (≈ 0.3) | 12 000 | 18 000 | 24 000 | ~20 min | ~130 hr | ~33 hr ≈ **1.4 days** |
-| Mid α_crit (≈ 0.2) | 30 000 | 45 000 | 60 000 | ~50 min | ~283 hr | ~71 hr ≈ **3 days** |
-| Low α_crit (≈ 0.1) | 45 000 | 50 000 | 80 000 | ~56 min | ~320 hr | ~80 hr ≈ **3.3 days** |
+| High α_crit (≈ 0.3) | 12 000 | 18 000 | 24 000 | ~20 min | ~200 hr | ~50 hr ≈ **2.1 days** |
+| Mid α_crit (≈ 0.2) | 30 000 | 45 000 | 60 000 | ~50 min | ~395 hr | ~99 hr ≈ **4.1 days** |
+| Low α_crit (≈ 0.1) | 45 000 | 50 000 | 80 000 | ~56 min | ~450 hr | ~113 hr ≈ **4.7 days** |
 
-**Early abort savings.** ~25–35 % of runs (extreme non-IID at low α, high K with
-tiny per-client data) will trigger early abort. This reduces effective runtime by
-~25 %, bringing the mid scenario to ~**2.3 days** at 4-way parallelism.
+**Early abort savings.** ~30–40 % of runs (extreme non-IID at low α, high K with
+tiny per-client data, especially K = 50 and K = 97 at low α) will trigger early
+abort. This reduces effective runtime by ~30 %, bringing the mid scenario to
+~**2.9 days** at 4-way parallelism.
 
 *Runtime assumptions: ~0.4 s Flower/Ray overhead per round. Centralized: ~2 min
 per 50k steps, ~4 min per 100k steps. All runs within each experiment are
