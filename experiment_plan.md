@@ -83,26 +83,94 @@ The "never drops below" condition avoids false positives from transient spikes. 
 all subsequent log points (rather than a fixed window) is stricter and eliminates an
 arbitrary window-length parameter.
 
+### 3.1b  Secondary metric: onset step T_50
+
+**Definition.** T_50 is the smallest logged step t_j such that a_j ≥ 50 %.
+
+**Rationale.** Near the phase boundary, grokking may be in-progress but incomplete
+at S_max. T_50 captures the *onset* of generalization (departure from memorisation
+at ~1/p ≈ 1 %) and provides a continuous signal even when T_grok = ∞. Report both
+T_grok and T_50 for all experiments.
+
 ### 3.2  Total-step budget
 
-Two step budgets, chosen by experiment type:
+#### Key constraint: centralized is computation-bound, FL is communication-bound
 
-| Context | S_max | Rationale |
-|---------|-------|-----------|
-| Centralized (Exp 1) | 50 000 | Fast (~2 min per run); need headroom to find α_crit |
-| Federated (Exps 2–5) | 30 000 | ~3.6× baseline grokking step; balances headroom vs Flower overhead |
+Centralized runs are cheap (~2 min for 50k steps, ~4 min for 100k steps) because
+there is no per-round serialisation overhead. FL runs are expensive because
+Flower/Ray simulation adds ~0.3–0.5 s per round regardless of model/data size.
+FL runtime ≈ R × 0.4 s, where R = S_max / E.
 
-- Centralized: 50 000 epochs, log every 50 epochs (1 000 log points).
-- Federated: R = ⌈30 000 / E⌉ rounds, log every round.
+#### Definitions
 
-If a federated run shows grokking *in-progress* at S = 30 000 (train acc = 100 %
-but test acc climbing through 70–90 %), extend that specific run to S = 50 000.
+Let **T_base** = T_grok(α = 0.5, N = 256, centralized) — the baseline grokking step,
+determined in Exp 0. Preliminary estimate: T_base ≈ 8 000 (based on N = 128 result).
 
-**Runtime note.** Flower/Ray simulation has per-round overhead (~0.3–0.5 s).
-At E = 5 → R = 6 000 → ~35–50 min per FL run. At E = 1 → R = 30 000 → ~3–5 hr
-(impractical for sweeps). Therefore, for experiments where E = 1 is tested, we cap
-at R = 10 000 (S = 10 000 steps) and note any grokking that is in-progress but
-incomplete.
+Let **T_max** = max T_grok across all α that grok in Exp 1 — the slowest centralized
+grokking observed. This is the right anchor for FL budgets because FL-IID matches
+centralized step-for-step at α = 0.5; near the boundary, FL may be slower but should
+not exceed ~2× centralized.
+
+#### Per-experiment step budgets
+
+| Experiment | S_max | Rationale | R (at E = 5) | Est. runtime/run |
+|-----------|-------|-----------|-------------|-----------------|
+| **Exp 0** (centralized) | 50 000 | Confirm grokking at N = 256; find T_base | — | ~2 min |
+| **Exp 1** (centralized) | 100 000 | Generous headroom for slow grokking near α_crit. Gromov Fig 4a shows T_grok diverges as α → α_c; at α ≈ 0.2 grokking can take > 30 000 steps. At ~4 min/run, no reason to be stingy. | — | ~4 min |
+| **Exp 2** cent. (a, b) | 100 000 | Same as Exp 1; centralized-reduced runs are even faster (tiny datasets) | — | ~4 min |
+| **Exp 2** FL (c) | **adaptive**: min(50 000, 1.5 × T_max) | FL-IID ≈ centralized step-for-step; 1.5× headroom covers mild FL slowdown. If T_max = 30 000 → S_max = 45 000. If T_max = 8 000 → S_max = 12 000. | 9 000 (if 45k) | ~50 min (if 45k) |
+| **Exp 3** (FL) | same as Exp 2 FL | Non-IID may delay grokking but early abort catches hopeless runs | same | same |
+| **Exp 4a** (FL, fixed S) | same as Exp 2 FL | Fixed total steps; R varies with E. Higher E → fewer rounds → faster. | varies | E=5: ~50 min, E=50: ~5 min |
+| **Exp 4b** (FL, fixed R) | R × E (variable) | Fixed R = 2 000; total steps increase with E. E = 25 → S = 50 000. | 2 000 (fixed) | ~12 min |
+| **Exp 5** (FL) | **2 × T_max** | Rescue experiments need extra headroom — algorithms may grok later than FedAvg but still succeed. Cap at 80 000. | T_max × 2 / 5 | ~70 min (if T_max = 30k) |
+
+#### Decision rule (set after Exp 1)
+
+```
+T_base = T_grok(α = 0.5, N = 256)                    # from Exp 0
+T_max  = max{ T_grok(α) : α groks in Exp 1 }         # from Exp 1
+S_FL   = min(50_000, ceil(1.5 × T_max / 1000) × 1000)  # round up to nearest 1k
+S_rescue = min(80_000, 2 × T_max)
+```
+
+Example scenarios:
+
+| Scenario | T_base | T_max | S_FL | S_rescue | R (E=5) | FL min/run |
+|----------|--------|-------|------|----------|---------|-----------|
+| Low α_crit (α_c ≈ 0.1) | 8 000 | 40 000 | 50 000 | 80 000 | 10 000 | ~55 min |
+| Mid α_crit (α_c ≈ 0.2) | 8 000 | 25 000 | 38 000 | 50 000 | 7 600 | ~42 min |
+| High α_crit (α_c ≈ 0.3) | 8 000 | 12 000 | 18 000 | 24 000 | 3 600 | ~20 min |
+
+The "high α_crit" scenario is the lucky case — all FL runs are fast.
+
+#### Early abort rules
+
+1. **Memorisation failure**: If train_acc < 50 % by step min(2 × T_base, 15 000),
+   abort. The model cannot even memorise — something is fundamentally broken
+   (insufficient capacity, wrong LR, too little data).
+
+2. **Generalisation hopeless**: If train_acc = 100 % and test_acc < 5 % (chance level
+   ≈ 1/p ≈ 1 %) by step T_max, abort. The model memorised but shows zero
+   generalisation signal — it will not grok within the remaining budget.
+
+3. **T_50 decision**: If a run reaches S_max with T_50 achieved but T_grok = ∞
+   (test_acc between 50–94 % and still rising), flag for manual review. These
+   boundary cases are scientifically interesting and may warrant extension.
+
+#### Logging frequency
+
+| Context | Log interval | Log points at S_max = 50 000 |
+|---------|-------------|------------------------------|
+| Centralized | every 100 steps | 1 000 |
+| FL | every round | R (variable; 2 000–10 000) |
+
+#### E = 1 constraint
+
+E = 1 means R = S_max rounds, which at S_FL = 45 000 would be 45 000 rounds ×
+0.4 s = 5 hours per run — impractical. **E = 1 is tested only in Exp 4b** where
+R is capped at 2 000 (S = 2 000 steps, ~12 min). The finding "E = 1 with
+S = 2 000 doesn't grok" is informative: it establishes the minimum communication
+budget, not the minimum compute.
 
 ### 3.3  Centralized-reduced baseline
 
@@ -151,14 +219,26 @@ rerun properly.
 | N | {100, 128, 200, 256} |
 | α | {0.1, 0.3, 0.5} |
 | seeds | {42} (single seed; extend to 3 if results are noisy) |
-| S_max | 50 000 epochs |
+| S_max | 50 000 steps |
 
-**Runs.** 4N × 3α = **12 runs** (fast: centralized, ~2 min each).
+**Runs.** 4N × 3α = **12 runs** (fast: centralized, ~2 min each = ~24 min total).
+
+**Step budget rationale.** At α = 0.5, N = 128: T_grok ≈ 8 200 steps. With N = 256
+(more capacity), grokking should be similar or faster. At α = 0.1, grokking may take
+~3–5× longer. S_max = 50 000 gives ~6× headroom over the baseline — sufficient to
+observe grokking or confidently declare failure. This experiment also establishes
+T_base for calibrating all subsequent budgets.
 
 **Expected outcome.** N = 256 is our primary default (well above Gromov Fig 4b
 plateau). This experiment confirms it works at low α, and documents the critical
 width N_crit(α) for the paper. The comparison across widths also produces a
 publishable figure (extending Gromov's Fig 4b to lower α values).
+
+**LR validation.** The mean-field parametrisation (scaling absorbed into init)
+ensures function-level dynamics are O(1) in N, so lr = 50 should transfer from
+N = 128 to N = 256 without adjustment. If N = 256 shows significantly delayed
+grokking compared to N = 200 at the same α, check whether lr scaling is needed
+(try lr = 50 × 256/128 = 100). This is unlikely but cheap to test.
 
 **Why this matters.** Without this step, any grokking failure at low α could be
 confounded by width being too close to the theoretical minimum. This 30-minute
@@ -180,7 +260,16 @@ and the implicit regularisation from full-batch GD.
 |-----------|--------|
 | α | {0.03, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5} |
 | seeds | {42, 123, 456} |
-| S_max | 50 000 epochs |
+| S_max | 100 000 steps |
+
+**Step budget rationale.** Centralized runs cost ~4 min at 100k steps — cheap enough
+to be generous. Gromov Fig 4a shows T_grok diverges as α → α_c. At α ≈ 0.2,
+GD grokking can exceed 30 000 steps. At α ≈ 0.1, possibly 50 000+. S_max = 100 000
+gives 2× headroom even for the slowest grokkable settings. Any α that hasn't reached
+T_50 by 100k steps is confidently in the "no grok" regime.
+
+**After this experiment, compute:** T_max = max T_grok across all α that grok.
+This calibrates all FL budgets (see §3.2).
 
 **Controls.** α = 0.5 is the known-good baseline. Each α value gives a different
 n_train, test set, and param-to-data ratio (shown for N = 256):
@@ -196,7 +285,7 @@ n_train, test set, and param-to-data ratio (shown for N = 256):
 | 0.3 | 2 822 | 6 587 | 26.4 |
 | 0.5 | 4 704 | 4 705 | 15.8 |
 
-**Runs.** 8 × 3 = **24 runs.**
+**Runs.** 8 × 3 = **24 runs** (~4 min each = **~96 min total**).
 
 **Outputs.**
 - α_crit (the phase boundary)
@@ -237,8 +326,14 @@ Sweep:
 | K | {5, 10, 20, 50} |
 | E | 5 (default) |
 | f | 1.0 (full participation) |
-| R | ⌈30 000 / E⌉ = 6 000 |
 | seeds | {42, 123, 456} |
+
+**Step budgets by condition:**
+- **(a) Centralized-full:** S_max = 100 000 (~4 min/run). Reuse Exp 1 runs where α overlaps.
+- **(b) Centralized-reduced:** S_max = 100 000 (~4 min/run). Very small datasets → even faster.
+- **(c) FL:** S_max = S_FL (adaptive, from §3.2). R = S_FL / 5.
+  If T_max = 30 000 → S_FL = 45 000, R = 9 000 → ~50 min/run.
+  If T_max = 12 000 → S_FL = 18 000, R = 3 600 → ~20 min/run.
 
 **Runs.** 6 α × 4 K × 3 conditions × 3 seeds = **216 runs.**
 (Condition (a) doesn't depend on K, so reuse: 6α × 1 × 3 seeds = 18 unique.
@@ -296,7 +391,13 @@ behaviour; default: K = 10). Use α values near α_crit from Exp 1.
 | α_dir | {0.01, 0.1, 0.5, 1.0, 10.0, 1000.0} (6 values, 1000 ≈ IID) |
 | K | fixed (from Exp 2) |
 | E | 5, f = 1.0 |
+| S_max | S_FL (adaptive, from §3.2) |
 | seeds | {42, 123, 456} |
+
+**Step budget rationale.** Same as Exp 2 FL. Non-IID may delay grokking vs IID,
+but since S_FL already includes 1.5× headroom over centralized T_max, this should
+be sufficient. Extreme heterogeneity (α_dir = 0.01) at low α will likely trigger
+early abort (no memorisation), saving compute.
 
 **Runs.** 5 × 6 × 3 = **90 runs.**
 
@@ -314,6 +415,7 @@ behaviour; default: K = 10). Use α values near α_crit from Exp 1.
 5 × 3 = 15 are reused. **30 new runs.**
 
 **Combined Exp 3 unique runs:** 90 + 30 = **~120 runs.**
+Estimated runtime: ~120 × ~50 min × 0.7 (early abort savings) ≈ **~70 hr sequential.**
 
 **Outputs.**
 - **Figure 3a:** Phase diagram heatmap — x-axis: Dirichlet α_dir (log scale),
@@ -339,18 +441,25 @@ boundary, more frequent aggregation (lower E or higher f) should be necessary.
 **Design.** Run two matched sub-experiments to disentangle communication from
 computation.
 
-**Sub-experiment 4a: Fixed total steps (S = 30 000), vary communication frequency.**
+**Sub-experiment 4a: Fixed total steps (S = S_FL), vary communication frequency.**
 Measures the effect of communication at constant total computation.
 
-| E | R = S / E | Communication events | Notes |
-|---|-----------|---------------------|-------|
-| 5 | 6 000 | 6 000 | baseline |
-| 10 | 3 000 | 3 000 | |
-| 25 | 1 200 | 1 200 | |
-| 50 | 600 | 600 | |
+Uses S_FL from §3.2. Example with S_FL = 45 000:
 
-E = 1 is excluded from the fixed-S design because R = 30 000 is impractical
-(~4 hr per run). It is tested in Sub-experiment 4b instead, where R is capped.
+| E | R = S_FL / E | Runtime/run | Notes |
+|---|-------------|-------------|-------|
+| 5 | 9 000 | ~50 min | baseline |
+| 10 | 4 500 | ~25 min | |
+| 25 | 1 800 | ~10 min | |
+| 50 | 900 | ~5 min | |
+
+E = 1 is excluded from the fixed-S design because R = S_FL rounds is impractical
+(~5 hr per run). It is tested in Sub-experiment 4b instead, where R is capped.
+
+**Step budget rationale.** Using S_FL (not a smaller value) is critical — otherwise
+grokking failure could be attributed to insufficient total steps rather than
+insufficient communication. The whole point is to hold total compute constant
+and vary only communication frequency.
 
 | Parameter | Values |
 |-----------|--------|
@@ -360,17 +469,26 @@ E = 1 is excluded from the fixed-S design because R = 30 000 is impractical
 | seeds | {42, 123, 456} |
 
 **Runs.** 4E × 3α × 2f × 3 seeds = **72 runs.** (All federated.)
+Average runtime ~23 min/run (weighted by E distribution) → **~28 hr sequential.**
 
 **Sub-experiment 4b: Fixed total rounds (R = 2 000), vary local computation.**
 Measures the practical tradeoff: more local work per round vs fixed comm budget.
-Also the only place E = 1 is tested (R = 2 000 is practical).
+Also the only place E = 1 is tested (R = 2 000 is practical at ~12 min/run).
 
-| E | S = R × E | Notes |
-|---|-----------|-------|
-| 1 | 2 000 | low-S; may not grok — that is informative |
-| 5 | 10 000 | baseline |
-| 10 | 20 000 | |
-| 25 | 50 000 | |
+| E | S = R × E | Grok expected? | Notes |
+|---|-----------|----------------|-------|
+| 1 | 2 000 | Unlikely (S ≪ T_base) | Establishes minimum-comm baseline |
+| 5 | 10 000 | Maybe (S ≈ T_base) | Depends on α |
+| 10 | 20 000 | Likely at α ≥ 0.3 | |
+| 25 | 50 000 | Likely (S ≈ S_FL) | |
+
+**Step budget rationale.** Here S is not fixed — it grows with E. The question is
+whether more local computation (at fixed communication) helps. E = 1 at R = 2 000
+gives only S = 2 000 steps, which is well below T_base ≈ 8 000. If it doesn't
+grok, that's the step budget's fault, not E = 1's. But E = 25 gives S = 50 000
+(≈ S_FL), so if it groks here but not at E = 5 (S = 10 000), we know 10 000
+total steps is simply insufficient. **The comparison across E values in 4b
+disentangles "not enough total steps" from "not enough communication."**
 
 | Parameter | Values |
 |-----------|--------|
@@ -379,7 +497,7 @@ Also the only place E = 1 is tested (R = 2 000 is practical).
 | K | same as Exp 3 |
 | seeds | {42, 123, 456} |
 
-**Runs.** 4E × 3α × 3 seeds = **36 runs.**
+**Runs.** 4E × 3α × 3 seeds = **36 runs** (all at R = 2 000, ~12 min each = **~7 hr**).
 
 **Outputs.**
 - **Figure 4a:** Grokking step vs local epochs (log scale), one line per (α, f) combo.
@@ -424,6 +542,12 @@ For each hard setting, sweep:
 | FedAvg + weight decay | λ ∈ {0.01, 0.1, 1.0} |
 
 **Runs.** 3 settings × (1 + 4 + 3 + 3) algorithms × 3 seeds = **99 runs.**
+
+**Step budget:** S_max = S_rescue = min(80 000, 2 × T_max) from §3.2. Rescue
+experiments need extra headroom — a better algorithm may grok later than FedAvg
+at the same setting but still succeed. At E = 5: R = S_rescue / 5.
+If T_max = 30 000 → S_rescue = 60 000, R = 12 000 → ~67 min/run → **~110 hr sequential.**
+If T_max = 12 000 → S_rescue = 24 000, R = 4 800 → ~27 min/run → **~45 hr sequential.**
 
 **Outputs.**
 - **Figure 5:** For each hard setting, bar chart of grokking step across algorithms.
@@ -483,23 +607,38 @@ For each, produce:
 
 ---
 
-## 5  Summary of Run Counts
+## 5  Summary of Run Counts & Compute Budget
 
-| Experiment | Focus | Runs | FL runs | Centralized runs | Runtime est. |
-|------------|-------|------|---------|-----------------|-------------|
-| 1. Centralized phase boundary | α sweep | 24 | 0 | 24 | ~1 hr |
-| 2. Aggregation & FL boundary | α × K × {full, reduced, FL} | 162 | 72 | 90 | ~55 hr |
-| 3. Heterogeneity | (α × Dirichlet) + structured | ~120 | ~105 | ~15 (overlap w/ Exp 2) | ~65 hr |
-| 4. Communication | (E × f) fixed-S + fixed-R | 108 | 108 | 0 | ~50 hr |
-| 5. Algorithm rescue | 3 settings × algorithm sweep | 99 | 99 | 0 | ~60 hr |
-| 6. Mechanistic | post-hoc analysis | 0 | 0 | 0 | — |
-| **Total** | | **~513** | **~384** | **~129** | **~231 hr** |
+All FL runtimes below assume the **mid-α_crit scenario** (T_max ≈ 30 000,
+S_FL = 45 000, S_rescue = 60 000). See §3.2 for the adaptive formulas.
 
-**Wall-clock estimate.** With 4-way parallelism: ~58 hr ≈ **2.5 days.**
+| Exp | Focus | S_max | Runs | FL | Cent. | Seq. runtime |
+|-----|-------|-------|------|----|-------|-------------|
+| 0 | Width validation | 50k (cent.) | 12 | 0 | 12 | ~24 min |
+| 1 | Centralized boundary | 100k (cent.) | 24 | 0 | 24 | ~96 min |
+| 2 | Aggregation & FL boundary | 100k (cent.) / S_FL (FL) | 162 | 72 | 90 | ~66 hr |
+| 3 | Heterogeneity | S_FL | ~120 | ~105 | ~15 | ~70 hr |
+| 4a | Comm. (fixed S) | S_FL | 72 | 72 | 0 | ~28 hr |
+| 4b | Comm. (fixed R) | R × E (variable) | 36 | 36 | 0 | ~7 hr |
+| 5 | Algorithm rescue | S_rescue | 99 | 99 | 0 | ~110 hr |
+| 6 | Mechanistic | — | 0 | 0 | 0 | — |
+| **Total** | | | **~525** | **~384** | **~141** | **~283 hr** |
 
-*Runtime assumptions: ~35–50 min per FL run (R = 6 000, E = 5), scaling with K.
-~2 min per centralized run (50k epochs). Flower/Ray overhead dominates FL runtime.
-Runs within each experiment are fully independent and parallelisable.*
+#### Runtime breakdown by scenario
+
+| Scenario | T_max | S_FL | S_rescue | FL min/run (E=5) | Total seq. | 4-way parallel |
+|----------|-------|------|----------|-----------------|-----------|---------------|
+| High α_crit (≈ 0.3) | 12 000 | 18 000 | 24 000 | ~20 min | ~130 hr | ~33 hr ≈ **1.4 days** |
+| Mid α_crit (≈ 0.2) | 30 000 | 45 000 | 60 000 | ~50 min | ~283 hr | ~71 hr ≈ **3 days** |
+| Low α_crit (≈ 0.1) | 45 000 | 50 000 | 80 000 | ~56 min | ~320 hr | ~80 hr ≈ **3.3 days** |
+
+**Early abort savings.** ~25–35 % of runs (extreme non-IID at low α, high K with
+tiny per-client data) will trigger early abort. This reduces effective runtime by
+~25 %, bringing the mid scenario to ~**2.3 days** at 4-way parallelism.
+
+*Runtime assumptions: ~0.4 s Flower/Ray overhead per round. Centralized: ~2 min
+per 50k steps, ~4 min per 100k steps. All runs within each experiment are
+fully independent and parallelisable.*
 
 ---
 
@@ -574,6 +713,9 @@ Exp 6 (mechanistic analysis)          ← post-hoc on all runs
 This would mean modular addition groks even with ~30 training pairs (α = 0.03).
 If observed:
 - Extend sweep to α ∈ {0.01, 0.02} (9–18 training samples)
+- **Reduce p** (e.g. p = 23): Gromov notes α_c is a decreasing function of p, so
+  smaller primes have higher α_crit. p = 23 also makes experiments ~16× faster
+  (p² = 529 vs 9 409 pairs, model 3× smaller).
 - Switch to a harder task (e.g., `x2_plus_y2`) which may have a higher α_crit
 - The finding "grokking is universal for this architecture" is itself publishable
 
