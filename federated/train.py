@@ -24,6 +24,7 @@ from flwr.client import NumPyClient, ClientApp
 from flwr.common import Context, ndarrays_to_parameters
 from flwr.server import ServerApp, ServerConfig, ServerAppComponents
 from flwr.server.strategy import FedAvg
+from flwr.server.strategy import FedAdam
 from flwr.simulation import run_simulation
 
 from federated.config import FedConfig
@@ -91,6 +92,10 @@ def _cfg_to_fit_config(cfg: FedConfig, server_round: int):
         "hidden_width": cfg.hidden_width,
         "activation": cfg.activation,
         "proximal_mu": cfg.proximal_mu,
+        "strategy": cfg.strategy,
+        "server_lr": cfg.server_lr,
+        "tau": cfg.tau,
+        "track_client_drift": cfg.track_client_drift,
     }
 
 
@@ -112,7 +117,20 @@ def _fit_config_to_cfg(config: dict) -> FedConfig:
         hidden_width=int(config["hidden_width"]),
         activation=config["activation"],
         proximal_mu=float(config.get("proximal_mu", 0.0)),
+        strategy=config.get("strategy", "fedavg"),
+        server_lr=float(config.get("server_lr", 1.0)),
+        tau=float(config.get("tau", 1e-3)),
+        track_client_drift=bool(config.get("track_client_drift", True)),
     )
+
+
+def compute_drift(w_before: list, w_after: list) -> float:
+    """Compute Frobenius norm of weight difference: ||w_after - w_before||_F."""
+    total = 0.0
+    for wb, wa in zip(w_before, w_after):
+        diff = wa - wb
+        total += float(np.sum(diff ** 2))
+    return float(np.sqrt(total))
 
 
 # ── Flower Client ────────────────────────────────────────────────────────────
@@ -177,15 +195,49 @@ class GrokClient(NumPyClient):
             local_loss = loss_fn(out, y_local_oh).item()
             local_acc = compute_accuracy(out, y_local)
 
+        updated_weights = _model_to_ndarrays(model)
+        drift = compute_drift(parameters, updated_weights)
+        weight_norm = float(sum(np.sum(w**2) for w in updated_weights) ** 0.5)
+        local_ipr = compute_ipr(model)["ipr"]
+
         return (
-            _model_to_ndarrays(model),
+            updated_weights,
             len(y_local),
-            {"loss": local_loss, "accuracy": local_acc},
+            {"loss": local_loss, "accuracy": local_acc, "drift": drift,
+             "weight_norm": weight_norm, "ipr": local_ipr},
         )
 
     def evaluate(self, parameters, config):
         # Server-side evaluation handles global metrics; skip client eval
         return 0.0, 0, {}
+
+
+# ── Strategy builder ─────────────────────────────────────────────────────────
+
+def _build_strategy(cfg, init_params, evaluate_fn, fit_metrics_aggregation_fn=None):
+    """Build Flower strategy based on config.strategy field."""
+    common_kwargs = dict(
+        fraction_fit=cfg.fraction_train,
+        fraction_evaluate=0.0,
+        min_fit_clients=max(1, int(cfg.num_clients * cfg.fraction_train)),
+        min_available_clients=cfg.num_clients,
+        initial_parameters=init_params,
+        evaluate_fn=evaluate_fn,
+        on_fit_config_fn=lambda rnd: _cfg_to_fit_config(cfg, rnd),
+    )
+    if fit_metrics_aggregation_fn is not None:
+        common_kwargs["fit_metrics_aggregation_fn"] = fit_metrics_aggregation_fn
+
+    if cfg.strategy == "fedadam":
+        return FedAdam(
+            **common_kwargs,
+            eta=cfg.server_lr,
+            tau=cfg.tau,
+        )
+    else:
+        # Both "fedavg" and "fedprox" use FedAvg strategy;
+        # FedProx proximal term is applied client-side in GrokClient.fit()
+        return FedAvg(**common_kwargs)
 
 
 # ── Flower Server + Evaluation ───────────────────────────────────────────────
@@ -220,6 +272,8 @@ def fed_train(cfg: FedConfig):
         "train_acc": [], "test_acc": [],
         "weight_norm_layer1": [], "weight_norm_layer2": [],
         "ipr": [],
+        "mean_client_drift": [],
+        "client_weight_divergence": [],
     }
 
     # Mutable container to capture final model parameters from evaluate_fn
@@ -227,6 +281,22 @@ def fed_train(cfg: FedConfig):
 
     loss_fn = nn.MSELoss()
     start_time = time.time()
+
+    # Mutable container for inter-callback communication (closure-shared)
+    _round_metrics = {"mean_drift": 0.0, "weight_divergence": 0.0}
+
+    def _aggregate_fit_metrics(metrics_list):
+        """Aggregate per-client fit metrics from GrokClient.fit()."""
+        drifts = [m.get("drift", 0.0) for _, m in metrics_list]
+        w_norms = [m.get("weight_norm", 0.0) for _, m in metrics_list]
+
+        _round_metrics["mean_drift"] = float(np.mean(drifts)) if drifts else 0.0
+        _round_metrics["weight_divergence"] = float(np.std(w_norms)) if len(w_norms) > 1 else 0.0
+
+        return {
+            "mean_drift": _round_metrics["mean_drift"],
+            "weight_divergence": _round_metrics["weight_divergence"],
+        }
 
     def evaluate_fn(server_round, parameters, config):
         """Centralized evaluation after each aggregation round."""
@@ -260,6 +330,8 @@ def fed_train(cfg: FedConfig):
         history["weight_norm_layer1"].append(wn["weight_norm_layer1"])
         history["weight_norm_layer2"].append(wn["weight_norm_layer2"])
         history["ipr"].append(ipr["ipr"])
+        history["mean_client_drift"].append(_round_metrics["mean_drift"])
+        history["client_weight_divergence"].append(_round_metrics["weight_divergence"])
 
         if server_round % max(1, cfg.num_rounds // 10) == 0:
             elapsed = time.time() - start_time
@@ -286,15 +358,8 @@ def fed_train(cfg: FedConfig):
     fed_cfg = cfg
 
     def server_fn(context: Context):
-        strategy = FedAvg(
-            fraction_fit=fed_cfg.fraction_train,
-            fraction_evaluate=0.0,      # skip client-side eval
-            min_fit_clients=max(1, int(fed_cfg.num_clients * fed_cfg.fraction_train)),
-            min_available_clients=fed_cfg.num_clients,
-            initial_parameters=init_params,
-            evaluate_fn=evaluate_fn,
-            on_fit_config_fn=lambda rnd: _cfg_to_fit_config(fed_cfg, rnd),
-        )
+        strategy = _build_strategy(fed_cfg, init_params, evaluate_fn,
+                                   fit_metrics_aggregation_fn=_aggregate_fit_metrics)
         return ServerAppComponents(
             strategy=strategy,
             config=ServerConfig(num_rounds=fed_cfg.num_rounds),
@@ -334,7 +399,8 @@ def fed_train(cfg: FedConfig):
     prox_suffix = f"_mu{cfg.proximal_mu}" if cfg.proximal_mu > 0 else ""
     tag = (f"fed_{cfg.task}_{cfg.optimizer}_p{cfg.p}_N{cfg.hidden_width}"
            f"_a{cfg.alpha}_K{cfg.num_clients}_le{cfg.local_epochs}"
-           f"_ft{cfg.fraction_train}_{cfg.partition}{dirichlet_suffix}{prox_suffix}")
+           f"_ft{cfg.fraction_train}_{cfg.partition}{dirichlet_suffix}"
+           f"{prox_suffix}_s{cfg.seed}")
     history_path = os.path.join(cfg.output_dir, f"history_{tag}.json")
     with open(history_path, "w") as f:
         json.dump(history, f)

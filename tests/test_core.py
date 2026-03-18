@@ -238,6 +238,19 @@ class TestMetrics:
         targets = torch.tensor([0, 1, 1, 0])
         assert compute_accuracy(logits, targets) == 50.0
 
+    def test_fourier_spectrum_shape(self, small_model):
+        from core.metrics import fourier_spectrum
+        spec = fourier_spectrum(small_model)
+        assert "spectrum" in spec
+        assert len(spec["spectrum"]) == small_model.N
+        assert len(spec["spectrum"][0]) == small_model.P
+
+    def test_fourier_spectrum_nonnegative(self, small_model):
+        from core.metrics import fourier_spectrum
+        spec = fourier_spectrum(small_model)
+        for row in spec["spectrum"]:
+            assert all(v >= 0 for v in row)
+
 
 # ── Utils ─────────────────────────────────────────────────────────────────────
 

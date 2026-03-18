@@ -60,3 +60,19 @@ def compute_accuracy(logits, targets):
     preds = logits.argmax(dim=1)
     correct = (preds == targets).float().mean().item()
     return correct * 100.0
+
+
+def fourier_spectrum(model):
+    """Full Fourier power spectrum |W_tilde_1(nu)|^2 per neuron.
+
+    Returns dict with 'spectrum': list of lists (N x p), each entry is
+    the squared magnitude of the Fourier coefficient at that frequency.
+    """
+    W1 = model.W1.data
+    p = model.P
+
+    W1_n = W1[:, :p]  # (N, p) — first-operand weights
+    W1_fft = torch.fft.fft(W1_n, dim=1)  # (N, p) complex
+    power = (W1_fft.abs() ** 2)  # (N, p)
+
+    return {"spectrum": power.cpu().tolist()}

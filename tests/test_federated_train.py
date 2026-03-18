@@ -308,6 +308,7 @@ class TestFedTrain:
             "train_acc", "test_acc",
             "weight_norm_layer1", "weight_norm_layer2",
             "ipr",
+            "mean_client_drift", "client_weight_divergence",
         }
         assert set(history.keys()) == expected_keys
 

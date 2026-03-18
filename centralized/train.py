@@ -100,7 +100,7 @@ def train(cfg: Config):
 
     # Save results
     os.makedirs(cfg.output_dir, exist_ok=True)
-    tag = f"{cfg.task}_{cfg.optimizer}_p{cfg.p}_N{cfg.hidden_width}_a{cfg.alpha}"
+    tag = f"{cfg.task}_{cfg.optimizer}_p{cfg.p}_N{cfg.hidden_width}_a{cfg.alpha}_s{cfg.seed}"
     history_path = os.path.join(cfg.output_dir, f"history_{tag}.json")
     with open(history_path, "w") as f:
         json.dump(history, f)

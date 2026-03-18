@@ -19,6 +19,12 @@ class FedConfig(Config):
                                           # (α→∞: IID, α→0: one class per client)
     proximal_mu: float = 0.0              # FedProx proximal term strength
                                           # (0.0 = FedAvg, >0 = FedProx)
+    strategy: Literal[
+        "fedavg", "fedprox", "fedadam"
+    ] = "fedavg"
+    server_lr: float = 1.0               # server-side learning rate (FedAdam)
+    tau: float = 1e-3                     # FedAdam adaptivity parameter
+    track_client_drift: bool = True       # enable per-round drift logging
 
     # Override defaults for federated setting
     hidden_width: int = 128               # slightly overparameterized for FL
