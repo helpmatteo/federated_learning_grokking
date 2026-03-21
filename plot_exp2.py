@@ -96,10 +96,10 @@ def plot_t_grok_vs_K(cells):
     if len(alphas) == 1:
         axes = [axes]
 
-    conditions = ["cent_full", "fl_iid", "cent_reduced"]
-    colors = {"cent_full": "#2196F3", "fl_iid": "#FF5722", "cent_reduced": "#9E9E9E"}
-    labels = {"cent_full": "Centralized (full)", "fl_iid": "FL IID", "cent_reduced": "Centralized (reduced)"}
-    markers = {"cent_full": "o", "fl_iid": "s", "cent_reduced": "^"}
+    conditions = ["cent_full", "fl_iid"]
+    colors = {"cent_full": "#2196F3", "fl_iid": "#FF5722"}
+    labels = {"cent_full": "Centralized (full)", "fl_iid": "FL IID"}
+    markers = {"cent_full": "o", "fl_iid": "s"}
 
     for ax, alpha in zip(axes, alphas):
         for cond in conditions:
