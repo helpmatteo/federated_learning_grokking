@@ -3,7 +3,7 @@
 Usage:
     python run_experiment.py exp0
     python run_experiment.py exp1 --hidden_width 256
-    python run_experiment.py exp2 --t_max 30000
+    python run_experiment.py exp2 --t_max 50000
     python run_experiment.py exp3a --alphas 0.1,0.15,0.2,0.3,0.5
     python run_experiment.py exp5 --hard_settings hard_settings.json
     python run_experiment.py plot --exp exp1 --results results/exp1_boundary/exp1_results.json
@@ -26,9 +26,16 @@ def parse_args():
     p1.add_argument("--output_dir", default="results/exp1_boundary")
 
     p2 = subparsers.add_parser("exp2", help="Aggregation effect")
-    p2.add_argument("--alphas", type=str, default=None, help="Comma-separated alphas")
+    p2.add_argument("--alpha", type=float, default=None,
+                    help="Single alpha value (for parallel single-cell runs)")
+    p2.add_argument("--K", type=int, default=None,
+                    help="Single K value (for parallel single-cell runs)")
+    p2.add_argument("--alphas", type=str, default=None,
+                    help="Comma-separated alphas (for multi-alpha runs)")
+    p2.add_argument("--k_values", type=str, default=None,
+                    help="Comma-separated K values (default: 2,5,10,20,50,97)")
     p2.add_argument("--hidden_width", type=int, default=256)
-    p2.add_argument("--t_max", type=int, default=30000)
+    p2.add_argument("--t_max", type=int, default=50000)
     p2.add_argument("--output_dir", default="results/exp2_aggregation")
 
     for sub in ["exp3a", "exp3a_kval", "exp3b"]:
@@ -36,7 +43,7 @@ def parse_args():
         p.add_argument("--alphas", type=str, default="0.1,0.15,0.2,0.3,0.5")
         p.add_argument("--k", type=int, default=10)
         p.add_argument("--hidden_width", type=int, default=256)
-        p.add_argument("--t_max", type=int, default=30000)
+        p.add_argument("--t_max", type=int, default=50000)
         p.add_argument("--output_dir", default="results/exp3_heterogeneity")
 
     for sub in ["exp4a", "exp4b", "exp4c"]:
@@ -44,14 +51,14 @@ def parse_args():
         p.add_argument("--alphas", type=str, default="0.2,0.3,0.5")
         p.add_argument("--k", type=int, default=10)
         p.add_argument("--hidden_width", type=int, default=256)
-        p.add_argument("--t_max", type=int, default=30000)
+        p.add_argument("--t_max", type=int, default=50000)
         p.add_argument("--output_dir", default="results/exp4_optimization")
 
     p5 = subparsers.add_parser("exp5", help="Algorithm rescue")
     p5.add_argument("--hard_settings", type=str, required=True,
                     help="JSON file with hard settings list")
     p5.add_argument("--hidden_width", type=int, default=256)
-    p5.add_argument("--t_max", type=int, default=30000)
+    p5.add_argument("--t_max", type=int, default=50000)
     p5.add_argument("--output_dir", default="results/exp5_algorithms")
 
     p6 = subparsers.add_parser("exp6", help="Mechanistic analysis")
@@ -78,10 +85,25 @@ def main():
         run_exp1(hidden_width=args.hidden_width, output_dir=args.output_dir)
 
     elif args.experiment == "exp2":
-        from experiments.exp2_aggregation import run_exp2
-        alphas = [float(a) for a in args.alphas.split(",")] if args.alphas else None
-        run_exp2(alphas=alphas, hidden_width=args.hidden_width,
-                 t_max=args.t_max, output_dir=args.output_dir)
+        from experiments.exp2_aggregation import run_exp2, run_exp2_cell
+        k_values = [int(k) for k in args.k_values.split(",")] if args.k_values else None
+
+        if args.alpha is not None and args.K is not None:
+            # Single cell: python run_experiment.py exp2 --alpha 0.25 --K 10
+            run_exp2_cell(alpha=args.alpha, K=args.K,
+                          hidden_width=args.hidden_width,
+                          t_max=args.t_max, output_dir=args.output_dir)
+        elif args.alpha is not None:
+            # One alpha, all K: python run_experiment.py exp2 --alpha 0.25
+            run_exp2(alphas=[args.alpha], k_values=k_values,
+                     hidden_width=args.hidden_width,
+                     t_max=args.t_max, output_dir=args.output_dir)
+        else:
+            # Full sweep: python run_experiment.py exp2 --alphas 0.20,0.25,0.30,0.35,0.50
+            alphas = [float(a) for a in args.alphas.split(",")] if args.alphas else None
+            run_exp2(alphas=alphas, k_values=k_values,
+                     hidden_width=args.hidden_width,
+                     t_max=args.t_max, output_dir=args.output_dir)
 
     elif args.experiment in ("exp3a", "exp3a_kval", "exp3b"):
         alphas = [float(a) for a in args.alphas.split(",")]
