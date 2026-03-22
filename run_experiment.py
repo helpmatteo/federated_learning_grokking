@@ -55,7 +55,16 @@ def parse_args():
 
     for sub in ["exp4a", "exp4b", "exp4c"]:
         p = subparsers.add_parser(sub, help=f"Optimization: {sub}")
-        p.add_argument("--alphas", type=str, default="0.2,0.3,0.5")
+        p.add_argument("--alpha", type=float, default=None,
+                        help="Single alpha value (for parallel single-cell runs)")
+        p.add_argument("--alphas", type=str, default=None,
+                        help="Comma-separated alphas")
+        p.add_argument("--E", type=int, default=None,
+                        help="Single E value (local epochs)")
+        p.add_argument("--het", type=str, default=None, choices=["iid", "noniid"],
+                        help="Heterogeneity setting (for 4a/4b single-cell)")
+        p.add_argument("--frac", type=float, default=None,
+                        help="Participation fraction (for 4b single-cell)")
         p.add_argument("--k", type=int, default=10)
         p.add_argument("--hidden_width", type=int, default=256)
         p.add_argument("--t_max", type=int, default=50000)
@@ -151,22 +160,42 @@ def main():
                           t_max=args.t_max, output_dir=args.output_dir)
 
     elif args.experiment in ("exp4a", "exp4b", "exp4c"):
-        alphas = [float(a) for a in args.alphas.split(",")]
         if args.experiment == "exp4a":
-            from experiments.exp4_optimization import run_exp4a
-            run_exp4a(alphas=alphas, k=args.k,
-                      hidden_width=args.hidden_width, t_max=args.t_max,
-                      output_dir=args.output_dir)
+            if args.alpha is not None and args.E is not None and args.het is not None:
+                from experiments.exp4_optimization import run_exp4a_cell
+                run_exp4a_cell(alpha=args.alpha, E=args.E, het=args.het,
+                               k=args.k, hidden_width=args.hidden_width,
+                               t_max=args.t_max, output_dir=args.output_dir)
+            else:
+                from experiments.exp4_optimization import run_exp4a
+                alphas = [float(a) for a in args.alphas.split(",")] if args.alphas else None
+                run_exp4a(alphas=alphas, k=args.k,
+                          hidden_width=args.hidden_width, t_max=args.t_max,
+                          output_dir=args.output_dir)
         elif args.experiment == "exp4b":
-            from experiments.exp4_optimization import run_exp4b
-            run_exp4b(alphas=alphas, k=args.k,
-                      hidden_width=args.hidden_width, t_max=args.t_max,
-                      output_dir=args.output_dir)
+            if args.alpha is not None and args.frac is not None and args.het is not None:
+                from experiments.exp4_optimization import run_exp4b_cell
+                run_exp4b_cell(alpha=args.alpha, frac=args.frac, het=args.het,
+                               k=args.k, hidden_width=args.hidden_width,
+                               t_max=args.t_max, output_dir=args.output_dir)
+            else:
+                from experiments.exp4_optimization import run_exp4b
+                alphas = [float(a) for a in args.alphas.split(",")] if args.alphas else None
+                run_exp4b(alphas=alphas, k=args.k,
+                          hidden_width=args.hidden_width, t_max=args.t_max,
+                          output_dir=args.output_dir)
         elif args.experiment == "exp4c":
-            from experiments.exp4_optimization import run_exp4c
-            run_exp4c(alphas=alphas, k=args.k,
-                      hidden_width=args.hidden_width,
-                      output_dir=args.output_dir)
+            if args.alpha is not None and args.E is not None:
+                from experiments.exp4_optimization import run_exp4c_cell
+                run_exp4c_cell(alpha=args.alpha, E=args.E,
+                               k=args.k, hidden_width=args.hidden_width,
+                               output_dir=args.output_dir)
+            else:
+                from experiments.exp4_optimization import run_exp4c
+                alphas = [float(a) for a in args.alphas.split(",")] if args.alphas else None
+                run_exp4c(alphas=alphas, k=args.k,
+                          hidden_width=args.hidden_width,
+                          output_dir=args.output_dir)
 
     elif args.experiment == "exp5":
         from experiments.exp5_algorithms import run_exp5
