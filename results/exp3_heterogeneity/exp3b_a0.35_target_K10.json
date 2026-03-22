@@ -1,0 +1,39 @@
+{
+  "label": "3b a=0.35 part=target K=10",
+  "per_seed": [
+    {
+      "t_grok": 10310,
+      "t_50": 8955,
+      "final_test_acc": 99.99999403953552,
+      "final_train_acc": 100.0,
+      "final_ipr": 0.36072099208831787
+    },
+    {
+      "t_grok": 10100,
+      "t_50": 8660,
+      "final_test_acc": 99.99999403953552,
+      "final_train_acc": 100.0,
+      "final_ipr": 0.36571818590164185
+    },
+    {
+      "t_grok": 9870,
+      "t_50": 8610,
+      "final_test_acc": 99.99999403953552,
+      "final_train_acc": 100.0,
+      "final_ipr": 0.3633321523666382
+    }
+  ],
+  "summary": {
+    "n_seeds": 3,
+    "n_grokked": 3,
+    "t_grok_mean": 10093.333333333334,
+    "t_grok_std": 220.07574453658754,
+    "t_50_mean": 8741.666666666666,
+    "t_50_std": 186.4358692240668,
+    "final_acc_mean": 99.99999403953552,
+    "final_acc_std": 0.0
+  },
+  "alpha": 0.35,
+  "partition": "target",
+  "K": 10
+}

@@ -40,7 +40,14 @@ def parse_args():
 
     for sub in ["exp3a", "exp3a_kval", "exp3b"]:
         p = subparsers.add_parser(sub, help=f"Heterogeneity: {sub}")
-        p.add_argument("--alphas", type=str, default="0.1,0.15,0.2,0.3,0.5")
+        p.add_argument("--alpha", type=float, default=None,
+                        help="Single alpha value (for parallel single-cell runs)")
+        p.add_argument("--alphas", type=str, default=None,
+                        help="Comma-separated alphas")
+        p.add_argument("--dir_alpha", type=float, default=None,
+                        help="Single Dirichlet alpha (for 3a single-cell runs)")
+        p.add_argument("--partition", type=str, default=None,
+                        help="Single partition type (for 3b single-cell runs)")
         p.add_argument("--k", type=int, default=10)
         p.add_argument("--hidden_width", type=int, default=256)
         p.add_argument("--t_max", type=int, default=50000)
@@ -106,22 +113,42 @@ def main():
                      t_max=args.t_max, output_dir=args.output_dir)
 
     elif args.experiment in ("exp3a", "exp3a_kval", "exp3b"):
-        alphas = [float(a) for a in args.alphas.split(",")]
         if args.experiment == "exp3a":
-            from experiments.exp3_heterogeneity import run_exp3a
-            run_exp3a(alphas=alphas, k_primary=args.k,
-                      hidden_width=args.hidden_width, t_max=args.t_max,
-                      output_dir=args.output_dir)
+            if args.alpha is not None and args.dir_alpha is not None:
+                from experiments.exp3_heterogeneity import run_exp3a_cell
+                run_exp3a_cell(alpha=args.alpha, dir_alpha=args.dir_alpha,
+                               k=args.k, hidden_width=args.hidden_width,
+                               t_max=args.t_max, output_dir=args.output_dir)
+            else:
+                from experiments.exp3_heterogeneity import run_exp3a
+                alphas = [float(a) for a in args.alphas.split(",")] if args.alphas else None
+                run_exp3a(alphas=alphas or [0.20, 0.25, 0.30, 0.35, 0.50],
+                          k_primary=args.k, hidden_width=args.hidden_width,
+                          t_max=args.t_max, output_dir=args.output_dir)
         elif args.experiment == "exp3a_kval":
-            from experiments.exp3_heterogeneity import run_exp3a_k_validation
-            run_exp3a_k_validation(alphas=alphas, k_secondary=args.k,
-                                   hidden_width=args.hidden_width, t_max=args.t_max,
-                                   output_dir=args.output_dir)
+            if args.alpha is not None and args.dir_alpha is not None:
+                from experiments.exp3_heterogeneity import run_exp3a_cell
+                run_exp3a_cell(alpha=args.alpha, dir_alpha=args.dir_alpha,
+                               k=args.k, hidden_width=args.hidden_width,
+                               t_max=args.t_max, output_dir=args.output_dir)
+            else:
+                from experiments.exp3_heterogeneity import run_exp3a_k_validation
+                alphas = [float(a) for a in args.alphas.split(",")] if args.alphas else None
+                run_exp3a_k_validation(alphas=alphas, k_secondary=args.k,
+                                       hidden_width=args.hidden_width, t_max=args.t_max,
+                                       output_dir=args.output_dir)
         elif args.experiment == "exp3b":
-            from experiments.exp3_heterogeneity import run_exp3b
-            run_exp3b(alphas=alphas, k_primary=args.k,
-                      hidden_width=args.hidden_width, t_max=args.t_max,
-                      output_dir=args.output_dir)
+            if args.alpha is not None and args.partition is not None:
+                from experiments.exp3_heterogeneity import run_exp3b_cell
+                run_exp3b_cell(alpha=args.alpha, partition=args.partition,
+                               k=args.k, hidden_width=args.hidden_width,
+                               t_max=args.t_max, output_dir=args.output_dir)
+            else:
+                from experiments.exp3_heterogeneity import run_exp3b
+                alphas = [float(a) for a in args.alphas.split(",")] if args.alphas else None
+                run_exp3b(alphas=alphas or [0.20, 0.25, 0.30, 0.35, 0.50],
+                          k_primary=args.k, hidden_width=args.hidden_width,
+                          t_max=args.t_max, output_dir=args.output_dir)
 
     elif args.experiment in ("exp4a", "exp4b", "exp4c"):
         alphas = [float(a) for a in args.alphas.split(",")]

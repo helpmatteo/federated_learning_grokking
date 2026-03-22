@@ -192,6 +192,58 @@ def plot_slowdown_ratio(cells):
     plt.close()
     print(f"Saved: {OUTPUT_DIR}/exp2_slowdown_ratio.png")
 
+    # --- Consistent linear scale version ---
+    # Collect global max across all finite T_grok values
+    all_t = []
+    for c in cells:
+        for cond in conditions:
+            match = [cc for cc in cells if cc["alpha"] == c["alpha"] and cc["K"] == c["K"]]
+            if match:
+                t = parse_inf(match[0][cond]["summary"]["t_grok_mean"])
+                s = parse_inf(match[0][cond]["summary"]["t_grok_std"])
+                if t < float("inf"):
+                    all_t.append(t + (s if s < float("inf") else 0))
+
+    y_max = max(all_t) * 1.1 if all_t else 50000
+
+    fig2, axes2 = plt.subplots(1, len(alphas), figsize=(4 * len(alphas), 4.5), sharey=True)
+    if len(alphas) == 1:
+        axes2 = [axes2]
+
+    for ax, alpha in zip(axes2, alphas):
+        for cond in conditions:
+            k_vals, means, stds = [], [], []
+            for K in ks:
+                match = [c for c in cells if c["alpha"] == alpha and c["K"] == K]
+                if not match:
+                    continue
+                summary = match[0][cond]["summary"]
+                t_mean = parse_inf(summary["t_grok_mean"])
+                t_std = parse_inf(summary["t_grok_std"])
+                if t_mean < float("inf"):
+                    k_vals.append(K)
+                    means.append(t_mean)
+                    stds.append(t_std if t_std < float("inf") else 0)
+
+            if k_vals:
+                ax.errorbar(k_vals, means, yerr=stds, marker=markers[cond],
+                            color=colors[cond], label=labels[cond], capsize=3,
+                            linewidth=1.5, markersize=5)
+
+        ax.set_xlabel("K (clients)")
+        ax.set_title(f"α = {alpha:.2f}")
+        ax.set_xticks(ks)
+        ax.set_xticklabels(ks)
+        ax.set_ylim(0, y_max)
+
+    axes2[0].set_ylabel(r"$T_{grok}$ (steps)")
+    axes2[-1].legend(loc="upper left", fontsize=8)
+    fig2.suptitle("Exp 2: Grokking Time vs Number of Clients (consistent scale)", fontsize=14, y=1.02)
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR, "exp2_t_grok_vs_K_linear.png"), bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {OUTPUT_DIR}/exp2_t_grok_vs_K_linear.png")
+
 
 # ── Figure 3: FL vs Centralized scatter (improved) ───────────────────────────
 
