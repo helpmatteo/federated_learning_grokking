@@ -129,10 +129,10 @@ def plot_3a_t_grok_vs_dir_alpha(cells):
                         label=f"α={alpha:.2f}", capsize=3, linewidth=1.5)
 
     ax.set_xscale("log")
-    ax.set_xlabel(r"Dirichlet $\alpha_{dir}$ (← non-IID | IID →)")
-    ax.set_ylabel(r"$T_{grok}$ (steps)")
-    ax.set_title("Exp 3a: Grokking Time vs Heterogeneity (K=10)")
-    ax.legend()
+    ax.set_xlabel(r"Dirichlet $\alpha_{\mathrm{dir}}$ (non-IID $\leftarrow$ $\rightarrow$ IID)")
+    ax.set_ylabel(r"$T_{\mathrm{grok}}$ (gradient steps)")
+    ax.set_title(r"Grokking Time vs Data Heterogeneity ($K=10$)")
+    ax.legend(title=r"Train fraction $\alpha$")
     plt.tight_layout()
     plt.savefig(os.path.join(OUTPUT_DIR, "exp3a_t_grok_vs_dir_alpha.png"), bbox_inches="tight")
     plt.close()
@@ -186,9 +186,12 @@ def plot_3b_structured(cells_3b, cells_3a=None):
 
     all_parts = ["iid"] + [p for p in partitions if p != "iid"]
     colors = {"iid": "#2196F3", "operand": "#FF5722", "target": "#4CAF50"}
-    labels = {"iid": "IID", "operand": "Operand", "target": "Target"}
+    labels = {"iid": "IID partition", "operand": "Operand partition", "target": "Target partition"}
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+    # Skip α=0.2 (none grok) for cleaner figure
+    alphas = [a for a in alphas if a > 0.2]
+
+    fig, ax = plt.subplots(figsize=(8, 5))
     x = np.arange(len(alphas))
     width = 0.25
 
@@ -214,20 +217,16 @@ def plot_3b_structured(cells_3b, cells_3a=None):
                 means.append(0)
                 errs.append(0)
 
-        bars = ax.bar(x + i * width, means, width, yerr=errs, capsize=3,
-                      color=colors.get(part, "gray"), label=labels.get(part, part))
-
-        # Mark non-grokking bars
-        for j, m in enumerate(means):
-            if m == 0:
-                ax.text(x[j] + i * width, 500, "∞", ha="center", va="bottom",
-                        fontsize=10, color="red", fontweight="bold")
+        ax.bar(x + i * width, means, width, yerr=errs, capsize=3,
+               color=colors.get(part, "gray"), label=labels.get(part, part),
+               edgecolor="white", linewidth=0.5)
 
     ax.set_xticks(x + width)
-    ax.set_xticklabels([f"α={a:.2f}" for a in alphas])
-    ax.set_ylabel(r"$T_{grok}$ (steps)")
-    ax.set_title("Exp 3b: Structured Partition Comparison (K=10)")
-    ax.legend()
+    ax.set_xticklabels([f"{a:.2f}" for a in alphas])
+    ax.set_xlabel(r"Training fraction $\alpha$")
+    ax.set_ylabel(r"$T_{\mathrm{grok}}$ (gradient steps)")
+    ax.set_title(r"Grokking Time by Partition Strategy ($K=10$)")
+    ax.legend(fontsize=10, title="Client data split")
     plt.tight_layout()
     plt.savefig(os.path.join(OUTPUT_DIR, "exp3b_structured_partitions.png"), bbox_inches="tight")
     plt.close()
@@ -272,7 +271,7 @@ def plot_3b_slowdown(cells_3b, cells_3a=None):
     ax.axhline(1.0, color="gray", linestyle="--", alpha=0.5, label="IID baseline")
     ax.set_xlabel(r"Training fraction $\alpha$")
     ax.set_ylabel(r"$T_{grok}$ / $T_{grok}^{IID}$ (slowdown ratio)")
-    ax.set_title("Exp 3b: Partition Slowdown Relative to IID (K=10)")
+    ax.set_title(r"Partition Slowdown Relative to IID ($K=10$)")
     ax.legend()
     plt.tight_layout()
     plt.savefig(os.path.join(OUTPUT_DIR, "exp3b_slowdown.png"), bbox_inches="tight")

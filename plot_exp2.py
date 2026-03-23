@@ -264,7 +264,7 @@ def plot_fl_vs_centralized(cells):
     def k_to_size(k):
         return 40 + 200 * (np.log(k) - np.log(k_min)) / (np.log(k_max) - np.log(k_min))
 
-    fig, ax = plt.subplots(figsize=(7, 7))
+    fig, ax = plt.subplots(figsize=(6, 6))
 
     for alpha in alphas:
         if alpha == 0.2:
@@ -288,9 +288,9 @@ def plot_fl_vs_centralized(cells):
             continue
         alpha_handles.append(
             Line2D([0], [0], marker="o", color="w",
-                   markerfacecolor=alpha_colors[a], markersize=8,
+                   markerfacecolor=alpha_colors[a], markersize=10,
                    label=f"α = {a:.2f}"))
-    leg1 = ax.legend(handles=alpha_handles, loc="upper left", fontsize=9,
+    leg1 = ax.legend(handles=alpha_handles, loc="lower right", fontsize=9,
                      title="Train fraction", title_fontsize=9)
     ax.add_artist(leg1)
 
@@ -302,7 +302,7 @@ def plot_fl_vs_centralized(cells):
                label=f"K = {k}")
         for k in size_ks
     ]
-    ax.legend(handles=size_handles, loc="lower right", fontsize=9,
+    ax.legend(handles=size_handles, loc="upper left", fontsize=9,
               title="Clients (K)", title_fontsize=9)
 
     # Diagonal
@@ -317,15 +317,12 @@ def plot_fl_vs_centralized(cells):
     ax.plot([lo, hi], [lo, hi], "k--", alpha=0.3, linewidth=1)
     ax.fill_between([lo, hi], [lo, hi], [hi, hi], alpha=0.04, color="red")
     ax.fill_between([lo, hi], [lo, lo], [lo, hi], alpha=0.04, color="green")
-    ax.text(hi * 0.65, lo * 1.3, "FL faster", fontsize=8, color="green",
-            alpha=0.5, style="italic")
-    ax.text(lo * 1.05, hi * 0.85, "FL slower", fontsize=8, color="red",
-            alpha=0.5, style="italic")
     ax.set_xlim(lo, hi)
     ax.set_ylim(lo, hi)
+    ax.set_aspect("equal")
 
-    ax.set_xlabel(r"Centralized $T_\mathrm{grok}$ (steps)")
-    ax.set_ylabel(r"FL IID $T_\mathrm{grok}$ (steps)")
+    ax.set_xlabel(r"Centralized $T_\mathrm{grok}$ (steps)", fontsize=12)
+    ax.set_ylabel(r"FL IID $T_\mathrm{grok}$ (steps)", fontsize=12)
     ax.set_title("FL vs Centralized Grokking Time", fontsize=14)
     ax.set_aspect("equal")
     plt.tight_layout()

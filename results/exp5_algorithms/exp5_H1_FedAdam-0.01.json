@@ -1,0 +1,38 @@
+{
+  "label": "5 H1 FedAdam-0.01",
+  "per_seed": [
+    {
+      "t_grok": 9300,
+      "t_50": 7400,
+      "final_test_acc": 99.98583197593689,
+      "final_train_acc": 100.0,
+      "final_ipr": 0.43873679637908936
+    },
+    {
+      "t_grok": 10375,
+      "t_50": 8325,
+      "final_test_acc": 99.98583197593689,
+      "final_train_acc": 100.0,
+      "final_ipr": 0.46265843510627747
+    },
+    {
+      "t_grok": 10825,
+      "t_50": 8675,
+      "final_test_acc": 99.9291479587555,
+      "final_train_acc": 100.0,
+      "final_ipr": 0.4501948952674866
+    }
+  ],
+  "summary": {
+    "n_seeds": 3,
+    "n_grokked": 3,
+    "t_grok_mean": 10166.666666666666,
+    "t_grok_std": 783.5549331944336,
+    "t_50_mean": 8133.333333333333,
+    "t_50_std": 658.7551391323891,
+    "final_acc_mean": 99.96693730354309,
+    "final_acc_std": 0.032726532578428634
+  },
+  "setting": "H1",
+  "algorithm": "FedAdam-0.01"
+}

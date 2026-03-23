@@ -1,0 +1,38 @@
+{
+  "label": "5 H2 FedProx-0.001",
+  "per_seed": [
+    {
+      "t_grok": 71500,
+      "t_50": 52725,
+      "final_test_acc": 99.1922914981842,
+      "final_train_acc": 100.0,
+      "final_ipr": 0.18790847063064575
+    },
+    {
+      "t_grok": "inf",
+      "t_50": "inf",
+      "final_test_acc": 48.26413691043854,
+      "final_train_acc": 99.91496205329895,
+      "final_ipr": 0.11211958527565002
+    },
+    {
+      "t_grok": "inf",
+      "t_50": 68825,
+      "final_test_acc": 77.1149218082428,
+      "final_train_acc": 99.78741407394409,
+      "final_ipr": 0.1391310840845108
+    }
+  ],
+  "summary": {
+    "n_seeds": 3,
+    "n_grokked": 1,
+    "t_grok_mean": "inf",
+    "t_grok_std": "inf",
+    "t_50_mean": 60775.0,
+    "t_50_std": 11384.419177103415,
+    "final_acc_mean": 74.85711673895518,
+    "final_acc_std": 25.53903865118078
+  },
+  "setting": "H2",
+  "algorithm": "FedProx-0.001"
+}
