@@ -231,6 +231,14 @@ def plot_figure6(runs):
 
 # ── Figure 7: Cross-run scatter analysis ─────────────────────────────────
 
+def _compute_t_memo(steps, train_accs, threshold=99.0):
+    """Compute memorization step (first step where train_acc >= threshold)."""
+    for s, a in zip(steps, train_accs):
+        if a >= threshold:
+            return s
+    return float("inf")
+
+
 def _extract_run_metrics(path):
     """Extract grokking metrics from a single FL history file. Returns None if invalid."""
     h = load_json(path)
@@ -238,12 +246,44 @@ def _extract_run_metrics(path):
         return None
     steps = h.get("total_steps", [])
     test_accs = h.get("test_acc", [])
+    train_accs = h.get("train_acc", [])
     ipr_list = h.get("ipr", [])
+    wn1 = h.get("weight_norm_layer1", [])
+    wn2 = h.get("weight_norm_layer2", [])
+    div_list = h.get("client_weight_divergence", [])
+
+    t_grok = compute_t_grok(steps, test_accs)
+    t_memo = _compute_t_memo(steps, train_accs)
+
+    # IPR at memorization time
+    ipr_at_memo = 0.0
+    if t_memo < float("inf") and ipr_list and steps:
+        for i, s in enumerate(steps):
+            if s >= t_memo:
+                ipr_at_memo = ipr_list[i]
+                break
+
+    # Mean weight norm (layer 1)
+    mean_wn1 = float(np.mean(wn1)) if wn1 else 0.0
+
+    # Weight norm growth rate: norm at end / norm at start
+    wn1_growth = float(wn1[-1] / wn1[0]) if wn1 and wn1[0] > 0 else 0.0
+
+    # Normalized drift: drift / weight_norm
+    mean_drift = float(np.mean(h["mean_client_drift"]))
+    norm_drift = mean_drift / mean_wn1 if mean_wn1 > 0 else 0.0
+
     return {
-        "t_grok": compute_t_grok(steps, test_accs),
-        "mean_drift": float(np.mean(h["mean_client_drift"])),
-        "mean_div": float(np.mean(h["client_weight_divergence"])),
+        "t_grok": t_grok,
+        "t_memo": t_memo,
+        "memo_grok_gap": (t_grok - t_memo) if t_grok < float("inf") and t_memo < float("inf") else float("inf"),
+        "mean_drift": mean_drift,
+        "mean_div": float(np.mean(div_list)) if div_list else 0.0,
         "final_ipr": ipr_list[-1] if ipr_list else 0.0,
+        "ipr_at_memo": ipr_at_memo,
+        "mean_wn1": mean_wn1,
+        "wn1_growth": wn1_growth,
+        "norm_drift": norm_drift,
     }
 
 
@@ -1131,6 +1171,325 @@ def plot_figure10(data_points):
     print(f"  Analyzed {len(grokked)} runs with both T_memo and T_grok")
 
 
+# ── Figure 11: Alternative predictors ────────────────────────────────────
+
+def plot_figure11(data_points):
+    """Figure 11: Is drift the best predictor, or are there others?
+
+    (a) Divergence vs T_grok (colored by alpha)
+    (b) Normalized drift (drift/weight_norm) vs T_grok
+    (c) Weight norm growth rate vs T_grok
+    (d) Comparison: Spearman correlations for all candidate predictors
+    """
+    grokked = [d for d in data_points
+               if d["t_grok"] < float("inf") and d.get("mean_div", 0) > 0]
+    all_alphas = sorted(set(d["alpha"] for d in data_points))
+    alpha_colors = plt.cm.viridis(np.linspace(0.15, 0.85, len(all_alphas)))
+    alpha_cmap = {a: c for a, c in zip(all_alphas, alpha_colors)}
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 11))
+
+    # (a) Divergence vs T_grok
+    ax = axes[0, 0]
+    for d in grokked:
+        ax.scatter(d["mean_div"], d["t_grok"], c=[alpha_cmap[d["alpha"]]],
+                   s=25, alpha=0.6, edgecolors="k", linewidths=0.2)
+    ax.set_xlabel("Mean client weight divergence (σ_w)")
+    ax.set_ylabel(r"$T_{grok}$ (steps)")
+    # Overall Spearman
+    if len(grokked) > 5:
+        rho, p = stats.spearmanr([d["mean_div"] for d in grokked],
+                                  [d["t_grok"] for d in grokked])
+        ax.text(0.03, 0.97, f"Spearman ρ={rho:.3f}\np={p:.2e}",
+                transform=ax.transAxes, va="top", fontsize=9,
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow", alpha=0.9))
+
+    # (b) Normalized drift vs T_grok
+    ax = axes[0, 1]
+    valid = [d for d in grokked if d.get("norm_drift", 0) > 0]
+    for d in valid:
+        ax.scatter(d["norm_drift"], d["t_grok"], c=[alpha_cmap[d["alpha"]]],
+                   s=25, alpha=0.6, edgecolors="k", linewidths=0.2)
+    ax.set_xlabel("Normalized drift (drift / weight norm)")
+    ax.set_ylabel(r"$T_{grok}$ (steps)")
+    if len(valid) > 5:
+        rho, p = stats.spearmanr([d["norm_drift"] for d in valid],
+                                  [d["t_grok"] for d in valid])
+        ax.text(0.03, 0.97, f"Spearman ρ={rho:.3f}\np={p:.2e}",
+                transform=ax.transAxes, va="top", fontsize=9,
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow", alpha=0.9))
+
+    # (c) Weight norm growth vs T_grok
+    ax = axes[1, 0]
+    valid_wn = [d for d in grokked if d.get("wn1_growth", 0) > 0]
+    for d in valid_wn:
+        ax.scatter(d["wn1_growth"], d["t_grok"], c=[alpha_cmap[d["alpha"]]],
+                   s=25, alpha=0.6, edgecolors="k", linewidths=0.2)
+    ax.set_xlabel("Weight norm growth (final / initial)")
+    ax.set_ylabel(r"$T_{grok}$ (steps)")
+    if len(valid_wn) > 5:
+        rho, p = stats.spearmanr([d["wn1_growth"] for d in valid_wn],
+                                  [d["t_grok"] for d in valid_wn])
+        ax.text(0.03, 0.97, f"Spearman ρ={rho:.3f}\np={p:.2e}",
+                transform=ax.transAxes, va="top", fontsize=9,
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow", alpha=0.9))
+
+    # (d) Comparison bar chart: within-alpha Spearman for each predictor
+    ax = axes[1, 1]
+    predictors = [
+        ("drift", "mean_drift"),
+        ("divergence", "mean_div"),
+        ("norm_drift", "norm_drift"),
+        ("wn1_growth", "wn1_growth"),
+        ("ipr_at_memo", "ipr_at_memo"),
+    ]
+    pred_labels = []
+    pred_rhos = []
+    pred_colors_list = []
+
+    for pred_name, pred_key in predictors:
+        rhos = []
+        for alpha in all_alphas:
+            subset = [d for d in grokked if d["alpha"] == alpha
+                      and pred_key in d and d[pred_key] is not None
+                      and not (isinstance(d[pred_key], float) and d[pred_key] == 0.0 and pred_key == "norm_drift")]
+            if len(subset) < 5:
+                continue
+            xs = [d[pred_key] for d in subset]
+            ys = [d["t_grok"] for d in subset]
+            if len(set(xs)) < 2:
+                continue
+            rho, _ = stats.spearmanr(xs, ys)
+            if not np.isnan(rho):
+                rhos.append(rho)
+        if rhos:
+            # For ipr_at_memo, we expect negative correlation (higher IPR → faster grok)
+            # so negate for comparison
+            mean_rho = np.mean(rhos)
+            pred_labels.append(pred_name)
+            pred_rhos.append(abs(mean_rho))
+            pred_colors_list.append("#FF5722" if mean_rho > 0 else "#2196F3")
+
+    bars = ax.barh(range(len(pred_labels)), pred_rhos, color=pred_colors_list, edgecolor="k", linewidth=0.5)
+    ax.set_yticks(range(len(pred_labels)))
+    ax.set_yticklabels(pred_labels)
+    ax.set_xlabel("|Mean within-α Spearman ρ| with T_grok")
+    ax.axvline(0, color="gray", linewidth=0.5)
+
+    # Annotate with direction
+    for i, (label, rho) in enumerate(zip(pred_labels, pred_rhos)):
+        ax.text(rho + 0.01, i, f"{rho:.3f}", va="center", fontsize=9)
+
+    # Add legend for alpha colors to first panel
+    for a, c in zip(all_alphas, alpha_colors):
+        axes[0, 0].scatter([], [], c=[c], s=25, label=f"α={a}", edgecolors="k", linewidths=0.2)
+    axes[0, 0].legend(fontsize=7, title="Train frac", title_fontsize=8)
+
+    panel_titles = [
+        "(a) Weight divergence vs T_grok",
+        "(b) Normalized drift vs T_grok",
+        "(c) Weight norm growth vs T_grok",
+        "(d) Predictor comparison (|within-α ρ|)",
+    ]
+    for idx, (r, c) in enumerate([(0,0),(0,1),(1,0),(1,1)]):
+        axes[r, c].set_title(panel_titles[idx], loc="left", fontweight="bold", fontsize=11)
+
+    fig.suptitle("Figure 11: Alternative Predictors of Grokking Delay",
+                 fontsize=14, y=1.02)
+    plt.tight_layout()
+    path = os.path.join(OUTPUT_DIR, "fig11_alternative_predictors.png")
+    plt.savefig(path, bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {path}")
+
+
+def plot_figure12(data_points):
+    """Figure 12: Memorization vs Generalization — which does FL disrupt?
+
+    (a) T_memo vs drift (does FL slow memorization?)
+    (b) T_grok - T_memo vs drift (does FL specifically delay generalization?)
+    (c) IPR at memorization vs T_grok (does early Fourier structure predict grokking?)
+    """
+    grokked = [d for d in data_points
+               if d["t_grok"] < float("inf")
+               and d.get("t_memo", float("inf")) < float("inf")]
+
+    all_alphas = sorted(set(d["alpha"] for d in data_points))
+    alpha_colors = plt.cm.viridis(np.linspace(0.15, 0.85, len(all_alphas)))
+    alpha_cmap = {a: c for a, c in zip(all_alphas, alpha_colors)}
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
+
+    # (a) T_memo vs drift
+    ax = axes[0]
+    for d in grokked:
+        ax.scatter(d["mean_drift"], d["t_memo"], c=[alpha_cmap[d["alpha"]]],
+                   s=25, alpha=0.6, edgecolors="k", linewidths=0.2)
+    ax.set_xlabel("Mean client drift")
+    ax.set_ylabel(r"$T_{memo}$ (steps to 99% train acc)")
+    if len(grokked) > 5:
+        rho, p = stats.spearmanr([d["mean_drift"] for d in grokked],
+                                  [d["t_memo"] for d in grokked])
+        ax.text(0.03, 0.97, f"Spearman ρ={rho:.3f}\np={p:.2e}",
+                transform=ax.transAxes, va="top", fontsize=9,
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow", alpha=0.9))
+
+    # (b) Generalization gap vs drift
+    ax = axes[1]
+    for d in grokked:
+        gap = d["t_grok"] - d["t_memo"]
+        ax.scatter(d["mean_drift"], gap, c=[alpha_cmap[d["alpha"]]],
+                   s=25, alpha=0.6, edgecolors="k", linewidths=0.2)
+    ax.set_xlabel("Mean client drift")
+    ax.set_ylabel(r"Generalization gap ($T_{grok} - T_{memo}$)")
+    if len(grokked) > 5:
+        gaps = [d["t_grok"] - d["t_memo"] for d in grokked]
+        rho, p = stats.spearmanr([d["mean_drift"] for d in grokked], gaps)
+        ax.text(0.03, 0.97, f"Spearman ρ={rho:.3f}\np={p:.2e}",
+                transform=ax.transAxes, va="top", fontsize=9,
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow", alpha=0.9))
+
+    # (c) IPR at memorization vs T_grok
+    ax = axes[2]
+    valid_ipr = [d for d in grokked if d.get("ipr_at_memo", 0) > 0]
+    for d in valid_ipr:
+        ax.scatter(d["ipr_at_memo"], d["t_grok"], c=[alpha_cmap[d["alpha"]]],
+                   s=25, alpha=0.6, edgecolors="k", linewidths=0.2)
+    ax.set_xlabel("IPR at memorization time")
+    ax.set_ylabel(r"$T_{grok}$ (steps)")
+    if len(valid_ipr) > 5:
+        rho, p = stats.spearmanr([d["ipr_at_memo"] for d in valid_ipr],
+                                  [d["t_grok"] for d in valid_ipr])
+        ax.text(0.03, 0.97, f"Spearman ρ={rho:.3f}\np={p:.2e}",
+                transform=ax.transAxes, va="top", fontsize=9,
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow", alpha=0.9))
+
+    # Legend
+    for a, c in zip(all_alphas, alpha_colors):
+        axes[0].scatter([], [], c=[c], s=25, label=f"α={a}", edgecolors="k", linewidths=0.2)
+    axes[0].legend(fontsize=7, title="Train frac", title_fontsize=8)
+
+    panel_titles = [
+        "(a) Does drift slow memorization?",
+        "(b) Does drift delay generalization specifically?",
+        "(c) Does early Fourier structure predict grokking?",
+    ]
+    for i in range(3):
+        axes[i].set_title(panel_titles[i], loc="left", fontweight="bold", fontsize=11)
+
+    fig.suptitle("Figure 12: FL Disrupts Generalization, Not Memorization",
+                 fontsize=14, y=1.04)
+    plt.tight_layout()
+    path = os.path.join(OUTPUT_DIR, "fig12_memo_vs_grok.png")
+    plt.savefig(path, bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {path}")
+    print(f"  Analyzed {len(grokked)} grokked runs with T_memo")
+
+
+def plot_figure13(data_points):
+    """Figure 13: Multivariate analysis — partial correlations controlling for alpha.
+
+    Which predictors have independent contributions to T_grok beyond alpha?
+    """
+    grokked = [d for d in data_points
+               if d["t_grok"] < float("inf")
+               and d.get("norm_drift", 0) > 0
+               and d.get("mean_div", 0) > 0]
+
+    if len(grokked) < 10:
+        print("  Not enough data for multivariate analysis")
+        return
+
+    # Build feature matrix
+    features = {
+        "drift": [d["mean_drift"] for d in grokked],
+        "divergence": [d["mean_div"] for d in grokked],
+        "norm_drift": [d["norm_drift"] for d in grokked],
+        "wn1_growth": [d["wn1_growth"] for d in grokked],
+        "ipr_at_memo": [d["ipr_at_memo"] for d in grokked],
+        "alpha": [d["alpha"] for d in grokked],
+    }
+    target = np.array([d["t_grok"] for d in grokked])
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
+
+    # (a) Partial correlation: correlation with T_grok after regressing out alpha
+    ax = axes[0]
+    predictor_names = ["drift", "divergence", "norm_drift", "wn1_growth", "ipr_at_memo"]
+    partial_rhos = []
+    alpha_arr = np.array(features["alpha"])
+
+    for pred_name in predictor_names:
+        x = np.array(features[pred_name])
+        # Regress out alpha from both x and target
+        alpha_centered = alpha_arr - alpha_arr.mean()
+        x_resid = x - np.polyval(np.polyfit(alpha_arr, x, 1), alpha_arr)
+        t_resid = target - np.polyval(np.polyfit(alpha_arr, target, 1), alpha_arr)
+        if np.std(x_resid) > 0 and np.std(t_resid) > 0:
+            rho, p = stats.spearmanr(x_resid, t_resid)
+            partial_rhos.append((pred_name, rho, p))
+        else:
+            partial_rhos.append((pred_name, 0, 1))
+
+    names = [r[0] for r in partial_rhos]
+    rhos = [r[1] for r in partial_rhos]
+    pvals = [r[2] for r in partial_rhos]
+    colors = ["#FF5722" if r > 0 else "#2196F3" for r in rhos]
+
+    bars = ax.barh(range(len(names)), rhos, color=colors, edgecolor="k", linewidth=0.5)
+    ax.set_yticks(range(len(names)))
+    ax.set_yticklabels(names)
+    ax.set_xlabel("Partial Spearman ρ with T_grok (controlling for α)")
+    ax.axvline(0, color="gray", linewidth=0.5)
+
+    for i, (name, rho, p) in enumerate(partial_rhos):
+        sig = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else ""
+        offset = 0.01 if rho >= 0 else -0.01
+        ha = "left" if rho >= 0 else "right"
+        ax.text(rho + offset, i, f"{rho:.3f}{sig}", va="center", ha=ha, fontsize=9)
+
+    # (b) Drift vs divergence: are they redundant or independent?
+    ax = axes[1]
+    all_alphas = sorted(set(d["alpha"] for d in grokked))
+    alpha_colors = plt.cm.viridis(np.linspace(0.15, 0.85, len(all_alphas)))
+    alpha_cmap = {a: c for a, c in zip(all_alphas, alpha_colors)}
+
+    for d in grokked:
+        ax.scatter(d["mean_drift"], d["mean_div"],
+                   c=[alpha_cmap[d["alpha"]]], s=25, alpha=0.6,
+                   edgecolors="k", linewidths=0.2)
+    ax.set_xlabel("Mean client drift")
+    ax.set_ylabel("Mean client weight divergence")
+
+    rho, p = stats.spearmanr([d["mean_drift"] for d in grokked],
+                              [d["mean_div"] for d in grokked])
+    ax.text(0.03, 0.97, f"Spearman ρ={rho:.3f}\np={p:.2e}\n"
+            + ("Highly correlated —\nlikely redundant" if rho > 0.8
+               else "Partially independent" if rho > 0.5
+               else "Largely independent"),
+            transform=ax.transAxes, va="top", fontsize=9,
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow", alpha=0.9))
+
+    for a, c in zip(all_alphas, alpha_colors):
+        ax.scatter([], [], c=[c], s=25, label=f"α={a}", edgecolors="k", linewidths=0.2)
+    ax.legend(fontsize=7, title="Train frac", title_fontsize=8)
+
+    axes[0].set_title("(a) Independent predictive power\n(partial correlation, controlling for α)",
+                      loc="left", fontweight="bold", fontsize=11)
+    axes[1].set_title("(b) Drift vs Divergence:\nredundant or complementary?",
+                      loc="left", fontweight="bold", fontsize=11)
+
+    fig.suptitle("Figure 13: Multivariate Analysis — What Independently Predicts Grokking?",
+                 fontsize=14, y=1.04)
+    plt.tight_layout()
+    path = os.path.join(OUTPUT_DIR, "fig13_multivariate.png")
+    plt.savefig(path, bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {path}")
+    print(f"  Analyzed {len(grokked)} grokked runs")
+
+
 # ── Summary statistics ───────────────────────────────────────────────────
 
 def print_summary(data_points, grokked, failed):
@@ -1183,6 +1542,15 @@ if __name__ == "__main__":
 
     print("\nGenerating Figure 10: Two-timescale separation...")
     plot_figure10(data_points)
+
+    print("\nGenerating Figure 11: Alternative predictors...")
+    plot_figure11(data_points)
+
+    print("\nGenerating Figure 12: Memorization vs generalization...")
+    plot_figure12(data_points)
+
+    print("\nGenerating Figure 13: Multivariate analysis...")
+    plot_figure13(data_points)
 
     # Save raw data for future use
     out_data = []
