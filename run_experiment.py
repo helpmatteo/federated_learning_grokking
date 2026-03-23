@@ -71,8 +71,10 @@ def parse_args():
         p.add_argument("--output_dir", default="results/exp4_optimization")
 
     p5 = subparsers.add_parser("exp5", help="Algorithm rescue")
-    p5.add_argument("--hard_settings", type=str, required=True,
-                    help="JSON file with hard settings list")
+    p5.add_argument("--setting", type=str, default=None,
+                    help="Single setting label (H1, H2, H3) for parallel runs")
+    p5.add_argument("--algorithm", type=str, default=None,
+                    help="Single algorithm label (e.g. FedProx-0.01) for parallel runs")
     p5.add_argument("--hidden_width", type=int, default=256)
     p5.add_argument("--t_max", type=int, default=50000)
     p5.add_argument("--output_dir", default="results/exp5_algorithms")
@@ -198,11 +200,19 @@ def main():
                           output_dir=args.output_dir)
 
     elif args.experiment == "exp5":
-        from experiments.exp5_algorithms import run_exp5
-        with open(args.hard_settings) as f:
-            hard_settings = json.load(f)
-        run_exp5(hard_settings=hard_settings, hidden_width=args.hidden_width,
-                 t_max=args.t_max, output_dir=args.output_dir)
+        from experiments.exp5_algorithms import run_exp5, run_exp5_cell
+        if args.setting is not None and args.algorithm is not None:
+            run_exp5_cell(setting_label=args.setting, algo_label=args.algorithm,
+                          hidden_width=args.hidden_width, t_max=args.t_max,
+                          output_dir=args.output_dir)
+        elif args.setting is not None:
+            from experiments.exp5_algorithms import ALGORITHMS
+            run_exp5(settings=[args.setting],
+                     hidden_width=args.hidden_width, t_max=args.t_max,
+                     output_dir=args.output_dir)
+        else:
+            run_exp5(hidden_width=args.hidden_width, t_max=args.t_max,
+                     output_dir=args.output_dir)
 
     elif args.experiment == "exp6":
         from experiments.exp6_mechanistic import analyze_drift_vs_grokking

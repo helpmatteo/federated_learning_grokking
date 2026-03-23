@@ -34,6 +34,10 @@ EXP2_DIR = "results/exp2_aggregation"
 EXP3_DIR = "results/exp3_heterogeneity"
 EXP3A_DIR = os.path.join(EXP3_DIR, "exp3a")
 EXP3B_DIR = os.path.join(EXP3_DIR, "exp3b")
+EXP4_DIR = "results/exp4_optimization"
+EXP4A_DIR = os.path.join(EXP4_DIR, "exp4a")
+EXP4B_DIR = os.path.join(EXP4_DIR, "exp4b")
+EXP4C_DIR = os.path.join(EXP4_DIR, "exp4c")
 FED_HISTORY_GLOB = "history_fed_*.json"
 
 
@@ -67,6 +71,12 @@ def parse_filename(basename):
     m = re.search(r'_K(\d+)_', basename)
     if m:
         info["K"] = int(m.group(1))
+    m = re.search(r'_le(\d+)_', basename)
+    if m:
+        info["local_epochs"] = int(m.group(1))
+    m = re.search(r'_ft([\d.]+)_', basename)
+    if m:
+        info["fraction_train"] = float(m.group(1))
     m = re.search(r'_dir([\d.]+)_', basename)
     if m:
         info["dir_alpha"] = float(m.group(1))
@@ -126,6 +136,18 @@ REPRESENTATIVE_RUNS = {
         "dir": os.path.join(EXP2_DIR, "fl_iid"),
         "pattern": "*_a0.25_K97_*_s42.json",
         "color": "#9C27B0",
+        "linestyle": "--",
+    },
+    "High drift grok\n(α=0.3, E=50, non-IID)": {
+        "dir": EXP4A_DIR,
+        "pattern": "*_a0.3_K10_le50_*_dir0.1_s42.json",
+        "color": "#4CAF50",
+        "linestyle": "-.",
+    },
+    "Failed drift\n(α=0.25, E=50, IID)": {
+        "dir": EXP4A_DIR,
+        "pattern": "*_a0.25_K10_le50_*_iid_s42.json",
+        "color": "#795548",
         "linestyle": "--",
     },
 }
@@ -235,13 +257,16 @@ def _detect_partition(basename):
 
 
 def collect_all_fl_runs():
-    """Collect (t_grok, mean_drift, mean_div, config) for every FL run in exp2+exp3."""
+    """Collect (t_grok, mean_drift, mean_div, config) for every FL run in exp2+exp3+exp4."""
     data_points = []
 
     sources = [
         (os.path.join(EXP2_DIR, "fl_iid", FED_HISTORY_GLOB), "exp2"),
         (os.path.join(EXP3A_DIR, FED_HISTORY_GLOB), "exp3a"),
         (os.path.join(EXP3B_DIR, FED_HISTORY_GLOB), "exp3b"),
+        (os.path.join(EXP4A_DIR, FED_HISTORY_GLOB), "exp4a"),
+        (os.path.join(EXP4B_DIR, FED_HISTORY_GLOB), "exp4b"),
+        (os.path.join(EXP4C_DIR, FED_HISTORY_GLOB), "exp4c"),
     ]
 
     for glob_pattern, source in sources:
@@ -256,8 +281,10 @@ def collect_all_fl_runs():
                 "source": source,
                 "path": path,
                 **metrics,
-                "K": info.get("K", 10 if source == "exp3b" else 0),
+                "K": info.get("K", 10 if source in ("exp3b", "exp4a", "exp4b", "exp4c") else 0),
                 "alpha": info.get("alpha", 0),
+                "local_epochs": info.get("local_epochs", 5),
+                "fraction_train": info.get("fraction_train", 1.0),
             }
 
             if source == "exp2":
@@ -266,6 +293,17 @@ def collect_all_fl_runs():
                 dir_alpha = info.get("dir_alpha", 0)
                 entry["heterogeneity"] = f"dir={dir_alpha}"
                 entry["dir_alpha"] = dir_alpha
+            elif source == "exp3b":
+                entry["heterogeneity"] = _detect_partition(basename)
+            elif source in ("exp4a", "exp4b", "exp4c"):
+                dir_alpha = info.get("dir_alpha", None)
+                if dir_alpha is not None:
+                    entry["heterogeneity"] = f"dir={dir_alpha}"
+                    entry["dir_alpha"] = dir_alpha
+                elif "_iid_" in basename:
+                    entry["heterogeneity"] = "IID"
+                else:
+                    entry["heterogeneity"] = "IID"
             else:
                 entry["heterogeneity"] = _detect_partition(basename)
 
@@ -1125,7 +1163,7 @@ if __name__ == "__main__":
 
     print("Loading representative runs...")
     runs = load_representative_runs()
-    print(f"  Loaded {len(runs)} / 4 representative runs")
+    print(f"  Loaded {len(runs)} / {len(REPRESENTATIVE_RUNS)} representative runs")
 
     print("\nGenerating Figure 6: Representative comparison...")
     plot_figure6(runs)
