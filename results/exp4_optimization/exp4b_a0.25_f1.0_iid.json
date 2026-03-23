@@ -1,0 +1,39 @@
+{
+  "label": "4b a=0.25 f=1.0 iid",
+  "per_seed": [
+    {
+      "t_grok": 24450,
+      "t_50": 20145,
+      "final_test_acc": 100.0,
+      "final_train_acc": 100.0,
+      "final_ipr": 0.3292331397533417
+    },
+    {
+      "t_grok": 26780,
+      "t_50": 21580,
+      "final_test_acc": 100.0,
+      "final_train_acc": 100.0,
+      "final_ipr": 0.31853628158569336
+    },
+    {
+      "t_grok": 28790,
+      "t_50": 22525,
+      "final_test_acc": 100.0,
+      "final_train_acc": 100.0,
+      "final_ipr": 0.29983946681022644
+    }
+  ],
+  "summary": {
+    "n_seeds": 3,
+    "n_grokked": 3,
+    "t_grok_mean": 26673.333333333332,
+    "t_grok_std": 2171.965315867943,
+    "t_50_mean": 21416.666666666668,
+    "t_50_std": 1198.377375175839,
+    "final_acc_mean": 100.0,
+    "final_acc_std": 0.0
+  },
+  "alpha": 0.25,
+  "f": 1.0,
+  "heterogeneity": "iid"
+}
