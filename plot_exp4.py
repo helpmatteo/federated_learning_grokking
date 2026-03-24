@@ -716,6 +716,319 @@ def plot_drift_norm_interaction():
     print(f"Saved: {OUTPUT_DIR}/exp4_drift_norm_interaction.png")
 
 
+def _normalize_acc(acc):
+    """Normalize accuracy to 0-1 scale (histories store 0-100)."""
+    return np.array(acc) / 100.0
+
+
+def plot_paper_drift_fingerprint():
+    """Paper figure 1: How local epochs drive drift and corrupt grokking.
+
+    2x2 grid showing temporal evolution at alpha=0.3, IID, K=10 for E={5, 10, 25, 50}
+    plus centralized baseline. Panels: test acc, drift, W2/W1, IPR.
+    """
+    e_configs = [
+        ("E=5", 5, "#4CAF50", "-", 2.0),
+        ("E=10", 10, "#2196F3", "-", 2.0),
+        ("E=25", 25, "#FF9800", "--", 2.0),
+        ("E=50", 50, "#F44336", "--", 2.0),
+    ]
+
+    alpha = 0.3
+    raw_dir = "results/exp4_optimization/exp4a"
+    cent_path = "results/exp1_boundary/history_addition_gd_p97_N256_a0.3_s42.json"
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 6))
+    axes = axes.flatten()
+    panel_config = [
+        ("test_acc", "Test accuracy", (0, 1.05)),
+        ("mean_client_drift", "Client drift", None),
+        ("w2_w1_ratio", r"$\|W_2\| / \|W_1\|$", (0, 1.0)),
+        ("ipr", "IPR (Fourier concentration)", (0, 0.55)),
+    ]
+
+    # Centralized baseline
+    if os.path.exists(cent_path):
+        with open(cent_path) as f:
+            ch = json.load(f)
+        cent_steps = np.array(ch["epoch"]) / 1000
+        cent_data = {
+            "test_acc": _normalize_acc(ch.get("test_acc", [])),
+            "weight_norm_layer1": np.array(ch.get("weight_norm_layer1", [])),
+            "weight_norm_layer2": np.array(ch.get("weight_norm_layer2", [])),
+            "ipr": np.array(ch.get("ipr", [])),
+        }
+        for idx, (key, ylabel, ylim) in enumerate(panel_config):
+            ax = axes[idx]
+            if key == "mean_client_drift":
+                continue
+            elif key == "w2_w1_ratio":
+                w1 = cent_data["weight_norm_layer1"]
+                w2 = cent_data["weight_norm_layer2"]
+                if len(w1) > 0:
+                    y = w2 / np.maximum(w1, 1e-6)
+                    ax.plot(cent_steps[:len(y)], y, color="#9C27B0",
+                            linestyle="-", linewidth=2.5, label="Centralized")
+            else:
+                y = cent_data.get(key, np.array([]))
+                if len(y) > 0:
+                    ax.plot(cent_steps[:len(y)], y, color="#9C27B0",
+                            linestyle="-", linewidth=2.5, label="Centralized")
+
+    # FL runs at different E
+    for label, E, color, ls, lw in e_configs:
+        fname = f"history_fed_addition_gd_p97_N256_a{alpha}_K10_le{E}_ft1.0_iid_s42.json"
+        fpath = os.path.join(raw_dir, fname)
+        if not os.path.exists(fpath):
+            print(f"  Missing: {fpath}")
+            continue
+        with open(fpath) as f:
+            h = json.load(f)
+        steps = np.array(h["total_steps"]) / 1000
+
+        for idx, (key, ylabel, ylim) in enumerate(panel_config):
+            ax = axes[idx]
+            if key == "w2_w1_ratio":
+                w1 = np.array(h.get("weight_norm_layer1", []))
+                w2 = np.array(h.get("weight_norm_layer2", []))
+                if len(w1) == 0:
+                    continue
+                y = w2 / np.maximum(w1, 1e-6)
+            elif key == "test_acc":
+                y = _normalize_acc(h.get("test_acc", []))
+            else:
+                y = np.array(h.get(key, []))
+                if len(y) == 0:
+                    continue
+
+            ax.plot(steps[:len(y)], y, color=color, linestyle=ls,
+                    linewidth=lw, label=label)
+
+    for idx, (key, ylabel, ylim) in enumerate(panel_config):
+        ax = axes[idx]
+        ax.set_ylabel(ylabel, fontsize=13)
+        ax.set_xlim(0, 50)
+        if ylim:
+            ax.set_ylim(ylim)
+        ax.tick_params(labelsize=11)
+        ax.set_xlabel(r"Gradient steps ($\times$1000)", fontsize=12)
+        ax.text(-0.15, 1.05, chr(ord('a') + idx) + ")",
+                transform=ax.transAxes, fontsize=14, fontweight="bold", va="top")
+
+    axes[0].legend(fontsize=10, loc="center right", title_fontsize=10)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR, "paper_drift_fingerprint.png"),
+                bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {OUTPUT_DIR}/paper_drift_fingerprint.png")
+
+
+def plot_paper_weight_norms():
+    """Paper figure: W1 and W2 norm evolution across local epoch regimes.
+
+    1x2 grid showing ||W1|| and ||W2|| for E={5,10,25,50} + centralized baseline.
+    Same setting as drift fingerprint: alpha=0.3, IID, K=10.
+    """
+    e_configs = [
+        ("E=5", 5, "#4CAF50", "-", 2.0),
+        ("E=10", 10, "#2196F3", "-", 2.0),
+        ("E=25", 25, "#FF9800", "--", 2.0),
+        ("E=50", 50, "#F44336", "--", 2.0),
+    ]
+
+    alpha = 0.3
+    raw_dir = "results/exp4_optimization/exp4a"
+    cent_path = "results/exp1_boundary/history_addition_gd_p97_N256_a0.3_s42.json"
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 4))
+    panel_config = [
+        ("weight_norm_layer1", r"$\|W_1\|_F$"),
+        ("weight_norm_layer2", r"$\|W_2\|_F$"),
+    ]
+
+    # Centralized baseline
+    if os.path.exists(cent_path):
+        with open(cent_path) as f:
+            ch = json.load(f)
+        cent_steps = np.array(ch["epoch"]) / 1000
+        for idx, (key, ylabel) in enumerate(panel_config):
+            y = np.array(ch.get(key, []))
+            if len(y) > 0:
+                axes[idx].plot(cent_steps[:len(y)], y, color="#9C27B0",
+                               linestyle="-", linewidth=2.5, label="Centralized")
+
+    # FL runs at different E
+    for label, E, color, ls, lw in e_configs:
+        fname = f"history_fed_addition_gd_p97_N256_a{alpha}_K10_le{E}_ft1.0_iid_s42.json"
+        fpath = os.path.join(raw_dir, fname)
+        if not os.path.exists(fpath):
+            print(f"  Missing: {fpath}")
+            continue
+        with open(fpath) as f:
+            h = json.load(f)
+        steps = np.array(h["total_steps"]) / 1000
+
+        for idx, (key, ylabel) in enumerate(panel_config):
+            y = np.array(h.get(key, []))
+            if len(y) == 0:
+                continue
+            axes[idx].plot(steps[:len(y)], y, color=color, linestyle=ls,
+                           linewidth=lw, label=label)
+
+    for idx, (key, ylabel) in enumerate(panel_config):
+        ax = axes[idx]
+        ax.set_ylabel(ylabel, fontsize=13)
+        ax.set_xlim(0, 50)
+        ax.tick_params(labelsize=11)
+        ax.set_xlabel(r"Gradient steps ($\times$1000)", fontsize=12)
+        ax.text(-0.15, 1.05, chr(ord('a') + idx) + ")",
+                transform=ax.transAxes, fontsize=14, fontweight="bold", va="top")
+
+    axes[0].legend(fontsize=10, loc="best")
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR, "paper_weight_norms.png"),
+                bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {OUTPUT_DIR}/paper_weight_norms.png")
+
+
+def plot_paper_cross_run_scatter():
+    """Paper figure 2: Cross-run scatter across exp2-4.
+
+    3 panels: (a) mean drift vs T_grok, (b) W2/W1 vs T_grok, (c) T_mem vs T_grok.
+    Points colored by experiment.
+    """
+    budget = 50000
+
+    exp_styles = {
+        "exp2": ("#2196F3", "o", "Exp 2 (scaling)"),
+        "exp3": ("#4CAF50", "s", "Exp 3 (heterogeneity)"),
+        "exp4": ("#FF9800", "D", "Exp 4 (optimization)"),
+    }
+
+    points = []
+    dirs = [
+        ("exp2", "results/exp2_aggregation/fl_iid"),
+        ("exp3", "results/exp3_heterogeneity/exp3a"),
+        ("exp3", "results/exp3_heterogeneity/exp3b"),
+        ("exp4", "results/exp4_optimization/exp4a"),
+        ("exp4", "results/exp4_optimization/exp4b"),
+        ("exp4", "results/exp4_optimization/exp4c"),
+    ]
+
+    for exp_label, d in dirs:
+        for f in glob.glob(os.path.join(d, "history_fed_*.json")):
+            with open(f) as fh:
+                h = json.load(fh)
+
+            drift = np.array(h.get("mean_client_drift", []))
+            w1 = np.array(h.get("weight_norm_layer1", []))
+            w2 = np.array(h.get("weight_norm_layer2", []))
+            ipr = np.array(h.get("ipr", []))
+            test_acc = _normalize_acc(h.get("test_acc", []))
+
+            if len(drift) == 0 or len(w1) == 0:
+                continue
+
+            mean_drift = float(np.mean(drift))
+            final_w1 = float(w1[-1])
+            final_w2 = float(w2[-1])
+            ratio = final_w2 / max(final_w1, 1e-6)
+
+            steps = h["total_steps"]
+            train_acc = _normalize_acc(h.get("train_acc", []))
+
+            # T_mem: first step where train_acc >= 95%
+            t_mem = None
+            for i in range(len(train_acc)):
+                if train_acc[i] >= 0.95:
+                    t_mem = steps[i]
+                    break
+
+            # T_grok: first step where test_acc >= 95% and stays there
+            t_grok = None
+            for i in range(len(test_acc)):
+                if test_acc[i] >= 0.95:
+                    if all(a >= 0.95 for a in test_acc[i:]):
+                        t_grok = steps[i]
+                        break
+            grokked = t_grok is not None
+
+            points.append({
+                "exp": exp_label, "mean_drift": mean_drift,
+                "w2_w1": ratio,
+                "t_mem": t_mem if t_mem is not None else budget,
+                "t_grok": t_grok if grokked else budget,
+                "grokked": grokked,
+            })
+
+    print(f"  Cross-run scatter: {len(points)} runs "
+          f"({sum(1 for p in points if p['grokked'])} grokked)")
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+    scatter_configs = [
+        ("mean_drift", r"Mean client drift", "a)"),
+        ("w2_w1", r"Final $\|W_2\| / \|W_1\|$", "b)"),
+        ("t_mem", r"$T_{\mathrm{mem}}$ ($\times$1000)", "c)"),
+    ]
+
+    for ax, (xkey, xlabel, panel_label) in zip(axes, scatter_configs):
+        for exp, (color, marker, label) in exp_styles.items():
+            grokked_pts = [p for p in points
+                           if p["exp"] == exp and p["grokked"]]
+            failed_pts = [p for p in points
+                          if p["exp"] == exp and not p["grokked"]]
+
+            if grokked_pts:
+                xs = [p[xkey] / (1000 if xkey == "t_mem" else 1) for p in grokked_pts]
+                ys = [p["t_grok"] / 1000 for p in grokked_pts]
+                ax.scatter(xs, ys, c=color, marker=marker, s=40, alpha=0.7,
+                           edgecolors="white", linewidth=0.5, label=label,
+                           zorder=3)
+
+            if failed_pts:
+                xs = [p[xkey] / (1000 if xkey == "t_mem" else 1) for p in failed_pts]
+                ys = [budget / 1000] * len(xs)
+                ax.scatter(xs, ys, c=color, marker=marker, s=40, alpha=0.2,
+                           edgecolors="white", linewidth=0.5, zorder=2)
+
+        if xkey != "t_mem":
+            grokked_all = [p for p in points if p["grokked"]]
+            if len(grokked_all) > 2:
+                xs = np.array([p[xkey] for p in grokked_all])
+                ys = np.array([p["t_grok"] for p in grokked_all])
+                valid = np.isfinite(xs) & np.isfinite(ys)
+                if valid.sum() > 2:
+                    r = np.corrcoef(xs[valid], ys[valid])[0, 1]
+                    ax.text(0.95, 0.05, f"r = {r:.2f}",
+                            transform=ax.transAxes, fontsize=12,
+                            ha="right", va="bottom",
+                            bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
+                                      edgecolor="gray", alpha=0.8))
+
+        ax.axhline(budget / 1000, color="gray", linestyle="--", alpha=0.3)
+        if xkey == "t_mem":
+            lim = max(ax.get_xlim()[1], ax.get_ylim()[1])
+            ax.plot([0, lim], [0, lim], color="gray", linestyle=":", alpha=0.5,
+                    label=r"$T_{\mathrm{grok}} = T_{\mathrm{mem}}$")
+        ax.set_xlabel(xlabel, fontsize=13)
+        if ax == axes[0]:
+            ax.set_ylabel(r"$T_{\mathrm{grok}}$ ($\times$1000)", fontsize=13)
+        ax.tick_params(labelsize=11)
+        ax.text(-0.05, 1.05, panel_label, transform=ax.transAxes,
+                fontsize=14, fontweight="bold", va="top")
+
+    axes[0].legend(fontsize=11, loc="upper left")
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR, "paper_cross_run_scatter.png"),
+                bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {OUTPUT_DIR}/paper_cross_run_scatter.png")
+
+
 if __name__ == "__main__":
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -739,5 +1052,10 @@ if __name__ == "__main__":
 
     # Drift-norm interaction
     plot_drift_norm_interaction()
+
+    # Paper figures
+    plot_paper_drift_fingerprint()
+    plot_paper_weight_norms()
+    plot_paper_cross_run_scatter()
 
     print(f"\nDone! All figures saved to {OUTPUT_DIR}")
