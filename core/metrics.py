@@ -76,3 +76,83 @@ def fourier_spectrum(model):
     power = (W1_fft.abs() ** 2)  # (N, p)
 
     return {"spectrum": power.cpu().tolist()}
+
+
+# ---------------------------------------------------------------------------
+# Mechanistic metrics
+# ---------------------------------------------------------------------------
+
+
+def gini_coefficient(x: torch.Tensor) -> float:
+    """Gini coefficient of a 1-D tensor measuring inequality/sparsity.
+
+    Returns 0 for perfectly equal distribution, ~1 for maximally unequal.
+    """
+    x = x.detach().float().abs()
+    if x.sum() == 0:
+        return 0.0
+    sorted_x, _ = torch.sort(x)
+    n = len(sorted_x)
+    index = torch.arange(1, n + 1, dtype=torch.float32, device=x.device)
+    return (2.0 * (index * sorted_x).sum() / (n * sorted_x.sum()) - (n + 1) / n).item()
+
+
+def effective_rank(W: torch.Tensor) -> float:
+    """Effective rank via Shannon entropy of normalized singular values.
+
+    Roy & Bhattacharyya (2007).  Returns exp(entropy) where entropy is
+    computed from the normalised singular value distribution.
+    """
+    S = torch.linalg.svdvals(W.detach().float())
+    S = S[S > 1e-10]
+    if len(S) == 0:
+        return 0.0
+    p = S / S.sum()
+    entropy = -(p * p.log()).sum()
+    return entropy.exp().item()
+
+
+def neuron_frequency_assignment(model) -> list:
+    """Assign each neuron its dominant Fourier frequency.
+
+    For each row of W1 (first p columns), compute the DFT and return the
+    argmax of the magnitude spectrum.  Returns a list of length N.
+    """
+    W1 = model.W1.data
+    p = model.P
+    W1_n = W1[:, :p]
+    W1_fft = torch.fft.fft(W1_n, dim=1)
+    magnitudes = W1_fft.abs()
+    return magnitudes.argmax(dim=1).tolist()
+
+
+def restricted_excluded_loss(model, x: torch.Tensor, y_onehot: torch.Tensor,
+                             key_freqs: list) -> dict:
+    """Nanda's progress measures: restricted and excluded loss.
+
+    Computes logits, takes FFT along the output (class) dimension, then:
+      - restricted_loss: keep only Fourier components at *key_freqs*, zero the rest
+      - excluded_loss:  zero out Fourier components at *key_freqs*, keep the rest
+
+    Both losses are MSE against *y_onehot*.
+    """
+    with torch.no_grad():
+        logits = model(x)
+        logits_fft = torch.fft.fft(logits, dim=1)
+
+        # Restricted: keep only key_freqs
+        restricted_fft = torch.zeros_like(logits_fft)
+        for k in key_freqs:
+            restricted_fft[:, k] = logits_fft[:, k]
+        restricted_logits = torch.fft.ifft(restricted_fft, dim=1).real
+
+        # Excluded: remove key_freqs
+        excluded_fft = logits_fft.clone()
+        for k in key_freqs:
+            excluded_fft[:, k] = 0
+        excluded_logits = torch.fft.ifft(excluded_fft, dim=1).real
+
+        restricted_loss = torch.nn.functional.mse_loss(restricted_logits, y_onehot).item()
+        excluded_loss = torch.nn.functional.mse_loss(excluded_logits, y_onehot).item()
+
+    return {"restricted_loss": restricted_loss, "excluded_loss": excluded_loss}
