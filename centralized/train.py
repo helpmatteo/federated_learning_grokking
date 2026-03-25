@@ -8,7 +8,7 @@ import torch.nn as nn
 from core.config import Config
 from core.dataset import make_dataset
 from core.model import GrokNet
-from core.metrics import weight_norms, gradient_norms, compute_ipr, compute_accuracy
+from core.metrics import weight_norms, gradient_norms, compute_ipr, compute_accuracy, fourier_spectrum
 from core.utils import get_device, make_optimizer, make_targets_onehot
 
 
@@ -95,6 +95,16 @@ def train(cfg: Config):
                     f"train_acc={train_acc:.1f}%  test_acc={test_acc:.1f}%  "
                     f"ipr={ipr['ipr']:.4f}  ({elapsed:.1f}s)"
                 )
+
+        # Save checkpoint if requested
+        if cfg.checkpoint_every > 0 and epoch % cfg.checkpoint_every == 0 and epoch > 0:
+            ckpt_dir = os.path.join(cfg.output_dir, "checkpoints")
+            os.makedirs(ckpt_dir, exist_ok=True)
+            ckpt_path = os.path.join(ckpt_dir, f"ckpt_epoch{epoch}.pt")
+            torch.save(model.state_dict(), ckpt_path)
+            spec = fourier_spectrum(model)
+            spec_path = os.path.join(ckpt_dir, f"spectrum_epoch{epoch}.pt")
+            torch.save(spec["spectrum"], spec_path)
 
         optimizer.step()
 
