@@ -31,7 +31,7 @@ from federated.config import FedConfig
 from federated.dataset import make_federated_datasets
 from core.model import GrokNet
 from core.utils import make_targets_onehot, make_optimizer, get_device
-from core.metrics import weight_norms, compute_ipr, compute_accuracy
+from core.metrics import weight_norms, compute_ipr, compute_accuracy, fourier_spectrum
 
 
 # ── Dataset cache ────────────────────────────────────────────────────────────
@@ -96,6 +96,7 @@ def _cfg_to_fit_config(cfg: FedConfig, server_round: int):
         "server_lr": cfg.server_lr,
         "tau": cfg.tau,
         "track_client_drift": cfg.track_client_drift,
+        "checkpoint_client_weights": cfg.checkpoint_client_weights,
     }
 
 
@@ -200,11 +201,24 @@ class GrokClient(NumPyClient):
         weight_norm = float(sum(np.sum(w**2) for w in updated_weights) ** 0.5)
         local_ipr = compute_ipr(model)["ipr"]
 
+        # Extract W1 for per-client Fourier analysis (only first-operand columns)
+        # Serialize as bytes since Flower metrics only support Scalar types
+        if config.get("checkpoint_client_weights", False):
+            client_w1_bytes = model.W1.data[:, :cfg.p].cpu().numpy().tobytes()
+        else:
+            client_w1_bytes = None
+
+        metrics_dict = {"loss": local_loss, "accuracy": local_acc, "drift": drift,
+             "weight_norm": weight_norm, "ipr": local_ipr}
+        if client_w1_bytes is not None:
+            metrics_dict["w1_first_p"] = client_w1_bytes
+            metrics_dict["w1_shape_0"] = model.W1.data.shape[0]
+            metrics_dict["w1_shape_1"] = cfg.p
+
         return (
             updated_weights,
             len(y_local),
-            {"loss": local_loss, "accuracy": local_acc, "drift": drift,
-             "weight_norm": weight_norm, "ipr": local_ipr},
+            metrics_dict,
         )
 
     def evaluate(self, parameters, config):
@@ -284,6 +298,7 @@ def fed_train(cfg: FedConfig):
 
     # Mutable container for inter-callback communication (closure-shared)
     _round_metrics = {"mean_drift": 0.0, "weight_divergence": 0.0}
+    _client_w1_cache = {"data": None}
 
     def _aggregate_fit_metrics(metrics_list):
         """Aggregate per-client fit metrics from GrokClient.fit()."""
@@ -292,6 +307,15 @@ def fed_train(cfg: FedConfig):
 
         _round_metrics["mean_drift"] = float(np.mean(drifts)) if drifts else 0.0
         _round_metrics["weight_divergence"] = float(np.std(w_norms)) if len(w_norms) > 1 else 0.0
+
+        # Capture per-client W1 if available (deserialize from bytes)
+        w1_list = []
+        for _, m in metrics_list:
+            w1_bytes = m.get("w1_first_p")
+            if w1_bytes is not None:
+                shape = (int(m["w1_shape_0"]), int(m["w1_shape_1"]))
+                w1_list.append(np.frombuffer(w1_bytes, dtype=np.float32).reshape(shape))
+        _client_w1_cache["data"] = w1_list if w1_list else None
 
         return {
             "mean_drift": _round_metrics["mean_drift"],
@@ -332,6 +356,25 @@ def fed_train(cfg: FedConfig):
         history["ipr"].append(ipr["ipr"])
         history["mean_client_drift"].append(_round_metrics["mean_drift"])
         history["client_weight_divergence"].append(_round_metrics["weight_divergence"])
+
+        # Save checkpoint if requested
+        if cfg.checkpoint_every > 0 and server_round > 0 and server_round % cfg.checkpoint_every == 0:
+            ckpt_dir = os.path.join(cfg.output_dir, "checkpoints")
+            os.makedirs(ckpt_dir, exist_ok=True)
+
+            # Global model checkpoint
+            ckpt_path = os.path.join(ckpt_dir, f"ckpt_round{server_round}.pt")
+            torch.save(model.state_dict(), ckpt_path)
+
+            # Global Fourier spectrum
+            spec = fourier_spectrum(model)
+            spec_path = os.path.join(ckpt_dir, f"spectrum_round{server_round}.pt")
+            torch.save(spec["spectrum"], spec_path)
+
+            # Per-client W1 (if available)
+            if _client_w1_cache["data"] is not None:
+                client_path = os.path.join(ckpt_dir, f"client_w1_round{server_round}.pt")
+                torch.save(_client_w1_cache["data"], client_path)
 
         if server_round % max(1, cfg.num_rounds // 10) == 0:
             elapsed = time.time() - start_time
