@@ -25,6 +25,7 @@ class FedConfig(Config):
     server_lr: float = 1.0               # server-side learning rate (FedAdam)
     tau: float = 1e-3                     # FedAdam adaptivity parameter
     track_client_drift: bool = True       # enable per-round drift logging
+    checkpoint_client_weights: bool = False  # save per-client W1 weights at checkpoints
 
     # Override defaults for federated setting
     hidden_width: int = 128               # slightly overparameterized for FL

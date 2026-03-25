@@ -34,6 +34,7 @@ class Config:
     # --- Output ---
     output_dir: str = "results/centralized"
     save_weights: bool = False           # save final model weights
+    checkpoint_every: int = 0            # save checkpoints every N epochs (0 = disabled)
 
     # Set to True internally when user explicitly passes a value
     _lr_set: bool = False
