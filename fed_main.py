@@ -50,7 +50,7 @@ def parse_args():
     parser.add_argument("--weight_decay", type=float, default=None)
     parser.add_argument("--momentum", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output_dir", type=str, default="results/federated")
+    parser.add_argument("--output_dir", type=str, default="results/baselines/federated")
     parser.add_argument("--save_weights", action="store_true")
     # FL config
     parser.add_argument("--num_clients", type=int, default=5)
@@ -103,7 +103,7 @@ def single_run(cfg: FedConfig, plot=True):
     if plot:
         # Try to load centralized baseline for comparison
         central_tag = f"{cfg.task}_{cfg.optimizer}_p{cfg.p}_N{cfg.hidden_width}_a{cfg.alpha}"
-        central_path = os.path.join("results/centralized", f"history_{central_tag}.json")
+        central_path = os.path.join("results/baselines/centralized", f"history_{central_tag}.json")
         if os.path.exists(central_path):
             central_history = load_history(central_path)
             tag = f"{cfg.partition}_K{cfg.num_clients}"

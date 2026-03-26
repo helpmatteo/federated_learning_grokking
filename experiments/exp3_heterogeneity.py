@@ -19,7 +19,7 @@ LOCAL_EPOCHS = 5
 
 def run_exp3a_cell(alpha: float, dir_alpha: float, k: int = 10,
                    hidden_width: int = 256, t_max: int = 50000,
-                   output_dir: str = "results/exp3_heterogeneity"):
+                   output_dir: str = "results/experiments/exp3_heterogeneity"):
     """Run a single (alpha, dir_alpha) cell for 3a."""
     rc = RunConfig(t_base=8000, t_max=t_max)
     num_rounds = rc.s_fl // LOCAL_EPOCHS
@@ -53,7 +53,7 @@ def run_exp3a_cell(alpha: float, dir_alpha: float, k: int = 10,
 
 def run_exp3a(alphas: list, k_primary: int = 10,
               hidden_width: int = 256, t_max: int = 50000,
-              output_dir: str = "results/exp3_heterogeneity"):
+              output_dir: str = "results/experiments/exp3_heterogeneity"):
     """3a: Dirichlet sweep at K_primary."""
     results = []
     for alpha in alphas:
@@ -69,7 +69,7 @@ def run_exp3a(alphas: list, k_primary: int = 10,
 
 def run_exp3a_k_validation(alphas: list = None, k_secondary: int = 20,
                            hidden_width: int = 256, t_max: int = 50000,
-                           output_dir: str = "results/exp3_heterogeneity"):
+                           output_dir: str = "results/experiments/exp3_heterogeneity"):
     """3a K-validation: reduced sweep at K_secondary."""
     reduced_alphas = alphas if alphas else [0.25, 0.30, 0.50]
     reduced_dir = [0.1, 1.0, 1000.0]
@@ -88,7 +88,7 @@ def run_exp3a_k_validation(alphas: list = None, k_secondary: int = 20,
 
 def run_exp3b_cell(alpha: float, partition: str, k: int = 10,
                    hidden_width: int = 256, t_max: int = 50000,
-                   output_dir: str = "results/exp3_heterogeneity"):
+                   output_dir: str = "results/experiments/exp3_heterogeneity"):
     """Run a single (alpha, partition) cell for 3b."""
     rc = RunConfig(t_base=8000, t_max=t_max)
     num_rounds = rc.s_fl // LOCAL_EPOCHS
@@ -122,7 +122,7 @@ def run_exp3b_cell(alpha: float, partition: str, k: int = 10,
 
 def run_exp3b(alphas: list, k_primary: int = 10,
               hidden_width: int = 256, t_max: int = 50000,
-              output_dir: str = "results/exp3_heterogeneity"):
+              output_dir: str = "results/experiments/exp3_heterogeneity"):
     """3b: Structured partition comparison (IID vs operand vs target)."""
     results = []
     for alpha in alphas:

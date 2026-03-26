@@ -6,7 +6,7 @@ Usage:
     python run_experiment.py exp2 --t_max 50000
     python run_experiment.py exp3a --alphas 0.1,0.15,0.2,0.3,0.5
     python run_experiment.py exp5 --hard_settings hard_settings.json
-    python run_experiment.py plot --exp exp1 --results results/exp1_boundary/exp1_results.json
+    python run_experiment.py plot --exp exp1 --results results/experiments/exp1_boundary/exp1_results.json
 """
 
 import argparse
@@ -19,11 +19,11 @@ def parse_args():
     subparsers = parser.add_subparsers(dest="experiment", help="Experiment to run")
 
     p0 = subparsers.add_parser("exp0", help="Width validation")
-    p0.add_argument("--output_dir", default="results/exp0_width")
+    p0.add_argument("--output_dir", default="results/experiments/exp0_width")
 
     p1 = subparsers.add_parser("exp1", help="Centralized phase boundary")
     p1.add_argument("--hidden_width", type=int, default=256)
-    p1.add_argument("--output_dir", default="results/exp1_boundary")
+    p1.add_argument("--output_dir", default="results/experiments/exp1_boundary")
 
     p2 = subparsers.add_parser("exp2", help="Aggregation effect")
     p2.add_argument("--alpha", type=float, default=None,
@@ -36,7 +36,7 @@ def parse_args():
                     help="Comma-separated K values (default: 2,5,10,20,50,97)")
     p2.add_argument("--hidden_width", type=int, default=256)
     p2.add_argument("--t_max", type=int, default=50000)
-    p2.add_argument("--output_dir", default="results/exp2_aggregation")
+    p2.add_argument("--output_dir", default="results/experiments/exp2_aggregation")
 
     for sub in ["exp3a", "exp3a_kval", "exp3b"]:
         p = subparsers.add_parser(sub, help=f"Heterogeneity: {sub}")
@@ -51,7 +51,7 @@ def parse_args():
         p.add_argument("--k", type=int, default=10)
         p.add_argument("--hidden_width", type=int, default=256)
         p.add_argument("--t_max", type=int, default=50000)
-        p.add_argument("--output_dir", default="results/exp3_heterogeneity")
+        p.add_argument("--output_dir", default="results/experiments/exp3_heterogeneity")
 
     for sub in ["exp4a", "exp4b", "exp4c"]:
         p = subparsers.add_parser(sub, help=f"Optimization: {sub}")
@@ -68,7 +68,7 @@ def parse_args():
         p.add_argument("--k", type=int, default=10)
         p.add_argument("--hidden_width", type=int, default=256)
         p.add_argument("--t_max", type=int, default=50000)
-        p.add_argument("--output_dir", default="results/exp4_optimization")
+        p.add_argument("--output_dir", default="results/experiments/exp4_optimization")
 
     p5 = subparsers.add_parser("exp5", help="Algorithm rescue")
     p5.add_argument("--setting", type=str, default=None,
@@ -77,10 +77,10 @@ def parse_args():
                     help="Single algorithm label (e.g. FedProx-0.01) for parallel runs")
     p5.add_argument("--hidden_width", type=int, default=256)
     p5.add_argument("--t_max", type=int, default=50000)
-    p5.add_argument("--output_dir", default="results/exp5_algorithms")
+    p5.add_argument("--output_dir", default="results/experiments/exp5_algorithms")
 
     p6 = subparsers.add_parser("exp6", help="Mechanistic analysis")
-    p6.add_argument("--output_dir", default="results/exp6_mechanistic")
+    p6.add_argument("--output_dir", default="results/experiments/exp6_mechanistic")
 
     pp = subparsers.add_parser("plot", help="Generate figures")
     pp.add_argument("--exp", required=True,
@@ -217,8 +217,8 @@ def main():
     elif args.experiment == "exp6":
         from experiments.exp6_mechanistic import analyze_drift_vs_grokking
         analyze_drift_vs_grokking(
-            results_dirs=["results/exp2_aggregation", "results/exp3_heterogeneity",
-                          "results/exp4_optimization", "results/exp5_algorithms"],
+            results_dirs=["results/experiments/exp2_aggregation", "results/experiments/exp3_heterogeneity",
+                          "results/experiments/exp4_optimization", "results/experiments/exp5_algorithms"],
             output_dir=args.output_dir,
         )
 

@@ -24,7 +24,7 @@ class TestFedConfig:
         """FedConfig overrides hidden_width=128 and output_dir."""
         cfg = FedConfig()
         assert cfg.hidden_width == 128  # Config default is 100
-        assert cfg.output_dir == "results/federated"  # Config default is results/centralized
+        assert cfg.output_dir == "results/baselines/federated"  # Config default is results/baselines/centralized
 
     def test_inherits_base_fields(self):
         cfg = FedConfig()

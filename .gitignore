@@ -1,12 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
 .venv/
 venv/
-__pycache__/
+
+# OS
+.DS_Store
+
+# Logs
 logs/
 
 # LaTeX build artifacts
 paper/*.aux
 paper/*.log
 paper/*.out
+paper/*.toc
 paper/*.synctex.gz
 paper/*.fls
 paper/*.fdb_latexmk
@@ -14,9 +23,6 @@ paper/*.bbl
 paper/*.blg
 paper/*.pdf
 
-# Report source files (submitted separately)
-paper/contribution_statement.tex
-paper/report.tex
-
-# Large checkpoint files (regenerable via exp7)
+# Large result files (regenerable)
 results/exp7_mechanistic/*/checkpoints/
+results/**/*.json

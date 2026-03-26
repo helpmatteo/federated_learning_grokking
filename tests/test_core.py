@@ -26,7 +26,7 @@ class TestConfig:
         assert cfg.lr == 50.0
         assert cfg.weight_decay == 0.0
         assert cfg.momentum == 0.0
-        assert cfg.output_dir == "results/centralized"
+        assert cfg.output_dir == "results/baselines/centralized"
 
     def test_apply_adamw_defaults_overrides_when_not_set(self):
         cfg = Config(optimizer="adamw")

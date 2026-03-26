@@ -46,7 +46,7 @@ SEED = 42
 K = 10
 LOCAL_EPOCHS = 5
 
-OUTPUT_DIR = "results/exp7_tasks"
+OUTPUT_DIR = "results/experiments/exp7_tasks"
 
 # Tier 1: original sweep (tight budget, near phase boundary)
 TIER1_PRIMES = [53, 97]
@@ -63,7 +63,7 @@ TIER2_BUDGET = 100_000
 
 def _cent_history_exists(task, p, alpha, seed):
     """Check if a centralized run already exists in exp1 or exp7."""
-    exp1_pat = f"results/exp1_boundary/history_{task}_gd_p{p}_N256_a{alpha}_s{seed}.json"
+    exp1_pat = f"results/experiments/exp1_boundary/history_{task}_gd_p{p}_N256_a{alpha}_s{seed}.json"
     exp7_pat = f"{OUTPUT_DIR}/centralized/history_{task}_gd_p{p}_N256_a{alpha}_s{seed}.json"
     return glob.glob(exp1_pat) or glob.glob(exp7_pat)
 
@@ -71,7 +71,7 @@ def _cent_history_exists(task, p, alpha, seed):
 def _fl_history_exists(task, p, alpha, seed):
     """Check if an FL run already exists in exp2 or exp7."""
     tag_frag = f"fed_{task}_gd_p{p}_N256_a{alpha}_K{K}_le{LOCAL_EPOCHS}_ft1.0_iid_s{seed}"
-    exp2_pat = f"results/exp2_aggregation/fl_iid/history_{tag_frag}.json"
+    exp2_pat = f"results/experiments/exp2_aggregation/fl_iid/history_{tag_frag}.json"
     exp7_pat = f"{OUTPUT_DIR}/fl_iid/history_{tag_frag}.json"
     return glob.glob(exp2_pat) or glob.glob(exp7_pat)
 

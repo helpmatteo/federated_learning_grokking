@@ -15,7 +15,7 @@ SEEDS = [42]
 S_MAX = 50_000
 
 
-def run_exp0(output_dir: str = "results/exp0_width"):
+def run_exp0(output_dir: str = "results/experiments/exp0_width"):
     """Run width validation experiment."""
     base_cfg = Config(
         task="addition",

@@ -22,7 +22,7 @@ from centralized.train import train as centralized_train
 from federated.train import fed_train, _dataset_cache
 
 
-OUTPUT_DIR = "results/exp7_mechanistic"
+OUTPUT_DIR = "results/experiments/exp7_mechanistic"
 SEED = 42
 CHECKPOINT_EVERY = 100
 

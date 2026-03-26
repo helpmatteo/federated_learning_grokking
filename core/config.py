@@ -32,7 +32,7 @@ class Config:
     log_every: int = 100                 # log metrics every N epochs
 
     # --- Output ---
-    output_dir: str = "results/centralized"
+    output_dir: str = "results/baselines/centralized"
     save_weights: bool = False           # save final model weights
     checkpoint_every: int = 0            # save checkpoints every N epochs (0 = disabled)
 

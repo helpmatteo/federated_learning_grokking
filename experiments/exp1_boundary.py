@@ -15,7 +15,7 @@ S_MAX = 100_000
 
 
 def run_exp1(hidden_width: int = 256,
-             output_dir: str = "results/exp1_boundary"):
+             output_dir: str = "results/experiments/exp1_boundary"):
     """Run centralized phase boundary experiment.
 
     Returns dict with alpha_crit, t_max, and per-alpha results.

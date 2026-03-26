@@ -42,7 +42,7 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--log_every", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output_dir", type=str, default="results/centralized")
+    parser.add_argument("--output_dir", type=str, default="results/baselines/centralized")
     parser.add_argument("--save_weights", action="store_true")
     parser.add_argument("--no_plot", action="store_true")
     parser.add_argument("--sweep", type=str, default=None,

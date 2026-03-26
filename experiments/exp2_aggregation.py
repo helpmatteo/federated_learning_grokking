@@ -31,7 +31,7 @@ LOCAL_EPOCHS = 5
 
 
 def run_exp2_cell(alpha: float, K: int, hidden_width: int = 256,
-                  t_max: int = 50000, output_dir: str = "results/exp2_aggregation"):
+                  t_max: int = 50000, output_dir: str = "results/experiments/exp2_aggregation"):
     """Run all three conditions for a single (alpha, K) pair.
 
     This is the atomic unit of work — call this in parallel across (alpha, K) pairs.
@@ -103,7 +103,7 @@ def run_exp2_cell(alpha: float, K: int, hidden_width: int = 256,
 
 
 def run_exp2(alphas: list = None, k_values: list = None, hidden_width: int = 256,
-             t_max: int = 50000, output_dir: str = "results/exp2_aggregation"):
+             t_max: int = 50000, output_dir: str = "results/experiments/exp2_aggregation"):
     """Run Exp 2 across all (alpha, K) pairs sequentially."""
     if alphas is None:
         alphas = DEFAULT_ALPHAS

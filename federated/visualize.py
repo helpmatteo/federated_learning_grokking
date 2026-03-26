@@ -10,7 +10,7 @@ def load_history(path):
         return json.load(f)
 
 
-def plot_fed_vs_centralized(fed_history, central_history, output_dir="results/federated", tag=""):
+def plot_fed_vs_centralized(fed_history, central_history, output_dir="results/baselines/federated", tag=""):
     """Compare federated and centralized training dynamics.
 
     Uses 'total_steps' (rounds * local_epochs) for federated x-axis
@@ -65,7 +65,7 @@ def plot_fed_vs_centralized(fed_history, central_history, output_dir="results/fe
     print(f"Saved {path}")
 
 
-def plot_partition_comparison(histories, labels, output_dir="results/federated"):
+def plot_partition_comparison(histories, labels, output_dir="results/baselines/federated"):
     """Compare different partition strategies (IID, operand, target)."""
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
@@ -97,7 +97,7 @@ def plot_partition_comparison(histories, labels, output_dir="results/federated")
     print(f"Saved {path}")
 
 
-def plot_client_scaling(histories, client_counts, output_dir="results/federated"):
+def plot_client_scaling(histories, client_counts, output_dir="results/baselines/federated"):
     """Compare grokking dynamics across different numbers of clients."""
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
@@ -127,7 +127,7 @@ def plot_client_scaling(histories, client_counts, output_dir="results/federated"
     print(f"Saved {path}")
 
 
-def plot_dirichlet_sweep(histories, dirichlet_alphas, output_dir="results/federated"):
+def plot_dirichlet_sweep(histories, dirichlet_alphas, output_dir="results/baselines/federated"):
     """Compare grokking dynamics across Dirichlet concentration values.
 
     Lower alpha = more heterogeneous; higher alpha = closer to IID.
@@ -160,7 +160,7 @@ def plot_dirichlet_sweep(histories, dirichlet_alphas, output_dir="results/federa
     print(f"Saved {path}")
 
 
-def plot_participation_sweep(histories, fractions, partition, output_dir="results/federated"):
+def plot_participation_sweep(histories, fractions, partition, output_dir="results/baselines/federated"):
     """Compare grokking dynamics across participation rates on a fixed non-IID partition.
 
     fraction_train=1.0 is the full-participation baseline where non-IID effects cancel.
@@ -194,7 +194,7 @@ def plot_participation_sweep(histories, fractions, partition, output_dir="result
     print(f"Saved {path}")
 
 
-def plot_local_epochs(histories, local_epoch_counts, output_dir="results/federated"):
+def plot_local_epochs(histories, local_epoch_counts, output_dir="results/baselines/federated"):
     """Compare grokking dynamics across different numbers of local epochs (IID)."""
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
@@ -224,7 +224,7 @@ def plot_local_epochs(histories, local_epoch_counts, output_dir="results/federat
     print(f"Saved {path}")
 
 
-def plot_breaking_point(results, output_dir="results/federated"):
+def plot_breaking_point(results, output_dir="results/baselines/federated"):
     """Combined 3-row figure showing where federated grokking breaks.
 
     results: dict with keys 'clients', 'participation', 'local_epochs',
@@ -288,7 +288,7 @@ def plot_breaking_point(results, output_dir="results/federated"):
     print(f"Saved {path}")
 
 
-def plot_fedprox_sweep(histories, mu_values, output_dir="results/federated"):
+def plot_fedprox_sweep(histories, mu_values, output_dir="results/baselines/federated"):
     """Compare FedAvg (mu=0) vs FedProx across proximal strength values.
 
     Tests whether the proximal regularization that reduces client drift

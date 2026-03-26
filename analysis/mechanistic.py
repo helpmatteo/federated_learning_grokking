@@ -203,7 +203,7 @@ def analyze_client_fourier(client_data: list, p: int, key_freqs: list) -> dict:
     return results
 
 
-def run_analysis(output_dir: str = "results/exp7_mechanistic"):
+def run_analysis(output_dir: str = "results/experiments/exp7_mechanistic"):
     """Run analysis on all exp7 configs and save results."""
     config_dirs = {
         "c1_centralized": True,

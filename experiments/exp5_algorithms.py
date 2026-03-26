@@ -50,7 +50,7 @@ ALGORITHMS = [
 
 def run_exp5_cell(setting_label: str, algo_label: str,
                   hidden_width: int = 256, t_max: int = 50000,
-                  output_dir: str = "results/exp5_algorithms"):
+                  output_dir: str = "results/experiments/exp5_algorithms"):
     """Run a single (setting, algorithm) cell."""
     setting = HARD_SETTINGS[setting_label]
     algo_match = [a for a in ALGORITHMS if a[0] == algo_label]
@@ -101,7 +101,7 @@ def run_exp5_cell(setting_label: str, algo_label: str,
 
 def run_exp5(settings: list = None, algorithms: list = None,
              hidden_width: int = 256, t_max: int = 50000,
-             output_dir: str = "results/exp5_algorithms"):
+             output_dir: str = "results/experiments/exp5_algorithms"):
     """Run Exp 5 across all (setting, algorithm) pairs."""
     if settings is None:
         settings = list(HARD_SETTINGS.keys())

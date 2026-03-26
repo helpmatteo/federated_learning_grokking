@@ -54,7 +54,7 @@ def analyze_drift_vs_grokking(results_dirs: list, output_dir: str):
 
 if __name__ == "__main__":
     analyze_drift_vs_grokking(
-        results_dirs=["results/exp2_aggregation", "results/exp3_heterogeneity",
-                       "results/exp4_optimization", "results/exp5_algorithms"],
-        output_dir="results/exp6_mechanistic",
+        results_dirs=["results/experiments/exp2_aggregation", "results/experiments/exp3_heterogeneity",
+                       "results/experiments/exp4_optimization", "results/experiments/exp5_algorithms"],
+        output_dir="results/experiments/exp6_mechanistic",
     )

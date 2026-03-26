@@ -27,7 +27,7 @@ NONIID_SETTING = {"partition": "dirichlet", "dirichlet_alpha": 0.1}
 
 def run_exp4a_cell(alpha: float, E: int, het: str, k: int = 10,
                    hidden_width: int = 256, t_max: int = 50000,
-                   output_dir: str = "results/exp4_optimization"):
+                   output_dir: str = "results/experiments/exp4_optimization"):
     """Run a single (alpha, E, het) cell for 4a."""
     rc = RunConfig(t_base=8000, t_max=t_max)
     s_fl = rc.s_fl
@@ -64,7 +64,7 @@ def run_exp4a_cell(alpha: float, E: int, het: str, k: int = 10,
 
 def run_exp4a(alphas: list = None, k: int = 10,
               hidden_width: int = 256, t_max: int = 50000,
-              output_dir: str = "results/exp4_optimization"):
+              output_dir: str = "results/experiments/exp4_optimization"):
     """4a: Drift accumulation x heterogeneity. Fixed total S, vary E."""
     if alphas is None:
         alphas = DEFAULT_ALPHAS
@@ -85,7 +85,7 @@ def run_exp4a(alphas: list = None, k: int = 10,
 
 def run_exp4b_cell(alpha: float, frac: float, het: str, k: int = 10,
                    hidden_width: int = 256, t_max: int = 50000,
-                   output_dir: str = "results/exp4_optimization"):
+                   output_dir: str = "results/experiments/exp4_optimization"):
     """Run a single (alpha, f, het) cell for 4b."""
     rc = RunConfig(t_base=8000, t_max=t_max)
     s_fl = rc.s_fl
@@ -123,7 +123,7 @@ def run_exp4b_cell(alpha: float, frac: float, het: str, k: int = 10,
 
 def run_exp4b(alphas: list = None, k: int = 10,
               hidden_width: int = 256, t_max: int = 50000,
-              output_dir: str = "results/exp4_optimization"):
+              output_dir: str = "results/experiments/exp4_optimization"):
     """4b: Partial participation x heterogeneity. Fixed E=5, vary f."""
     if alphas is None:
         alphas = DEFAULT_ALPHAS
@@ -144,7 +144,7 @@ def run_exp4b(alphas: list = None, k: int = 10,
 
 def run_exp4c_cell(alpha: float, E: int, k: int = 10,
                    hidden_width: int = 256,
-                   output_dir: str = "results/exp4_optimization"):
+                   output_dir: str = "results/experiments/exp4_optimization"):
     """Run a single (alpha, E) cell for 4c."""
     R = 2000
 
@@ -177,7 +177,7 @@ def run_exp4c_cell(alpha: float, E: int, k: int = 10,
 
 def run_exp4c(alphas: list = None, k: int = 10,
               hidden_width: int = 256,
-              output_dir: str = "results/exp4_optimization"):
+              output_dir: str = "results/experiments/exp4_optimization"):
     """4c: Compute vs communication. Fixed R=2000, IID, vary E."""
     if alphas is None:
         alphas = DEFAULT_ALPHAS

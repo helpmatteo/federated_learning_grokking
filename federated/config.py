@@ -25,11 +25,12 @@ class FedConfig(Config):
     server_lr: float = 1.0               # server-side learning rate (FedAdam)
     tau: float = 1e-3                     # FedAdam adaptivity parameter
     track_client_drift: bool = True       # enable per-round drift logging
+    checkpoint_every: int = 0                # save checkpoints every N rounds (0 = disabled)
     checkpoint_client_weights: bool = False  # save per-client W1 weights at checkpoints
 
     # Override defaults for federated setting
     hidden_width: int = 128               # slightly overparameterized for FL
-    output_dir: str = "results/federated"
+    output_dir: str = "results/baselines/federated"
 
     # NOTE: `epochs`, `log_every`, and `_epochs_set` are inherited from Config
     # but unused in the federated setting (replaced by num_rounds/local_epochs).
