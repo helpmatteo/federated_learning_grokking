@@ -2,3 +2,21 @@
 venv/
 __pycache__/
 logs/
+
+# LaTeX build artifacts
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.synctex.gz
+paper/*.fls
+paper/*.fdb_latexmk
+paper/*.bbl
+paper/*.blg
+paper/*.pdf
+
+# Report source files (submitted separately)
+paper/contribution_statement.tex
+paper/report.tex
+
+# Large checkpoint files (regenerable via exp7)
+results/exp7_mechanistic/*/checkpoints/
