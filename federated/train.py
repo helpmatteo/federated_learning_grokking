@@ -97,6 +97,7 @@ def _cfg_to_fit_config(cfg: FedConfig, server_round: int):
         "tau": cfg.tau,
         "track_client_drift": cfg.track_client_drift,
         "checkpoint_client_weights": cfg.checkpoint_client_weights,
+        "checkpoint_every": cfg.checkpoint_every,
     }
 
 
@@ -201,9 +202,13 @@ class GrokClient(NumPyClient):
         weight_norm = float(sum(np.sum(w**2) for w in updated_weights) ** 0.5)
         local_ipr = compute_ipr(model)["ipr"]
 
-        # Extract W1 for per-client Fourier analysis (only first-operand columns)
+        # Extract W1 for per-client Fourier analysis (only at checkpoint rounds)
         # Serialize as bytes since Flower metrics only support Scalar types
-        if config.get("checkpoint_client_weights", False):
+        server_round = int(config.get("server_round", 0))
+        ckpt_every = int(config.get("checkpoint_every", 0))
+        is_checkpoint_round = (ckpt_every > 0 and server_round > 0
+                               and server_round % ckpt_every == 0)
+        if config.get("checkpoint_client_weights", False) and is_checkpoint_round:
             client_w1_bytes = model.W1.data[:, :cfg.p].cpu().numpy().tobytes()
         else:
             client_w1_bytes = None
