@@ -445,10 +445,13 @@ def fed_train(cfg: FedConfig):
     os.makedirs(cfg.output_dir, exist_ok=True)
     dirichlet_suffix = f"_dir{cfg.dirichlet_alpha}" if cfg.partition == "dirichlet" else ""
     prox_suffix = f"_mu{cfg.proximal_mu}" if cfg.proximal_mu > 0 else ""
+    adam_suffix = f"_adam_tau{cfg.tau}" if cfg.strategy == "fedadam" else ""
+    slr_suffix = f"_slr{cfg.server_lr}" if cfg.strategy == "fedadam" else ""
+    wd_suffix = f"_wd{cfg.weight_decay}" if cfg.weight_decay > 0 else ""
     tag = (f"fed_{cfg.task}_{cfg.optimizer}_p{cfg.p}_N{cfg.hidden_width}"
            f"_a{cfg.alpha}_K{cfg.num_clients}_le{cfg.local_epochs}"
            f"_ft{cfg.fraction_train}_{cfg.partition}{dirichlet_suffix}"
-           f"{prox_suffix}_s{cfg.seed}")
+           f"{prox_suffix}{adam_suffix}{slr_suffix}{wd_suffix}_s{cfg.seed}")
     history_path = os.path.join(cfg.output_dir, f"history_{tag}.json")
     with open(history_path, "w") as f:
         json.dump(history, f)
