@@ -1,0 +1,8 @@
+log_file,bytes,reason
+exp3a_a0.20_dir0.01.log,0,empty log
+exp3a_a0.20_dir0.1.log,0,empty log
+exp3a_a0.20_dir0.5.log,0,empty log
+exp3a_a0.20_dir1.0.log,0,empty log
+exp3a_a0.20_dir10.0.log,0,empty log
+exp3a_a0.20_dir1000.0.log,0,empty log
+exp3a_a0.30_dir10.0.log,2813946,no run summary (crashed/incomplete)
