@@ -25,6 +25,11 @@ class FedConfig(Config):
     server_lr: float = 1.0               # server-side learning rate (FedAdam)
     tau: float = 1e-3                     # FedAdam adaptivity parameter
     track_client_drift: bool = True       # enable per-round drift logging
+    eval_every: int = 1                   # run global evaluation every N rounds
+                                          # (1 = every round; higher = fewer curve
+                                          #  points, proportionally faster). Round 0,
+                                          #  the final round, and checkpoint rounds
+                                          #  are always evaluated.
     checkpoint_every: int = 0                # save checkpoints every N rounds (0 = disabled)
     checkpoint_client_weights: bool = False  # save per-client W1 weights at checkpoints
 

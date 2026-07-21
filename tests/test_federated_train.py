@@ -466,3 +466,49 @@ class TestStepAccounting:
         history = self._run(0.4, tmp_path)
         steps = history["total_steps"]
         assert all(b >= a for a, b in zip(steps, steps[1:]))
+
+
+# ── eval_every consistency ───────────────────────────────────────────────────
+
+
+class TestEvalEvery:
+    """eval_every must only subsample the curve, never change the dynamics.
+
+    This is the permanent guard on the per-round caching: if the warm client
+    model or the reused eval model leaked state across rounds, or if the
+    step-accumulation were gated behind the eval-round check, the subsampled run
+    would disagree with the full run at the rounds they share.
+    """
+
+    def _run(self, eval_every):
+        from fedgrok.training.federated import fed_train, _dataset_cache
+        _dataset_cache.clear()
+        cfg = FedConfig(
+            task="addition", p=17, alpha=0.5, seed=42, hidden_width=32,
+            num_clients=4, num_rounds=20, local_epochs=5, lr=1.0,
+            fraction_train=1.0, partition="dirichlet", dirichlet_alpha=0.3,
+            eval_every=eval_every, output_dir="/tmp/test_eval_every",
+        )
+        history, _ = fed_train(cfg)
+        return history
+
+    def test_subsampled_matches_full_at_shared_rounds(self):
+        full = self._run(1)
+        sub = self._run(5)
+
+        full_by_round = {r: i for i, r in enumerate(full["round"])}
+        assert set(sub["round"]) <= set(full["round"])
+
+        for j, r in enumerate(sub["round"]):
+            i = full_by_round[r]
+            for key in ("test_acc", "train_loss", "weight_norm_layer1",
+                        "total_steps", "ipr"):
+                assert sub[key][j] == pytest.approx(full[key][i], abs=1e-5), (
+                    f"{key} at round {r}: eval_every=5 gave {sub[key][j]}, "
+                    f"eval_every=1 gave {full[key][i]}"
+                )
+
+    def test_final_round_is_always_logged(self):
+        """The last round must appear even when it is not a multiple of eval_every."""
+        sub = self._run(7)  # 20 is not a multiple of 7
+        assert sub["round"][-1] == 20

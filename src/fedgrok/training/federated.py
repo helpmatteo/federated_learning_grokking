@@ -41,13 +41,63 @@ from fedgrok.metrics.fourier import weight_norms, compute_ipr, compute_accuracy,
 _dataset_cache = {}
 
 
+def _dataset_cache_key(cfg):
+    return (cfg.p, cfg.task, cfg.alpha, cfg.seed, cfg.num_clients, cfg.partition,
+            getattr(cfg, 'dirichlet_alpha', None))
+
+
 def _get_cached_datasets(cfg):
     """Return federated datasets, caching by config to avoid redundant work."""
-    cache_key = (cfg.p, cfg.task, cfg.alpha, cfg.seed, cfg.num_clients, cfg.partition,
-                 getattr(cfg, 'dirichlet_alpha', None))
+    cache_key = _dataset_cache_key(cfg)
     if cache_key not in _dataset_cache:
         _dataset_cache[cache_key] = make_federated_datasets(cfg)
     return _dataset_cache[cache_key]
+
+
+# ── Per-client warm state ────────────────────────────────────────────────────
+# fit() runs once per client per round. Rebuilding the model, moving it to the
+# device, and re-copying the client's data to the device every round is pure
+# overhead — the data never changes and the model's shape never changes; only
+# its parameter *values* change each round. In Flower's simulation each client
+# is a Ray actor (a persistent process), so a module-level dict keyed by the
+# client's identity survives across that client's rounds — the same mechanism
+# _dataset_cache relies on. We cache the on-device model and data tensors and,
+# each round, copy the incoming global parameters into the model in place.
+
+_client_cache = {}
+
+
+def _get_warm_client(cfg, partition_id, device):
+    """Return a cached (model, x_local, y_local_oh, y_local) for this client.
+
+    Built once per (dataset, client) and reused across rounds. The model's
+    parameter values are overwritten with the round's global weights by the
+    caller, so its initialisation is irrelevant after the first round.
+    """
+    key = (_dataset_cache_key(cfg), partition_id)
+    entry = _client_cache.get(key)
+    if entry is None:
+        client_data, _, _, _, _ = _get_cached_datasets(cfg)
+        x_local, y_local = client_data[partition_id]
+        x_local = x_local.to(device)
+        y_local = y_local.to(device)
+        y_local_oh = make_targets_onehot(y_local, cfg.p)
+
+        model = _make_model(cfg).to(device)
+        entry = (model, x_local, y_local_oh, y_local)
+        _client_cache[key] = entry
+    return entry
+
+
+def _load_ndarrays_into(model, ndarrays):
+    """Copy a list of parameter ndarrays into `model` in place, on its device.
+
+    Equivalent to load_state_dict(ndarrays) but without reallocating tensors or
+    moving anything across devices; the order matches _model_to_ndarrays.
+    """
+    with torch.no_grad():
+        for param, arr in zip(model.state_dict().values(), ndarrays):
+            param.copy_(torch.from_numpy(arr).to(param.device))
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -148,32 +198,23 @@ class GrokClient(NumPyClient):
         device = get_device()
         p = cfg.p
 
-        # Load this client's data partition (cached across rounds)
-        client_data, _, _, _, _ = _get_cached_datasets(cfg)
-        x_local, y_local = client_data[self.partition_id]
-        y_local_oh = make_targets_onehot(y_local, p)
+        # Warm model + on-device data (built once per client, reused each round).
+        model, x_local, y_local_oh, y_local = _get_warm_client(cfg, self.partition_id, device)
 
-        # Move data to device
-        x_local = x_local.to(device)
-        y_local_oh = y_local_oh.to(device)
-        y_local = y_local.to(device)
+        # Overwrite the model with this round's global weights, in place.
+        _load_ndarrays_into(model, parameters)
 
-        # Build model on CPU, load global weights, then move to device
-        model = _make_model(cfg)
-        state_dict = _ndarrays_to_state_dict(parameters, model)
-        model.load_state_dict(state_dict)
-        model.to(device)
-
-        # NOTE: Optimizer state (momentum, Adam moments) is not preserved across
-        # rounds. For SGD with momentum=0 this is fine. For AdamW, adaptive
-        # estimates restart each round — a known limitation of vanilla FedAvg.
+        # NOTE: Optimizer state (momentum, Adam moments) is intentionally NOT
+        # preserved across rounds — a fresh optimizer restarts it, which is the
+        # standard FedAvg/FedProx semantics. For SGD momentum=0 it is a no-op;
+        # for AdamW the adaptive estimates restart each round.
         optimizer = make_optimizer(model, cfg)
         loss_fn = nn.MSELoss()
 
-        # FedProx: save global weights for proximal term
+        # FedProx: snapshot the global weights for the proximal term.
         proximal_mu = cfg.proximal_mu
         if proximal_mu > 0:
-            global_params = [p.detach().clone() for p in model.parameters()]
+            global_params = [w.detach().clone() for w in model.parameters()]
 
         model.train()
         for _ in range(cfg.local_epochs):
@@ -267,6 +308,11 @@ def fed_train(cfg: FedConfig):
     device = get_device()
     print(f"Using device: {device}")
 
+    # Drop warm client state from any previous run in this process. The cache is
+    # keyed so stale entries can't be mis-served, but clearing frees their GPU
+    # memory when many runs share one process (e.g. the test suite).
+    _client_cache.clear()
+
     # Precompute global data (single call, also populates cache for clients)
     client_data, x_train_full, y_train_full, x_test, y_test = _get_cached_datasets(cfg)
     y_test_oh = make_targets_onehot(y_test, cfg.p)
@@ -341,14 +387,44 @@ def fed_train(cfg: FedConfig):
             "weight_divergence": _round_metrics["weight_divergence"],
         }
 
+    # One eval model, reused across rounds (was rebuilt + moved to device every
+    # round). evaluate_fn runs in the server process, so this is a plain closure
+    # variable, not a Ray-actor cache. It is assigned below, AFTER init_model, so
+    # its construction does not consume the torch RNG draw that seeds the initial
+    # global weights — otherwise the whole run starts from a different point.
+    _eval_model_box = [None]
+
     def evaluate_fn(server_round, parameters, config):
         """Centralized evaluation after each aggregation round."""
         _final_ndarrays[0] = parameters  # capture for final model reconstruction
 
-        model = _make_model(cfg)
-        state_dict = _ndarrays_to_state_dict(parameters, model)
-        model.load_state_dict(state_dict)
-        model.to(device)
+        # total_steps must accumulate on EVERY round, independent of eval_every,
+        # or skipped rounds would silently drop their gradient work. This is the
+        # compute-matched x-axis: each round the participating clients compute E
+        # local steps over `samples_this_round` examples, i.e. an equivalent of
+        # E * samples_this_round / n_train_total full-training-set steps. At full
+        # participation this reduces to E per round (the old `round * E`); it
+        # over-counted only under partial participation.
+        _step_accum["total"] += (
+            cfg.local_epochs * _round_metrics["samples_this_round"] / n_train_total
+        )
+
+        is_checkpoint_round = (
+            cfg.checkpoint_every > 0 and server_round > 0
+            and server_round % cfg.checkpoint_every == 0
+        )
+        # Round 0 (initial state), the final round, checkpoint rounds, and every
+        # eval_every-th round are logged; the rest skip the forward passes.
+        is_eval_round = (
+            server_round % max(1, cfg.eval_every) == 0
+            or server_round == cfg.num_rounds
+            or is_checkpoint_round
+        )
+        if not is_eval_round:
+            return 0.0, {}
+
+        model = _eval_model_box[0]
+        _load_ndarrays_into(model, parameters)
 
         model.eval()
         with torch.no_grad():
@@ -363,29 +439,9 @@ def fed_train(cfg: FedConfig):
         ipr = compute_ipr(model)
 
         history["round"].append(server_round)
-
-        # Two distinct notions of "how far has training progressed", both logged
-        # because they diverge under partial participation:
-        #
-        #   total_steps       centralized-equivalent gradient steps. Each round
-        #                     the participating clients collectively compute E
-        #                     local steps over `samples_this_round` examples, so
-        #                     the full-training-set-equivalent work is
-        #                     E * samples_this_round / n_train_total. This is the
-        #                     compute-matched x-axis, and the one comparable to a
-        #                     centralized run's epoch count.
-        #
-        #   sequential_steps  rounds * E — the depth of the update chain,
-        #                     independent of how many clients participated.
-        #
-        # At full participation the two coincide exactly (samples_this_round ==
-        # n_train_total, so the increment is E per round), which is why the old
-        # `server_round * local_epochs` was correct there and only there. It
-        # over-counted whenever fraction_train < 1.0, inflating the apparent
-        # compute of every partial-participation cell.
-        _step_accum["total"] += (
-            cfg.local_epochs * _round_metrics["samples_this_round"] / n_train_total
-        )
+        # sequential_steps = rounds * E is the depth of the update chain,
+        # independent of participation; total_steps (accumulated above) is the
+        # compute-matched axis. The two diverge once fraction_train < 1.
         history["total_steps"].append(_step_accum["total"])
         history["sequential_steps"].append(server_round * cfg.local_epochs)
         history["n_participating"].append(_round_metrics["n_participating"])
@@ -400,7 +456,7 @@ def fed_train(cfg: FedConfig):
         history["client_weight_divergence"].append(_round_metrics["weight_divergence"])
 
         # Save checkpoint if requested
-        if cfg.checkpoint_every > 0 and server_round > 0 and server_round % cfg.checkpoint_every == 0:
+        if is_checkpoint_round:
             ckpt_dir = os.path.join(cfg.output_dir, "checkpoints")
             os.makedirs(ckpt_dir, exist_ok=True)
 
@@ -429,9 +485,14 @@ def fed_train(cfg: FedConfig):
 
         return test_loss, {"test_accuracy": test_acc, "train_accuracy": train_acc}
 
-    # Initial model for FedAvg
+    # Initial model for FedAvg. Its RNG draw MUST come before the eval model's,
+    # since these initial weights are the run's starting point.
     init_model = _make_model(cfg)
     init_params = ndarrays_to_parameters(_model_to_ndarrays(init_model))
+
+    # Now safe to build the reusable eval model (params get overwritten each
+    # round, so its own initial values are irrelevant — only the RNG order was).
+    _eval_model_box[0] = _make_model(cfg).to(device)
 
     # ── Build Flower apps ────────────────────────────────────────────────
 
@@ -458,17 +519,34 @@ def fed_train(cfg: FedConfig):
     print(f"\nStarting Flower simulation: {cfg.num_rounds} rounds, "
           f"{cfg.num_clients} clients, {cfg.local_epochs} local epochs{prox_info}\n")
 
-    # Allocate fractional CUDA GPUs across clients; MPS is used via PyTorch
-    # directly (not managed by Ray), so num_gpus stays 0 for MPS.
+    # Allocate fractional CUDA GPUs across clients so all K can be co-scheduled
+    # on one device; MPS is used via PyTorch directly (not managed by Ray), so
+    # num_gpus stays 0 for MPS. The launcher pins one device per run with
+    # CUDA_VISIBLE_DEVICES, so "one GPU" here means that run's assigned device.
     num_gpus = 0.0
     if torch.cuda.is_available():
         num_gpus = 1.0 / cfg.num_clients
+
+    # Ray init tuning: the dashboard and the metrics exporter agent are pure
+    # overhead for a short-lived single-run simulation. The exporter in
+    # particular floods the logs with "Failed to establish connection to the
+    # metrics exporter agent ... repeated Nx across cluster" retries. Disabling
+    # both removes that traffic. log_to_driver=False keeps client stdout out of
+    # the server log.
+    backend_config = {
+        "client_resources": {"num_cpus": 1, "num_gpus": num_gpus},
+        "init_args": {
+            "include_dashboard": False,
+            "log_to_driver": False,
+            "_metrics_export_port": None,
+        },
+    }
 
     run_simulation(
         server_app=server_app,
         client_app=client_app,
         num_supernodes=cfg.num_clients,
-        backend_config={"client_resources": {"num_cpus": 1, "num_gpus": num_gpus}},
+        backend_config=backend_config,
     )
 
     # ── Reconstruct final trained model ──────────────────────────────────
