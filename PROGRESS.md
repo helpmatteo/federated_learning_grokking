@@ -3,7 +3,7 @@
 Working branch for the multi-setup rewrite. Full plan lives at
 `~/.claude/plans/plan-all-that-needs-nested-seal.md`.
 
-**Paused:** 2026-07-21, after Phase 0 complete (all correctness fixes + verification). Next: Phase 1.
+**Paused:** 2026-07-21, after Phase 1.1 (per-round Flower optimisation). Next: Phase 1.2, the sweep launcher.
 
 ## State
 
@@ -11,7 +11,7 @@ Working branch for the multi-setup rewrite. Full plan lives at
 |---|---|
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
-| Tests | **258/258 pass** (`venv/bin/python -m pytest tests/ -q`, ~7.5 min incl. FL integration) |
+| Tests | **260/260 pass** (`venv/bin/python -m pytest tests/ -q`, ~7.5 min incl. FL integration) |
 | Env | `venv/` (py3.10, torch 2.10, flwr 1.27); package installed via `pip install -e . --no-deps` |
 | Hardware | 8× L4; **use 6, ~2 runs/GPU = 12 slots**. Indices 1 and 3 had other work on them — check before launching. |
 
@@ -33,21 +33,31 @@ Working branch for the multi-setup rewrite. Full plan lives at
   and fixed two bugs (empty Dirichlet shard → float64 index error / nan-poisoned aggregate;
   now raises).
 
-## Next up — Phase 1 (harness)
+## Done — Phase 1.1 (`639efe7`)
 
-1. **Per-round optimisation** in `src/fedgrok/training/federated.py`: cache model +
-   on-device tensors per `partition_id` (pattern: `_dataset_cache`); reuse model in
-   `evaluate_fn`; add `eval_every` to `FedConfig`; disable Ray dashboard/metrics exporter
-   via `backend_config`. Target ~156 ms/round → ~40 ms/round. Guard with the existing
-   equivalence check (see verification step 2 in the plan).
-2. **`scripts/launch_sweep.py`** — JSONL manifest runner, one run per GPU via
-   `CUDA_VISIBLE_DEVICES`, 12 slots, idempotent resume, writes rows to the tidy CSV. Fold
-   `main.py` + `fed_main.py` into it (deferred from 0a — see below).
+- Per-client warm cache (`_client_cache`) + reused eval model + `eval_every` field +
+  Ray dashboard/metrics-exporter disabled, in `src/fedgrok/training/federated.py`.
+- **Verified numerically equivalent** to pre-change code (`c7c997f`) via a worktree diff:
+  worst |Δ| = 9.5e-7 across all series (= reference's own fp32 aggregation noise). Caught
+  and fixed an RNG-order bug (eval-model creation was stealing the init-weight draw).
+- Speed: ref times out >10s/round (per-round rebuild + fractional-GPU contention); cached
+  is ~80 ms/round at K=10. `eval_every` barely moves wall-clock — the Ray round-trip
+  dominates — so it's for history size, not speed.
+- Guard test `TestEvalEvery` added.
 
-## Deferred items now due
+## Next up — Phase 1.2: `scripts/launch_sweep.py`
 
-- **Entry-point consolidation** (`main.py`/`fed_main.py` → unified runner): do in Phase 1
-  with `launch_sweep.py`, as planned.
+JSONL manifest runner. One run per GPU via `CUDA_VISIBLE_DEVICES`, 12 slots (6 GPUs ×
+2), idempotent resume (skip runs whose output exists), writes one row per run to the tidy
+CSV. Fold `main.py` + `fed_main.py` into it. **When building it, benchmark client
+`num_cpus`/`num_gpus` reservations under real 12-way concurrency** — the current
+`num_gpus=1/K`, `num_cpus=1` reservations were left as-is in 1.1 because tuning them
+needs concurrent load to measure, which is exactly what the launcher provides. Oversubscribing
+64 cores with 12 runs × K clients × 1 CPU each will serialise; fractional `num_cpus` is
+likely the fix.
+
+## Still-deferred
+
 - **`metrics/fourier.py` split** into fourier/spectral/basic: do in Phase 2 with the
   capability protocol.
 
@@ -85,6 +95,6 @@ Working branch for the multi-setup rewrite. Full plan lives at
 ```bash
 cd /home/jse44/modules/ToDL/federated_learning_grokking
 git checkout v2-multisetup
-venv/bin/python -m pytest tests/ -q          # expect 258 passed
+venv/bin/python -m pytest tests/ -q          # expect 260 passed
 ```
-Then continue at **Phase 1, item 1** (per-round Flower optimisation) above.
+Then continue at **Phase 1.2** (`scripts/launch_sweep.py`) above.
