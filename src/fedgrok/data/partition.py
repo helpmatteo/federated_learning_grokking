@@ -13,7 +13,7 @@ The test set stays global for server-side evaluation.
 import numpy as np
 import torch
 from fedgrok.core.fed_config import FedConfig
-from fedgrok.data.modular import TASKS
+from fedgrok.data.modular import build_encoded_grid, split_indices
 
 
 def make_federated_datasets(cfg: FedConfig):
@@ -22,29 +22,21 @@ def make_federated_datasets(cfg: FedConfig):
     Returns:
         client_data: list of (x_train_i, y_train_i) tensors, one per client
         x_test, y_test: global test set tensors
+
+    The grid and the split come from fedgrok.data.modular, so a federated run
+    and a centralized run with the same config train on identical data.  These
+    were previously reimplemented here, giving two sources of truth.
     """
     p = cfg.p
     K = cfg.num_clients
-    task_fn = TASKS[cfg.task]
 
-    # Build full dataset
-    ns = np.arange(p)
-    ms = np.arange(p)
-    nn, mm = np.meshgrid(ns, ms, indexing="ij")
-    nn, mm = nn.flatten(), mm.flatten()
-    labels = np.array([task_fn(int(n), int(m), p) for n, m in zip(nn, mm)])
+    x, labels, nn, mm = build_encoded_grid(cfg.task, p)
 
-    # One-hot encode
-    x = np.zeros((p * p, 2 * p), dtype=np.float32)
-    x[np.arange(p * p), nn] = 1.0
-    x[np.arange(p * p), p + mm] = 1.0
-
-    # Train/test split (same as centralized)
+    # The partitioners below draw from this same RandomState *after* the split
+    # has advanced it. Passing rng (not seed) preserves that exact consumption
+    # order, so IID and Dirichlet assignments match previously published runs.
     rng = np.random.RandomState(cfg.seed)
-    perm = rng.permutation(p * p)
-    n_train = int(cfg.alpha * p * p)
-    train_idx = perm[:n_train]
-    test_idx = perm[n_train:]
+    train_idx, test_idx = split_indices(len(labels), cfg.alpha, rng=rng)
 
     x_train_all = x[train_idx]
     y_train_all = labels[train_idx]

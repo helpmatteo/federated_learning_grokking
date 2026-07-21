@@ -218,3 +218,37 @@ class TestMakeFederatedDatasets:
         cfg.partition = "invalid"
         with pytest.raises(ValueError, match="Unknown partition"):
             make_federated_datasets(cfg)
+
+
+# ── Split is shared with the centralized path ────────────────────────────────
+
+
+class TestSplitSharedWithCentralized:
+    """The grid and train/test split have one source of truth.
+
+    partition.py previously reimplemented both, so a drift in either copy would
+    have silently trained federated and centralized runs on different data.
+    """
+
+    @pytest.mark.parametrize("task", ["addition", "division", "x2_plus_y2"])
+    def test_centralized_and_federated_see_identical_split(self, task):
+        from fedgrok.core.config import Config
+
+        cent_cfg = Config(task=task, p=SMALL_P, alpha=0.5, seed=42)
+        fed_cfg = FedConfig(task=task, p=SMALL_P, alpha=0.5, seed=42,
+                            num_clients=3, partition="iid")
+
+        x_train, y_train, x_test, y_test = make_dataset(cent_cfg)
+        _, x_train_f, y_train_f, x_test_f, y_test_f = make_federated_datasets(fed_cfg)
+
+        assert torch.equal(x_train, x_train_f)
+        assert torch.equal(y_train, y_train_f)
+        assert torch.equal(x_test, x_test_f)
+        assert torch.equal(y_test, y_test_f)
+
+    @pytest.mark.parametrize("partition", ["iid", "operand", "target", "dirichlet"])
+    def test_client_shards_union_to_the_training_set(self, partition):
+        cfg = FedConfig(task="addition", p=SMALL_P, alpha=0.5, seed=42,
+                        num_clients=3, partition=partition, dirichlet_alpha=1.0)
+        client_data, _, y_train_full, _, _ = make_federated_datasets(cfg)
+        assert sum(len(y) for _, y in client_data) == len(y_train_full)

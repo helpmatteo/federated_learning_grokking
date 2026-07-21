@@ -7,7 +7,9 @@ import numpy as np
 
 from fedgrok.core.config import Config
 from fedgrok.models.groknet import GrokNet
-from fedgrok.data.modular import TASKS, make_dataset
+from fedgrok.data.modular import (
+    TASKS, make_dataset, build_encoded_grid, task_operands, DEGENERATE_TASKS,
+)
 from fedgrok.metrics.fourier import weight_norms, gradient_norms, compute_ipr, compute_accuracy
 from fedgrok.core.utils import (
     get_device, make_optimizer, make_targets_onehot, check_decay_stability,
@@ -357,3 +359,49 @@ class TestDecayStability:
         cfg = Config(optimizer="gd", lr=50.0, weight_decay=1.0)
         with pytest.raises(ValueError):
             make_optimizer(model, cfg)
+
+
+# ── Task domains ──────────────────────────────────────────────────────────────
+
+
+class TestTaskDomains:
+    """Each task's input grid must contain only well-defined pairs.
+
+    division previously mapped m=0 to a fabricated label 0, injecting p spurious
+    samples that all shared one class and over-represented it ~2x.
+    """
+
+    def test_division_grid_excludes_zero_divisor(self):
+        _, _, _, mm = build_encoded_grid("division", 7)
+        assert mm.min() == 1
+
+    def test_division_grid_has_p_times_p_minus_one_samples(self):
+        p = 7
+        _, labels, _, _ = build_encoded_grid("division", p)
+        assert len(labels) == p * (p - 1)
+
+    def test_division_labels_are_uniform(self):
+        """Every residue appears exactly p-1 times once m=0 is excluded."""
+        p = 7
+        _, labels, _, _ = build_encoded_grid("division", p)
+        counts = np.bincount(labels, minlength=p)
+        assert set(counts.tolist()) == {p - 1}
+
+    def test_division_raises_on_zero_divisor(self):
+        with pytest.raises(ValueError, match="undefined at m=0"):
+            TASKS["division"](3, 0, 7)
+
+    @pytest.mark.parametrize("task", ["addition", "subtraction", "x2_plus_y2",
+                                      "multiplication", "x2_y2_xy"])
+    def test_unrestricted_tasks_use_the_full_grid(self, task):
+        p = 7
+        _, labels, _, _ = build_encoded_grid(task, p)
+        assert len(labels) == p * p
+
+    def test_multiplication_is_flagged_as_degenerate(self):
+        """It is Z_{p-1} in disguise and keeps 2p-1 zero-product pairs."""
+        assert "multiplication" in DEGENERATE_TASKS
+
+    def test_unknown_task_raises(self):
+        with pytest.raises(ValueError, match="Unknown task"):
+            task_operands("not_a_task", 7)
