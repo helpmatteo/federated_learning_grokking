@@ -58,6 +58,21 @@ def make_federated_datasets(cfg: FedConfig):
     else:
         raise ValueError(f"Unknown partition: {cfg.partition}")
 
+    # An empty shard is not survivable downstream: the client would take a
+    # full-batch step over zero samples, MSELoss would return nan, and the nan
+    # would propagate into the aggregate even though the shard carries weight 0
+    # (numpy gives 0 * nan = nan). Fail loudly here instead.
+    empty = [k for k, idx in enumerate(client_indices) if len(idx) == 0]
+    if empty:
+        sizes = [len(idx) for idx in client_indices]
+        raise ValueError(
+            f"Partition '{cfg.partition}' with K={K}, alpha={cfg.alpha}, p={p} "
+            f"left client(s) {empty} with no samples (shard sizes: {sizes}). "
+            f"{len(train_idx)} training samples cannot support {K} clients at "
+            f"this heterogeneity; reduce num_clients, raise alpha, or raise "
+            f"dirichlet_alpha."
+        )
+
     client_data = []
     for indices in client_indices:
         xi = torch.from_numpy(x_train_all[indices])
@@ -127,4 +142,6 @@ def _partition_dirichlet(y_train, p, num_clients, dirichlet_alpha, rng):
         for k, chunk in enumerate(np.split(class_idx, splits)):
             client_indices[k].extend(chunk.tolist())
 
-    return [np.array(idx) for idx in client_indices]
+    # dtype=int matters: np.array([]) is float64 and cannot be used as an index,
+    # so an empty shard would raise IndexError rather than produce an empty one.
+    return [np.array(idx, dtype=int) for idx in client_indices]

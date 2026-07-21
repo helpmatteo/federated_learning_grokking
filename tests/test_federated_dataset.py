@@ -252,3 +252,32 @@ class TestSplitSharedWithCentralized:
                         num_clients=3, partition=partition, dirichlet_alpha=1.0)
         client_data, _, y_train_full, _, _ = make_federated_datasets(cfg)
         assert sum(len(y) for _, y in client_data) == len(y_train_full)
+
+
+# ── Empty-shard guard ────────────────────────────────────────────────────────
+
+
+class TestEmptyShardGuard:
+    """An empty client shard must fail loudly, not silently poison the round.
+
+    A client with zero samples takes a full-batch step over nothing, MSELoss
+    returns nan, and 0 * nan = nan propagates into the aggregate despite the
+    shard's zero weight.
+    """
+
+    def test_raises_when_a_client_gets_no_samples(self):
+        # p=7 has 24 training samples at alpha=0.5; Dirichlet(0.01) over 12
+        # clients cannot fill them all.
+        cfg = FedConfig(task="addition", p=7, alpha=0.5, seed=42,
+                        num_clients=12, partition="dirichlet", dirichlet_alpha=0.01)
+        with pytest.raises(ValueError, match="no samples"):
+            make_federated_datasets(cfg)
+
+    def test_dirichlet_indices_are_integer_typed(self):
+        """Empty shards must be int arrays, or they cannot index x_train."""
+        rng = np.random.RandomState(0)
+        y = np.array([0, 0, 1, 1, 2, 2])
+        shards = _partition_dirichlet(y, p=3, num_clients=8,
+                                      dirichlet_alpha=0.01, rng=rng)
+        for shard in shards:
+            assert shard.dtype == np.dtype(int)
