@@ -17,9 +17,9 @@ Usage:
 """
 
 from dataclasses import replace
-from core.config import Config
-from federated.config import FedConfig
-from experiments.runner import (
+from fedgrok.core.config import Config
+from fedgrok.core.fed_config import FedConfig
+from fedgrok.training.runner import (
     run_single_centralized, run_single_federated,
     run_multi_seed, save_experiment_results, RunConfig,
 )

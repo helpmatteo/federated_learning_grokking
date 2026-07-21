@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from federated.train import compute_drift
+from fedgrok.training.federated import compute_drift
 
 
 class TestComputeDrift:

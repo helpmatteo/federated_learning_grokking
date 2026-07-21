@@ -4,15 +4,15 @@ import pytest
 import numpy as np
 import torch
 
-from federated.config import FedConfig
-from federated.dataset import (
+from fedgrok.core.fed_config import FedConfig
+from fedgrok.data.partition import (
     make_federated_datasets,
     _partition_iid,
     _partition_by_operand,
     _partition_by_target,
     _partition_dirichlet,
 )
-from core.dataset import make_dataset
+from fedgrok.data.modular import make_dataset
 
 SMALL_P = 7
 
@@ -163,7 +163,7 @@ class TestMakeFederatedDatasets:
     @pytest.mark.parametrize("partition", ["iid", "operand", "target", "dirichlet"])
     def test_train_test_split_matches_centralized(self, partition):
         """Federated and centralized should use the same train/test split."""
-        from core.config import Config
+        from fedgrok.core.config import Config
         fed_cfg = FedConfig(p=SMALL_P, num_clients=3, partition=partition,
                             hidden_width=16, seed=42)
         cen_cfg = Config(p=SMALL_P, hidden_width=16, seed=42)

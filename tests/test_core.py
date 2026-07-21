@@ -5,11 +5,11 @@ import pytest
 import torch
 import numpy as np
 
-from core.config import Config
-from core.model import GrokNet
-from core.dataset import TASKS, make_dataset
-from core.metrics import weight_norms, gradient_norms, compute_ipr, compute_accuracy
-from core.utils import get_device, make_optimizer, make_targets_onehot
+from fedgrok.core.config import Config
+from fedgrok.models.groknet import GrokNet
+from fedgrok.data.modular import TASKS, make_dataset
+from fedgrok.metrics.fourier import weight_norms, gradient_norms, compute_ipr, compute_accuracy
+from fedgrok.core.utils import get_device, make_optimizer, make_targets_onehot
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -239,14 +239,14 @@ class TestMetrics:
         assert compute_accuracy(logits, targets) == 50.0
 
     def test_fourier_spectrum_shape(self, small_model):
-        from core.metrics import fourier_spectrum
+        from fedgrok.metrics.fourier import fourier_spectrum
         spec = fourier_spectrum(small_model)
         assert "spectrum" in spec
         assert len(spec["spectrum"]) == small_model.N
         assert len(spec["spectrum"][0]) == small_model.P
 
     def test_fourier_spectrum_nonnegative(self, small_model):
-        from core.metrics import fourier_spectrum
+        from fedgrok.metrics.fourier import fourier_spectrum
         spec = fourier_spectrum(small_model)
         for row in spec["spectrum"]:
             assert all(v >= 0 for v in row)

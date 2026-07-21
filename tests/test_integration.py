@@ -3,10 +3,10 @@ import pytest
 import os
 import tempfile
 
-from core.config import Config
-from federated.config import FedConfig
-from experiments.runner import run_single_centralized, run_single_federated, run_multi_seed
-from experiments.grokking_metrics import extract_grokking_results
+from fedgrok.core.config import Config
+from fedgrok.core.fed_config import FedConfig
+from fedgrok.training.runner import run_single_centralized, run_single_federated, run_multi_seed
+from fedgrok.analysis.grokking_metrics import extract_grokking_results
 
 
 @pytest.fixture
@@ -63,7 +63,7 @@ class TestFederatedPipeline:
 
     def test_drift_metrics_in_history(self, tmp_dir):
         """Verify that client drift and weight divergence are tracked."""
-        from federated.train import fed_train
+        from fedgrok.training.federated import fed_train
         cfg = FedConfig(p=7, hidden_width=16, num_clients=2,
                         num_rounds=3, local_epochs=2,
                         seed=42, output_dir=tmp_dir, strategy="fedavg")

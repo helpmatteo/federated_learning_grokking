@@ -5,11 +5,11 @@ import os
 import time
 import torch
 import torch.nn as nn
-from core.config import Config
-from core.dataset import make_dataset
-from core.model import GrokNet
-from core.metrics import weight_norms, gradient_norms, compute_ipr, compute_accuracy, fourier_spectrum
-from core.utils import get_device, make_optimizer, make_targets_onehot
+from fedgrok.core.config import Config
+from fedgrok.data.modular import make_dataset
+from fedgrok.models.groknet import GrokNet
+from fedgrok.metrics.fourier import weight_norms, gradient_norms, compute_ipr, compute_accuracy, fourier_spectrum
+from fedgrok.core.utils import get_device, make_optimizer, make_targets_onehot
 
 
 def train(cfg: Config):

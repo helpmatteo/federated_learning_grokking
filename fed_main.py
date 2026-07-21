@@ -22,9 +22,9 @@ Usage examples:
 
 import argparse
 import os
-from federated.config import FedConfig
-from federated.train import fed_train
-from federated.visualize import (
+from fedgrok.core.fed_config import FedConfig
+from fedgrok.training.federated import fed_train
+from scripts.plotting.federated import (
     plot_fed_vs_centralized,
     plot_partition_comparison,
     plot_client_scaling,

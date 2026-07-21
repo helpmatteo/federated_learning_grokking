@@ -14,8 +14,8 @@ Usage:
     python run_experiment.py exp4a --alphas 0.25,0.30,0.50 --t_max 50000
 """
 
-from federated.config import FedConfig
-from experiments.runner import (
+from fedgrok.core.fed_config import FedConfig
+from fedgrok.training.runner import (
     run_single_federated, run_multi_seed,
     save_experiment_results, RunConfig,
 )

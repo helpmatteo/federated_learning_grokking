@@ -17,14 +17,14 @@ import re
 import numpy as np
 import torch
 
-from core.model import GrokNet
-from core.metrics import (
+from fedgrok.models.groknet import GrokNet
+from fedgrok.metrics.fourier import (
     fourier_spectrum, compute_ipr, gini_coefficient,
     effective_rank, neuron_frequency_assignment, restricted_excluded_loss,
 )
-from core.dataset import make_dataset
-from core.config import Config
-from core.utils import make_targets_onehot
+from fedgrok.data.modular import make_dataset
+from fedgrok.core.config import Config
+from fedgrok.core.utils import make_targets_onehot
 
 
 def load_checkpoints(ckpt_dir: str) -> list:

@@ -5,8 +5,8 @@
 """
 
 from dataclasses import replace
-from federated.config import FedConfig
-from experiments.runner import (
+from fedgrok.core.fed_config import FedConfig
+from fedgrok.training.runner import (
     run_single_federated, run_multi_seed,
     save_experiment_results, RunConfig,
 )

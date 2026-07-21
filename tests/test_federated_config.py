@@ -2,9 +2,9 @@
 
 import pytest
 
-from core.config import Config
-from federated.config import FedConfig
-from federated.train import _cfg_to_fit_config, _fit_config_to_cfg
+from fedgrok.core.config import Config
+from fedgrok.core.fed_config import FedConfig
+from fedgrok.training.federated import _cfg_to_fit_config, _fit_config_to_cfg
 
 
 class TestFedConfig:

@@ -5,13 +5,13 @@ import math
 import pytest
 import torch
 
-from core.metrics import (
+from fedgrok.metrics.fourier import (
     gini_coefficient,
     effective_rank,
     neuron_frequency_assignment,
     restricted_excluded_loss,
 )
-from core.model import GrokNet
+from fedgrok.models.groknet import GrokNet
 
 # ---------------------------------------------------------------------------
 # Fixtures

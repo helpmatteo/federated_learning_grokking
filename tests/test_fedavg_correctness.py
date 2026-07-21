@@ -14,13 +14,13 @@ import torch
 import torch.nn as nn
 from collections import OrderedDict
 
-from core.config import Config
-from core.model import GrokNet
-from core.dataset import make_dataset
-from core.utils import make_optimizer, make_targets_onehot
-from federated.config import FedConfig
-from federated.dataset import make_federated_datasets
-from federated.train import (
+from fedgrok.core.config import Config
+from fedgrok.models.groknet import GrokNet
+from fedgrok.data.modular import make_dataset
+from fedgrok.core.utils import make_optimizer, make_targets_onehot
+from fedgrok.core.fed_config import FedConfig
+from fedgrok.data.partition import make_federated_datasets
+from fedgrok.training.federated import (
     _model_to_ndarrays,
     _ndarrays_to_state_dict,
     _make_model,

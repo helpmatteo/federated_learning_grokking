@@ -16,10 +16,10 @@ import os
 import sys
 import time
 
-from core.config import Config
-from federated.config import FedConfig
-from centralized.train import train as centralized_train
-from federated.train import fed_train, _dataset_cache
+from fedgrok.core.config import Config
+from fedgrok.core.fed_config import FedConfig
+from fedgrok.training.centralized import train as centralized_train
+from fedgrok.training.federated import fed_train, _dataset_cache
 
 
 OUTPUT_DIR = "results/experiments/exp7_mechanistic"

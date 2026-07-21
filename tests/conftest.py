@@ -4,9 +4,9 @@ import pytest
 import torch
 import numpy as np
 
-from core.config import Config
-from core.model import GrokNet
-from federated.config import FedConfig
+from fedgrok.core.config import Config
+from fedgrok.models.groknet import GrokNet
+from fedgrok.core.fed_config import FedConfig
 
 
 # Use a small prime to keep tests fast

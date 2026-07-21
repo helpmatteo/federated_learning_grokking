@@ -5,8 +5,8 @@ S_max = 50,000 steps, centralized only. 12 runs total.
 """
 
 from dataclasses import replace
-from core.config import Config
-from experiments.runner import run_single_centralized, save_experiment_results
+from fedgrok.core.config import Config
+from fedgrok.training.runner import run_single_centralized, save_experiment_results
 
 
 WIDTHS = [100, 128, 200, 256]

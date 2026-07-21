@@ -1,5 +1,5 @@
 import pytest
-from experiments.runner import should_abort, RunConfig
+from fedgrok.training.runner import should_abort, RunConfig
 
 
 class TestShouldAbort:

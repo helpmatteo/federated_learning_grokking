@@ -26,7 +26,7 @@ def select_representative_runs(exp_results_dir: str) -> dict:
 
 def analyze_drift_vs_grokking(results_dirs: list, output_dir: str):
     """Cross-run scatter plot data: mean client drift vs grokking step."""
-    from experiments.grokking_metrics import compute_t_grok
+    from fedgrok.analysis.grokking_metrics import compute_t_grok
 
     data_points = []
     for d in results_dirs:

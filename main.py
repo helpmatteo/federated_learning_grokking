@@ -19,9 +19,9 @@ Usage examples:
 
 import argparse
 import os
-from core.config import Config
-from centralized.train import train
-from centralized.visualize import plot_training_dynamics, plot_ipr, plot_compare_histories
+from fedgrok.core.config import Config
+from fedgrok.training.centralized import train
+from scripts.plotting.centralized import plot_training_dynamics, plot_ipr, plot_compare_histories
 
 
 def parse_args():

@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock
-from federated.config import FedConfig
-from federated.train import _build_strategy
+from fedgrok.core.fed_config import FedConfig
+from fedgrok.training.federated import _build_strategy
 
 
 class TestBuildStrategy:

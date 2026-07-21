@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from typing import Literal
-from core.config import Config
+from fedgrok.core.config import Config
 
 
 @dataclass

@@ -5,8 +5,8 @@ seeds = {42, 123, 456}, S_max = 100,000 steps. 24 runs.
 """
 
 from dataclasses import replace
-from core.config import Config
-from experiments.runner import run_single_centralized, run_multi_seed, save_experiment_results
+from fedgrok.core.config import Config
+from fedgrok.training.runner import run_single_centralized, run_multi_seed, save_experiment_results
 
 
 ALPHAS = [0.03, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5]

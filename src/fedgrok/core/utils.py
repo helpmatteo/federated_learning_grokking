@@ -1,7 +1,7 @@
 """Shared training utilities: device selection, optimizer factory, one-hot encoding."""
 
 import torch
-from core.config import Config
+from fedgrok.core.config import Config
 
 
 def get_device():

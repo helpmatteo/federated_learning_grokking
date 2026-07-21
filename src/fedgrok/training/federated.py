@@ -27,11 +27,11 @@ from flwr.server.strategy import FedAvg
 from flwr.server.strategy import FedAdam
 from flwr.simulation import run_simulation
 
-from federated.config import FedConfig
-from federated.dataset import make_federated_datasets
-from core.model import GrokNet
-from core.utils import make_targets_onehot, make_optimizer, get_device
-from core.metrics import weight_norms, compute_ipr, compute_accuracy, fourier_spectrum
+from fedgrok.core.fed_config import FedConfig
+from fedgrok.data.partition import make_federated_datasets
+from fedgrok.models.groknet import GrokNet
+from fedgrok.core.utils import make_targets_onehot, make_optimizer, get_device
+from fedgrok.metrics.fourier import weight_norms, compute_ipr, compute_accuracy, fourier_spectrum
 
 
 # ── Dataset cache ────────────────────────────────────────────────────────────

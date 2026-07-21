@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fedgrok"
+version = "0.2.0"
+description = "Grokking under federated averaging: breakdown boundaries and mechanism"
+requires-python = ">=3.10"
+
+# Pinned to the versions the v2 results are produced with. Flower's simulation
+# engine and Ray are the volatile pair here -- flwr>=1.27 is required for the
+# run_simulation API used in fedgrok/training/federated.py.
+dependencies = [
+    "torch>=2.10,<3.0",
+    "numpy>=2.2,<3.0",
+    "matplotlib>=3.10,<4.0",
+    "flwr[simulation]>=1.27,<2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Repo root on the path so `experiments.*` and `scripts.*` resolve alongside
+# the installed `fedgrok` package.
+pythonpath = ["."]

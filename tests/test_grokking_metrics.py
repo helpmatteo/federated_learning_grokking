@@ -1,5 +1,5 @@
 import pytest
-from experiments.grokking_metrics import compute_t_grok, compute_t_50, summarize_seeds
+from fedgrok.analysis.grokking_metrics import compute_t_grok, compute_t_50, summarize_seeds
 
 
 class TestTGrok:

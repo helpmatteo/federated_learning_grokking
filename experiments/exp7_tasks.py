@@ -28,14 +28,14 @@ import argparse
 import glob
 import os
 
-from core.config import Config
-from federated.config import FedConfig
-from experiments.runner import (
+from fedgrok.core.config import Config
+from fedgrok.core.fed_config import FedConfig
+from fedgrok.training.runner import (
     run_single_centralized,
     run_single_federated,
     save_experiment_results,
 )
-from experiments.grokking_metrics import extract_grokking_results
+from fedgrok.analysis.grokking_metrics import extract_grokking_results
 
 # ── Sweep axes ────────────────────────────────────────────────────────────
 

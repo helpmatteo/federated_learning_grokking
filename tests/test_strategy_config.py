@@ -1,5 +1,5 @@
 import pytest
-from federated.config import FedConfig
+from fedgrok.core.fed_config import FedConfig
 
 
 class TestFedConfigStrategy:
