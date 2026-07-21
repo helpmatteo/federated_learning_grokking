@@ -1,26 +1,10 @@
 import pytest
-from fedgrok.training.runner import should_abort, RunConfig
+from fedgrok.training.runner import RunConfig
 
-
-class TestShouldAbort:
-    def test_no_abort_normal_training(self):
-        assert not should_abort(step=5000, train_acc=100.0, test_acc=1.0, t_base=8000, t_max=30000)
-
-    def test_abort_memorization_failure(self):
-        assert should_abort(step=16000, train_acc=30.0, test_acc=1.0, t_base=8000, t_max=30000)
-
-    def test_no_abort_memorization_before_deadline(self):
-        assert not should_abort(step=10000, train_acc=30.0, test_acc=1.0, t_base=8000, t_max=30000)
-
-    def test_abort_generalization_hopeless(self):
-        assert should_abort(step=30000, train_acc=100.0, test_acc=2.0, t_base=8000, t_max=30000)
-
-    def test_no_abort_generalization_progressing(self):
-        assert not should_abort(step=30000, train_acc=100.0, test_acc=10.0, t_base=8000, t_max=30000)
-
-    def test_no_abort_not_fully_memorized(self):
-        """99.5% train acc should NOT trigger rule 2 (threshold is 99.9)."""
-        assert not should_abort(step=30000, train_acc=99.5, test_acc=2.0, t_base=8000, t_max=30000)
+# The TestShouldAbort class that lived here tested a function no experiment ever
+# called. Both have been removed -- see the note in fedgrok/training/runner.py.
+# Tests that pass while guarding nothing are worse than no tests: they made the
+# early-abort protocol described in the README look implemented.
 
 
 class TestRunConfig:

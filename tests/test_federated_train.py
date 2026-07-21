@@ -303,7 +303,7 @@ class TestFedTrain:
         )
         history, _ = fed_train(cfg)
         expected_keys = {
-            "round", "total_steps",
+            "round", "total_steps", "sequential_steps", "n_participating",
             "train_loss", "test_loss",
             "train_acc", "test_acc",
             "weight_norm_layer1", "weight_norm_layer2",
@@ -417,3 +417,52 @@ class TestFedTrain:
         state_dict = torch.load(pt_files[0], weights_only=True)
         assert "W1" in state_dict
         assert "W2" in state_dict
+
+
+# ── Step accounting ──────────────────────────────────────────────────────────
+
+
+class TestStepAccounting:
+    """total_steps must reflect actual gradient work, not rounds * E.
+
+    The old accounting was `server_round * local_epochs`, which is correct only
+    at full participation. Under partial participation it over-counted, since
+    only a fraction of the clients (and hence of the data) trained each round.
+    """
+
+    def _run(self, fraction_train, tmp_path):
+        from fedgrok.training.federated import fed_train, _dataset_cache
+        _dataset_cache.clear()
+        cfg = FedConfig(
+            task="addition", p=7, alpha=0.5, seed=42, hidden_width=16,
+            num_clients=5, num_rounds=5, local_epochs=3, lr=1.0,
+            fraction_train=fraction_train, partition="iid",
+            output_dir=str(tmp_path),
+        )
+        history, _ = fed_train(cfg)
+        return history
+
+    def test_full_participation_matches_rounds_times_epochs(self, tmp_path):
+        """At C=1.0 the compute-matched axis coincides with rounds * E."""
+        history = self._run(1.0, tmp_path)
+        expected = [r * 3 for r in history["round"]]
+        assert history["total_steps"] == pytest.approx(expected)
+        assert history["sequential_steps"] == expected
+
+    def test_partial_participation_counts_less_than_sequential(self, tmp_path):
+        """At C<1.0 fewer samples are touched per round, so total_steps lags."""
+        history = self._run(0.4, tmp_path)
+        assert history["total_steps"][-1] < history["sequential_steps"][-1]
+        # sequential_steps is participation-independent
+        assert history["sequential_steps"] == [r * 3 for r in history["round"]]
+
+    def test_participating_client_count_is_recorded(self, tmp_path):
+        history = self._run(0.4, tmp_path)
+        # Round 0 is the pre-training evaluation of the initial parameters.
+        assert history["n_participating"][0] == 0
+        assert all(n == 2 for n in history["n_participating"][1:])
+
+    def test_total_steps_is_monotonic(self, tmp_path):
+        history = self._run(0.4, tmp_path)
+        steps = history["total_steps"]
+        assert all(b >= a for a, b in zip(steps, steps[1:]))

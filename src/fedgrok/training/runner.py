@@ -1,4 +1,13 @@
-"""Multi-seed experiment runner with early abort and adaptive budgets."""
+"""Multi-seed experiment runner with adaptive step budgets.
+
+NOTE: an early-abort mechanism (`should_abort`) previously lived here. It was
+unit-tested but never wired into any experiment, so no run was ever truncated
+by it. It has been removed rather than enabled: every run in the archived
+results went to its full budget, and keeping the analysis free of
+truncation bias is worth more than the compute an abort rule would save.
+Runs that do not grok within budget are handled as right-censored
+observations in the survival statistics instead.
+"""
 
 import json
 import math
@@ -24,23 +33,6 @@ class RunConfig:
     @property
     def s_rescue(self) -> int:
         return min(80_000, 2 * self.t_max)
-
-
-def should_abort(step: int, train_acc: float, test_acc: float,
-                 t_base: int, t_max: int) -> bool:
-    """Check early abort conditions (Section 3.2).
-
-    Rule 1: Memorisation failure — train_acc < 50% by min(2*T_base, 15000)
-    Rule 2: Generalisation hopeless — train_acc ~100% and test_acc < 5% by T_max
-    """
-    mem_deadline = min(2 * t_base, 15000)
-    if step >= mem_deadline and train_acc < 50.0:
-        return True
-
-    if step >= t_max and train_acc >= 99.9 and test_acc < 5.0:
-        return True
-
-    return False
 
 
 def run_single_centralized(cfg, label: str = "") -> dict:

@@ -286,7 +286,8 @@ def fed_train(cfg: FedConfig):
 
     # History (captured by closure in evaluate_fn)
     history = {
-        "round": [], "total_steps": [],
+        "round": [], "total_steps": [], "sequential_steps": [],
+        "n_participating": [],
         "train_loss": [], "test_loss": [],
         "train_acc": [], "test_acc": [],
         "weight_norm_layer1": [], "weight_norm_layer2": [],
@@ -301,9 +302,16 @@ def fed_train(cfg: FedConfig):
     loss_fn = nn.MSELoss()
     start_time = time.time()
 
-    # Mutable container for inter-callback communication (closure-shared)
-    _round_metrics = {"mean_drift": 0.0, "weight_divergence": 0.0}
+    # Mutable container for inter-callback communication (closure-shared).
+    # Flower calls aggregate_fit (hence _aggregate_fit_metrics) before
+    # evaluate_fn within a round, so evaluate_fn reads this round's values.
+    _round_metrics = {"mean_drift": 0.0, "weight_divergence": 0.0,
+                      "n_participating": 0, "samples_this_round": 0}
     _client_w1_cache = {"data": None}
+
+    # Running count of centralized-equivalent gradient steps (see evaluate_fn).
+    _step_accum = {"total": 0.0}
+    n_train_total = len(y_train_full)
 
     def _aggregate_fit_metrics(metrics_list):
         """Aggregate per-client fit metrics from GrokClient.fit()."""
@@ -312,6 +320,12 @@ def fed_train(cfg: FedConfig):
 
         _round_metrics["mean_drift"] = float(np.mean(drifts)) if drifts else 0.0
         _round_metrics["weight_divergence"] = float(np.std(w_norms)) if len(w_norms) > 1 else 0.0
+
+        # Actual work done this round, taken from what clients reported rather
+        # than from fraction_train. This is exact under partial participation
+        # and under Dirichlet partitions, where shards have unequal sizes.
+        _round_metrics["n_participating"] = len(metrics_list)
+        _round_metrics["samples_this_round"] = sum(int(n) for n, _ in metrics_list)
 
         # Capture per-client W1 if available (deserialize from bytes)
         w1_list = []
@@ -349,9 +363,32 @@ def fed_train(cfg: FedConfig):
         ipr = compute_ipr(model)
 
         history["round"].append(server_round)
-        # total_steps = rounds * local_epochs; counts per-model gradient steps
-        # (accurate when fraction_train=1.0; approximate otherwise)
-        history["total_steps"].append(server_round * cfg.local_epochs)
+
+        # Two distinct notions of "how far has training progressed", both logged
+        # because they diverge under partial participation:
+        #
+        #   total_steps       centralized-equivalent gradient steps. Each round
+        #                     the participating clients collectively compute E
+        #                     local steps over `samples_this_round` examples, so
+        #                     the full-training-set-equivalent work is
+        #                     E * samples_this_round / n_train_total. This is the
+        #                     compute-matched x-axis, and the one comparable to a
+        #                     centralized run's epoch count.
+        #
+        #   sequential_steps  rounds * E — the depth of the update chain,
+        #                     independent of how many clients participated.
+        #
+        # At full participation the two coincide exactly (samples_this_round ==
+        # n_train_total, so the increment is E per round), which is why the old
+        # `server_round * local_epochs` was correct there and only there. It
+        # over-counted whenever fraction_train < 1.0, inflating the apparent
+        # compute of every partial-participation cell.
+        _step_accum["total"] += (
+            cfg.local_epochs * _round_metrics["samples_this_round"] / n_train_total
+        )
+        history["total_steps"].append(_step_accum["total"])
+        history["sequential_steps"].append(server_round * cfg.local_epochs)
+        history["n_participating"].append(_round_metrics["n_participating"])
         history["train_loss"].append(train_loss)
         history["test_loss"].append(test_loss)
         history["train_acc"].append(train_acc)

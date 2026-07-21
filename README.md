@@ -157,7 +157,7 @@ federated/                     # Flower-based FL
 
 experiments/                   # Experiment orchestration
   grokking_metrics.py          # T_grok, T_50 detection + multi-seed aggregation
-  runner.py                    # Multi-seed runner with early abort + adaptive budgets
+  runner.py                    # Multi-seed runner with adaptive step budgets
   exp0_width.py                # Width validation
   exp1_boundary.py             # Centralized phase boundary
   exp2_aggregation.py          # Aggregation effect (centralized-full/reduced/FL)
