@@ -17,11 +17,11 @@ Existing runs from exp1/exp2/tier1 are skipped.
 
 Usage:
     # Single cell (for parallel launcher)
-    python -m experiments.exp7_tasks --task multiplication --p 53 --alpha 0.3 --mode cent --budget 50000
-    python -m experiments.exp7_tasks --task multiplication --p 113 --alpha 0.5 --mode fl --budget 100000
+    python -m experiments.exp_task_generality --task multiplication --p 53 --alpha 0.3 --mode cent --budget 50000
+    python -m experiments.exp_task_generality --task multiplication --p 113 --alpha 0.5 --mode fl --budget 100000
 
     # Full sweep (sequential)
-    python -m experiments.exp7_tasks --all
+    python -m experiments.exp_task_generality --all
 """
 
 import argparse

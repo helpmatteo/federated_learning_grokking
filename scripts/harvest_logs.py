@@ -5,7 +5,8 @@ disk, so these logs are the only surviving record of the ~276 runs behind the
 committed figures.  This script reconstructs one row per (run, config, seed).
 
 IMPORTANT — why the log filename is authoritative for the algorithm:
-    federated/train.py builds its history filename from the config, but the
+    fedgrok/training/federated.py builds its history filename from the config,
+    but the
     `_adam_tau*_slr*` and `_wd*` suffixes were only added partway through the
     exp5 campaign (commit 3796754, 2026-03-23).  Runs from before that commit
     wrote *identical* paths for FedAvg, FedAdam and FedAvg+WD within the same
@@ -26,7 +27,7 @@ import glob
 # ── Line patterns ───────────────────────────────────────────────────────────
 
 HISTORY_RE = re.compile(r"History saved to (?P<path>\S+\.json)")
-# T_50 is optional: the exp7 task runs (experiments/exp7_tasks.py) emit a
+# T_50 is optional: the exp7 task runs (experiments/exp_task_generality.py) emit a
 # shorter summary line without it.
 RESULT_RE = re.compile(
     r"->\s*T_grok=(?P<t_grok>inf|[\d.]+),\s*"
