@@ -42,9 +42,19 @@ ALGORITHMS = [
     ("FedAdam-0.01", "fedadam", {"server_lr": 0.01, "tau": 1e-3}),
     ("FedAdam-0.1", "fedadam", {"server_lr": 0.1, "tau": 1e-3}),
     ("FedAdam-1.0", "fedadam", {"server_lr": 1.0, "tau": 1e-3}),
-    ("FedAvg+WD-0.01", "fedavg", {"weight_decay": 0.01}),
-    ("FedAvg+WD-0.1", "fedavg", {"weight_decay": 0.1}),
-    ("FedAvg+WD-1.0", "fedavg", {"weight_decay": 1.0}),
+    # Weight-decay arms are labelled by the effective per-step shrinkage
+    # lr*lambda, which is what is comparable across optimizers and learning
+    # rates (see fedgrok.core.utils.check_decay_stability).
+    #
+    # These previously ran at lambda in {0.01, 0.1, 1.0}. At lr=50 that is
+    # lr*lambda in {0.5, 5, 50} -- weights halved or sign-flipped every single
+    # step -- so all nine cells reported T_grok=inf for purely numerical
+    # reasons. The published grokking band is lr*lambda in [1e-4, 1e-3], which
+    # at lr=50 means lambda in [2e-6, 2e-5].
+    ("FedAvg+WD-lr1e-5", "fedavg", {"weight_decay": 2e-7}),   # timescale ~1e5 steps
+    ("FedAvg+WD-lr1e-4", "fedavg", {"weight_decay": 2e-6}),   # Omnigrok band
+    ("FedAvg+WD-lr1e-3", "fedavg", {"weight_decay": 2e-5}),   # Nanda/Power band
+    ("FedAvg+WD-lr1e-2", "fedavg", {"weight_decay": 2e-4}),   # expect memorisation suppressed
 ]
 
 

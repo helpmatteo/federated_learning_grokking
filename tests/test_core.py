@@ -9,7 +9,9 @@ from fedgrok.core.config import Config
 from fedgrok.models.groknet import GrokNet
 from fedgrok.data.modular import TASKS, make_dataset
 from fedgrok.metrics.fourier import weight_norms, gradient_norms, compute_ipr, compute_accuracy
-from fedgrok.core.utils import get_device, make_optimizer, make_targets_onehot
+from fedgrok.core.utils import (
+    get_device, make_optimizer, make_targets_onehot, check_decay_stability,
+)
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -299,3 +301,59 @@ class TestUtils:
         labels = torch.tensor([0, 1])
         oh = make_targets_onehot(labels, 3)
         assert oh.dtype == torch.float32
+
+    def test_make_targets_onehot_follows_label_device(self):
+        """One-hot must be built on the labels' device, not unconditionally CPU."""
+        device = get_device()
+        labels = torch.tensor([0, 2, 4], device=device)
+        oh = make_targets_onehot(labels, 5)
+        assert oh.device.type == labels.device.type
+
+
+# ── Weight-decay stability guard ──────────────────────────────────────────────
+
+
+class TestDecayStability:
+    """Guards against the exp5 weight-decay defect.
+
+    Both SGD (coupled) and AdamW (decoupled) shrink weights by (1 - lr*wd) per
+    step, so lr*wd is the meaningful quantity. exp5 originally ran lr=50 with
+    wd in [0.01, 1.0] -- lr*wd in [0.5, 50] -- destroying every model before it
+    could learn, which is why all those cells reported T_grok=inf.
+    """
+
+    @pytest.mark.parametrize("weight_decay", [0.01, 0.1, 1.0])
+    def test_rejects_original_exp5_values(self, weight_decay):
+        """The three values that invalidated the original exp5 WD arms."""
+        with pytest.raises(ValueError):
+            check_decay_stability(50.0, weight_decay)
+
+    def test_rejects_destructive_but_non_divergent(self):
+        """lr*wd = 0.5 does not diverge, but halves every weight every step."""
+        with pytest.raises(ValueError, match="Destructive"):
+            check_decay_stability(50.0, 0.01)
+
+    def test_rejects_divergent(self):
+        with pytest.raises(ValueError, match="Divergent"):
+            check_decay_stability(50.0, 1.0)
+
+    @pytest.mark.parametrize("weight_decay", [0.0, 2e-7, 2e-6, 2e-5, 2e-4])
+    def test_accepts_corrected_sweep(self, weight_decay):
+        """The replacement sweep: lr*wd in {0, 1e-5, 1e-4, 1e-3, 1e-2} at lr=50."""
+        check_decay_stability(50.0, weight_decay)
+
+    @pytest.mark.parametrize("lr,weight_decay", [(1e-3, 1.0), (1e-4, 1.0)])
+    def test_accepts_published_grokking_configs(self, lr, weight_decay):
+        """Nanda/Power (lr*wd=1e-3) and Omnigrok (lr*wd=1e-4) must pass."""
+        check_decay_stability(lr, weight_decay)
+
+    def test_warns_on_aggressive_decay(self):
+        with pytest.warns(RuntimeWarning, match="Aggressive"):
+            check_decay_stability(50.0, 1e-3)  # lr*wd = 0.05 -> 20-step timescale
+
+    def test_make_optimizer_enforces_guard(self):
+        """The guard must fire through the optimizer factory, not just directly."""
+        model = GrokNet(input_dim=14, hidden_width=8, output_dim=7)
+        cfg = Config(optimizer="gd", lr=50.0, weight_decay=1.0)
+        with pytest.raises(ValueError):
+            make_optimizer(model, cfg)
