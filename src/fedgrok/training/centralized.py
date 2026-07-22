@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from fedgrok.core.config import Config
 from fedgrok.data.modular import make_dataset
-from fedgrok.models.groknet import GrokNet
+from fedgrok.core.registry import build_model
 from fedgrok.metrics.fourier import weight_norms, gradient_norms, compute_ipr, compute_accuracy, fourier_spectrum
 from fedgrok.core.utils import get_device, make_optimizer, make_targets_onehot
 
@@ -32,13 +32,8 @@ def train(cfg: Config):
     y_test = y_test.to(device)
     y_test_oh = y_test_oh.to(device)
 
-    # Model
-    model = GrokNet(
-        input_dim=2 * p,
-        hidden_width=cfg.hidden_width,
-        output_dim=p,
-        activation=cfg.activation,
-    ).to(device)
+    # Model (via the registry, so cfg.model selects the architecture)
+    model = build_model(cfg).to(device)
 
     optimizer = make_optimizer(model, cfg)
     loss_fn = nn.MSELoss()

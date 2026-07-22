@@ -29,7 +29,7 @@ from flwr.simulation import run_simulation
 
 from fedgrok.core.fed_config import FedConfig
 from fedgrok.data.partition import make_federated_datasets
-from fedgrok.models.groknet import GrokNet
+from fedgrok.core.registry import build_model
 from fedgrok.core.utils import make_targets_onehot, make_optimizer, get_device
 from fedgrok.metrics.fourier import weight_norms, compute_ipr, compute_accuracy, fourier_spectrum
 
@@ -114,13 +114,8 @@ def _ndarrays_to_state_dict(ndarrays, model):
 
 
 def _make_model(cfg):
-    """Create a fresh GrokNet from config (on CPU)."""
-    return GrokNet(
-        input_dim=2 * cfg.p,
-        hidden_width=cfg.hidden_width,
-        output_dim=cfg.p,
-        activation=cfg.activation,
-    )
+    """Create a fresh model from config (on CPU), via the model registry."""
+    return build_model(cfg)
 
 
 def _cfg_to_fit_config(cfg: FedConfig, server_round: int):

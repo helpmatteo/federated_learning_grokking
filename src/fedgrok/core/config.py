@@ -17,6 +17,7 @@ class Config:
     seed: int = 42                       # random seed for train/test split
 
     # --- Architecture ---
+    model: str = "groknet"               # architecture family (see fedgrok.core.registry)
     hidden_width: int = 100              # N: width of the single hidden layer
     activation: Literal[
         "quadratic", "relu", "gelu",
