@@ -1,0 +1,123 @@
+"""Run manifests: a manifest is a list of run specs, one per training run.
+
+A *spec* is a plain dict that fully determines one run: its `mode`
+("centralized" or "federated"), the config fields for that mode, and optional
+grouping tags (`tier`, `group`, `experiment`, `setting`, `algorithm`) that are
+carried through to the results table but do not affect training.
+
+Specs are the atomic unit the launcher schedules. This module builds them
+(grid expansion) and turns them into the right dataclass; it has no I/O and no
+training dependencies, so it is cheap to test.
+"""
+
+import dataclasses
+import hashlib
+import itertools
+import json
+
+from fedgrok.core.config import Config
+from fedgrok.core.fed_config import FedConfig
+
+
+# Keys that tag/group a run for analysis but are not config fields.
+TAG_KEYS = {"id", "mode", "tier", "group", "experiment", "setting", "algorithm",
+            "label", "manifest"}
+
+
+def config_class(mode: str):
+    if mode == "centralized":
+        return Config
+    if mode == "federated":
+        return FedConfig
+    raise ValueError(f"Unknown mode: {mode!r} (expected 'centralized' or 'federated')")
+
+
+def _config_fields(mode: str):
+    return {f.name for f in dataclasses.fields(config_class(mode))}
+
+
+def build_config(spec: dict):
+    """Instantiate the Config/FedConfig for `spec`, ignoring tag keys.
+
+    Config fields present in the spec are passed through; unknown non-tag keys
+    raise, so a typo in a manifest fails loudly instead of being silently
+    dropped.
+    """
+    mode = spec.get("mode")
+    cls = config_class(mode)
+    fields = _config_fields(mode)
+
+    unknown = set(spec) - fields - TAG_KEYS
+    if unknown:
+        raise ValueError(
+            f"Spec has keys that are neither {mode} config fields nor tags: "
+            f"{sorted(unknown)}"
+        )
+
+    kwargs = {k: v for k, v in spec.items() if k in fields}
+    return cls(**kwargs)
+
+
+def run_id(spec: dict) -> str:
+    """Stable short id for a spec.
+
+    Uses an explicit `id` if present; otherwise hashes the config-relevant part
+    (everything except tags and any pre-existing id), so the same run always
+    maps to the same id regardless of tag noise or key order. hashlib is
+    deterministic — safe for resume across sessions.
+    """
+    if spec.get("id"):
+        return spec["id"]
+    core = {k: v for k, v in spec.items() if k not in TAG_KEYS}
+    canonical = json.dumps(core, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha1(canonical.encode()).hexdigest()[:12]
+    mode = spec.get("mode", "run")
+    task = spec.get("task", "")
+    return f"{mode[:4]}_{task}_{digest}" if task else f"{mode[:4]}_{digest}"
+
+
+def expand_grid(base: dict, axes: dict, tags: dict = None) -> list:
+    """Cartesian product of `axes` over a `base` spec.
+
+    base:  fields common to every run (mode, p, hidden_width, ...).
+    axes:  {field: [values]} — one run per combination.
+    tags:  optional constant tags added to every run (tier, group, ...).
+
+    Each run gets a stable `id`. Example:
+        expand_grid({"mode": "federated", "task": "addition", "p": 97},
+                    {"seed": [42, 123], "local_epochs": [1, 5]})
+    yields 4 specs.
+    """
+    tags = tags or {}
+    keys = list(axes)
+    specs = []
+    for combo in itertools.product(*(axes[k] for k in keys)):
+        spec = dict(base)
+        spec.update(tags)
+        spec.update(dict(zip(keys, combo)))
+        spec["id"] = run_id(spec)
+        specs.append(spec)
+    return specs
+
+
+def load_manifest(path: str) -> list:
+    """Read a JSONL manifest (one spec per line). Blank lines / # comments skipped."""
+    specs = []
+    with open(path) as handle:
+        for line in handle:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            spec = json.loads(line)
+            spec.setdefault("id", run_id(spec))
+            specs.append(spec)
+    return specs
+
+
+def write_manifest(specs: list, path: str):
+    """Write specs as JSONL, filling in ids."""
+    with open(path, "w") as handle:
+        for spec in specs:
+            spec = dict(spec)
+            spec.setdefault("id", run_id(spec))
+            handle.write(json.dumps(spec, sort_keys=True) + "\n")

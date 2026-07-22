@@ -28,11 +28,15 @@ paper/*.bbl
 paper/*.blg
 paper/*.pdf
 
-# Large result files (regenerable): per-round histories and checkpoints.
+# Large / regenerable results: per-round histories, checkpoints, and the
+# per-run summary JSONs + launcher logs the sweep produces.
 results/**/*.json
 results/**/checkpoints/
 results/checkpoints/
+results/runs/
+results/data/runs/
 
 # results/data/*.csv is deliberately NOT ignored -- the tidy per-run summaries
-# are the committed evidentiary base for the paper. See scripts/harvest_logs.py.
+# (runs.csv from the log harvest, runs_v2.csv from collect_runs.py) are the
+# committed evidentiary base for the paper.
 !results/data/*.csv
