@@ -3,7 +3,7 @@
 Working branch for the multi-setup rewrite. Full plan lives at
 `~/.claude/plans/plan-all-that-needs-nested-seal.md`.
 
-**Paused:** 2026-07-21, Phase 2 core done (model + loss registries, metric capability). Next: minibatching, then Phase 3.
+**Paused:** 2026-07-21, Phase 2 complete + Phase 3a (transformer groks). Next: Phase 3b MNIST-1k.
 
 ## State
 
@@ -11,7 +11,7 @@ Working branch for the multi-setup rewrite. Full plan lives at
 |---|---|
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
-| Tests | **297/297 pass** (`venv/bin/python -m pytest tests/ -q`, ~8.5 min incl. FL integration) |
+| Tests | **309/309 pass** (`venv/bin/python -m pytest tests/ -q`, ~8.5 min incl. FL integration) |
 | Env | `venv/` (py3.10, torch 2.10, flwr 1.27); package installed via `pip install -e . --no-deps` |
 | Hardware | 8× L4; **use 6, ~2 runs/GPU = 12 slots**. Indices 1 and 3 had other work on them — the launcher auto-skips busy GPUs. |
 
@@ -79,17 +79,34 @@ Resume is automatic (skips runs whose result JSON exists). One run = one subproc
   transformer/MNIST/S₅ won't crash on them.
 - All three verified MSE/GrokNet-equivalent to the archived baseline (4.8e-7). +21 tests.
 
-## Next up — finish Phase 2, then Phase 3
+## Done — Phase 2 complete + Phase 3a (`2d62601`, `6fd667e`)
 
-1. **Minibatching** (last Phase 2 item). Add `batch_size: int = 0` to Config (0 = full-batch,
-   the default, so setup A and the transformer are unchanged). In centralized `train` and the
-   federated client `fit`, iterate minibatches when `batch_size > 0`. Only MNIST (Omnigrok)
-   needs it. **Re-verify** the full-batch path stays bit-identical with `traj.py`.
-2. **Dataset registry** — do it *with* the Phase 3 datasets: `build_dataset(cfg)` dispatching
-   on a dataset selector (modular now; add MNIST + S₅). Keep modular byte-identical.
-3. **Phase 3 setups** — Nanda transformer (`@register_model("transformer")`, CE, mod-113),
-   Omnigrok MNIST-1k MLP (large init), S₅ composition + coset partition + coset-attribution
-   metric. Each new arch = one registry entry + (if needed) its own progress measure.
+- **Minibatching** (`2d62601`) — `Config.batch_size` (0 = full-batch default). Both loops
+  branch on it; `randperm` only under batch_size>0 so full-batch is bit-identical (centralized
+  0.0 vs pre-commit, FL 9.5e-7 vs baseline). Threaded through the fit-config.
+- **Nanda transformer** (`6fd667e`) — `fedgrok/models/transformer.py::GrokFormer`, registered
+  as `model="transformer"`, pair with `loss="ce"`. Consumes the same one-hot 2p input (one-hot
+  × embedding = lookup), so no dataset change. **Verified it groks**: mod-113, 30% train, AdamW
+  lr 1e-3 wd 1.0, CE → train≥99% at epoch 200, test≥95% at epoch 6200 (6000-epoch gap),
+  ends 100/100. Fourier metrics NaN throughout (capability protocol working).
+
+## Next up — Phase 3b/3c
+
+1. **Transformer progress measures** — it currently logs NaN for all mechanistic metrics.
+   Add CE-appropriate / embedding-space Fourier measures (Nanda's restricted/excluded loss
+   operate on the embedding + unembed; the DFT is over the token embedding W_E, not W1). Wire
+   via the capability protocol so they run for `model="transformer"` only.
+2. **Omnigrok MNIST-1k** (in progress) — needs the **dataset registry**: add `build_dataset(cfg)`
+   dispatching on a `dataset` selector (modular now; add `mnist`). MNIST-1k = 1k subset, MSE on
+   one-hot, 3-layer ReLU MLP width 200, **init scaled by α>1** (the load-bearing trick — without
+   large init MNIST just learns, no delay). New model `@register_model("mlp")` with init-scale
+   field. Uses `batch_size>0`. Torch/torchvision MNIST download or a cached copy.
+3. **S₅ composition** — 120-perm group, 14.4k pairs, one-hot 120+120→120 (GrokNet/transformer
+   run unchanged at these dims). Coset partition in `data/partition.py` (5 cosets of S₄ ↔ 5
+   clients). Coset-attribution metric (Stander-style) in a new `metrics/nonabelian.py` — the Z_p
+   DFT is meaningless here. This is where the deferred `metrics/fourier.py` split should happen.
+
+Each new arch = one registry entry (+ dataset entry if non-modular, + its own progress measure).
 
 **Equivalence harness** (reuse for every training-loop change): `traj.py` in the scratchpad
 runs one config and dumps history JSON; diff against `ref_run1.json` (archived c7c997f
@@ -137,6 +154,6 @@ if a big-K sweep is slow, lower `--per-gpu` or make `num_cpus` fractional in
 ```bash
 cd /home/jse44/modules/ToDL/federated_learning_grokking
 git checkout v2-multisetup
-venv/bin/python -m pytest tests/ -q          # expect 297 passed
+venv/bin/python -m pytest tests/ -q          # expect 309 passed
 ```
-Then continue at **Minibatching** (finish Phase 2), then Phase 3, above.
+Then continue at **Phase 3b** (MNIST-1k + dataset registry) above.
