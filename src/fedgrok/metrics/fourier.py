@@ -1,7 +1,27 @@
-"""Metrics from Gromov (2023): weight/gradient norms, IPR, phase analysis."""
+"""Metrics from Gromov (2023): weight/gradient norms, IPR, phase analysis.
+
+Capability note: the Fourier metrics here (compute_ipr, fourier_spectrum,
+neuron_frequency_assignment, restricted_excluded_loss) are specific to GrokNet
+— they read `model.W1`/`model.P` and assume the modular-arithmetic input
+convention (first p columns are the one-hot of operand n). They do NOT apply to
+a transformer, an MNIST MLP, or an S5 model; call `fourier_applicable(model)`
+first and skip them when it is False. weight_norms / gradient_norms are likewise
+GrokNet-specific (W1/W2). effective_rank and gini_coefficient are basis-free and
+apply to any tensor.
+"""
 
 import torch
 import numpy as np
+
+
+def fourier_applicable(model) -> bool:
+    """True iff `model` exposes the GrokNet interface the Fourier metrics need.
+
+    The metrics require the weight matrix `W1` and the modulus `P`, and assume
+    the first p input columns are the one-hot operand. Other architectures do
+    not satisfy this, so their callers append NaN instead of computing it.
+    """
+    return hasattr(model, "W1") and hasattr(model, "P")
 
 
 def weight_norms(model):

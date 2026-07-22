@@ -7,7 +7,10 @@ import torch
 from fedgrok.core.config import Config
 from fedgrok.data.modular import make_dataset
 from fedgrok.core.registry import build_model, build_loss
-from fedgrok.metrics.fourier import weight_norms, gradient_norms, compute_ipr, compute_accuracy, fourier_spectrum
+from fedgrok.metrics.fourier import (
+    weight_norms, gradient_norms, compute_ipr, compute_accuracy,
+    fourier_spectrum, fourier_applicable,
+)
 from fedgrok.core.utils import get_device, make_optimizer
 
 
@@ -67,20 +70,29 @@ def train(cfg: Config):
                 train_acc = compute_accuracy(out_train, y_train)
                 test_acc = compute_accuracy(out_test, y_test)
 
-            wn = weight_norms(model)
-            gn = gradient_norms(model)
-            ipr = compute_ipr(model)
+            # weight_norms / gradient_norms / IPR are GrokNet-specific (read W1/W2).
+            # On other architectures they don't apply — log NaN rather than crash.
+            nan = float("nan")
+            if fourier_applicable(model):
+                wn = weight_norms(model)
+                gn = gradient_norms(model)
+                ipr_val = compute_ipr(model)["ipr"]
+                wn1, wn2 = wn["weight_norm_layer1"], wn["weight_norm_layer2"]
+                gn1 = gn.get("grad_norm_layer1", 0.0)
+                gn2 = gn.get("grad_norm_layer2", 0.0)
+            else:
+                wn1 = wn2 = gn1 = gn2 = ipr_val = nan
 
             history["epoch"].append(epoch)
             history["train_loss"].append(train_loss_t.item())
             history["test_loss"].append(test_loss)
             history["train_acc"].append(train_acc)
             history["test_acc"].append(test_acc)
-            history["weight_norm_layer1"].append(wn["weight_norm_layer1"])
-            history["weight_norm_layer2"].append(wn["weight_norm_layer2"])
-            history["grad_norm_layer1"].append(gn.get("grad_norm_layer1", 0.0))
-            history["grad_norm_layer2"].append(gn.get("grad_norm_layer2", 0.0))
-            history["ipr"].append(ipr["ipr"])
+            history["weight_norm_layer1"].append(wn1)
+            history["weight_norm_layer2"].append(wn2)
+            history["grad_norm_layer1"].append(gn1)
+            history["grad_norm_layer2"].append(gn2)
+            history["ipr"].append(ipr_val)
 
             if epoch % (cfg.log_every * 10) == 0:
                 elapsed = time.time() - start
@@ -88,18 +100,20 @@ def train(cfg: Config):
                     f"[{epoch:>6d}/{cfg.epochs}]  "
                     f"train_loss={train_loss_t.item():.6f}  test_loss={test_loss:.6f}  "
                     f"train_acc={train_acc:.1f}%  test_acc={test_acc:.1f}%  "
-                    f"ipr={ipr['ipr']:.4f}  ({elapsed:.1f}s)"
+                    f"ipr={ipr_val:.4f}  ({elapsed:.1f}s)"
                 )
 
-        # Save checkpoint if requested
+        # Save checkpoint if requested. The Fourier spectrum is GrokNet-specific;
+        # other models still checkpoint their weights, just without it.
         if cfg.checkpoint_every > 0 and epoch % cfg.checkpoint_every == 0 and epoch > 0:
             ckpt_dir = os.path.join(cfg.output_dir, "checkpoints")
             os.makedirs(ckpt_dir, exist_ok=True)
             ckpt_path = os.path.join(ckpt_dir, f"ckpt_epoch{epoch}.pt")
             torch.save(model.state_dict(), ckpt_path)
-            spec = fourier_spectrum(model)
-            spec_path = os.path.join(ckpt_dir, f"spectrum_epoch{epoch}.pt")
-            torch.save(spec["spectrum"], spec_path)
+            if fourier_applicable(model):
+                spec = fourier_spectrum(model)
+                spec_path = os.path.join(ckpt_dir, f"spectrum_epoch{epoch}.pt")
+                torch.save(spec["spectrum"], spec_path)
 
         optimizer.step()
 

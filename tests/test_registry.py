@@ -90,3 +90,28 @@ class TestBuildLoss:
             spec = build_loss(Config(loss=name))
             labels = torch.tensor([0, 1, 2])
             assert spec.prepare_target(labels, 7).device == labels.device
+
+
+class TestFourierApplicability:
+    """The Fourier metrics must declare applicability so callers can skip them
+    on architectures that lack the GrokNet W1/P interface, rather than crash."""
+
+    def test_groknet_is_applicable(self):
+        from fedgrok.metrics.fourier import fourier_applicable
+        assert fourier_applicable(GrokNet(14, 16, 7)) is True
+
+    def test_plain_module_is_not_applicable(self):
+        import torch.nn as nn
+        from fedgrok.metrics.fourier import fourier_applicable
+        assert fourier_applicable(nn.Linear(10, 10)) is False
+
+    def test_module_with_embedding_is_not_applicable(self):
+        import torch.nn as nn
+        from fedgrok.metrics.fourier import fourier_applicable
+
+        class Toy(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.embed = nn.Embedding(10, 8)
+
+        assert fourier_applicable(Toy()) is False

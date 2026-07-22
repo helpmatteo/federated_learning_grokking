@@ -30,7 +30,9 @@ from fedgrok.core.fed_config import FedConfig
 from fedgrok.data.partition import make_federated_datasets
 from fedgrok.core.registry import build_model, build_loss
 from fedgrok.core.utils import make_optimizer, get_device
-from fedgrok.metrics.fourier import weight_norms, compute_ipr, compute_accuracy, fourier_spectrum
+from fedgrok.metrics.fourier import (
+    weight_norms, compute_ipr, compute_accuracy, fourier_spectrum, fourier_applicable,
+)
 
 
 # ── Dataset cache ────────────────────────────────────────────────────────────
@@ -241,7 +243,8 @@ class GrokClient(NumPyClient):
         updated_weights = _model_to_ndarrays(model)
         drift = compute_drift(parameters, updated_weights)
         weight_norm = float(sum(np.sum(w**2) for w in updated_weights) ** 0.5)
-        local_ipr = compute_ipr(model)["ipr"]
+        # IPR is GrokNet-specific; NaN on other architectures.
+        local_ipr = compute_ipr(model)["ipr"] if fourier_applicable(model) else float("nan")
 
         # Extract W1 for per-client Fourier analysis (only at checkpoint rounds)
         # Serialize as bytes since Flower metrics only support Scalar types
@@ -249,7 +252,8 @@ class GrokClient(NumPyClient):
         ckpt_every = int(config.get("checkpoint_every", 0))
         is_checkpoint_round = (ckpt_every > 0 and server_round > 0
                                and server_round % ckpt_every == 0)
-        if config.get("checkpoint_client_weights", False) and is_checkpoint_round:
+        if (config.get("checkpoint_client_weights", False) and is_checkpoint_round
+                and fourier_applicable(model)):
             client_w1_bytes = model.W1.data[:, :cfg.p].cpu().numpy().tobytes()
         else:
             client_w1_bytes = None
@@ -435,8 +439,13 @@ def fed_train(cfg: FedConfig):
             train_loss = loss_fn(out_train, y_train_full_target).item()
             train_acc = compute_accuracy(out_train, y_train_full)
 
-        wn = weight_norms(model)
-        ipr = compute_ipr(model)
+        # weight_norms / IPR are GrokNet-specific; NaN on other architectures.
+        if fourier_applicable(model):
+            wn = weight_norms(model)
+            wn1, wn2 = wn["weight_norm_layer1"], wn["weight_norm_layer2"]
+            ipr_val = compute_ipr(model)["ipr"]
+        else:
+            wn1 = wn2 = ipr_val = float("nan")
 
         history["round"].append(server_round)
         # sequential_steps = rounds * E is the depth of the update chain,
@@ -449,9 +458,9 @@ def fed_train(cfg: FedConfig):
         history["test_loss"].append(test_loss)
         history["train_acc"].append(train_acc)
         history["test_acc"].append(test_acc)
-        history["weight_norm_layer1"].append(wn["weight_norm_layer1"])
-        history["weight_norm_layer2"].append(wn["weight_norm_layer2"])
-        history["ipr"].append(ipr["ipr"])
+        history["weight_norm_layer1"].append(wn1)
+        history["weight_norm_layer2"].append(wn2)
+        history["ipr"].append(ipr_val)
         history["mean_client_drift"].append(_round_metrics["mean_drift"])
         history["client_weight_divergence"].append(_round_metrics["weight_divergence"])
 
@@ -464,10 +473,11 @@ def fed_train(cfg: FedConfig):
             ckpt_path = os.path.join(ckpt_dir, f"ckpt_round{server_round}.pt")
             torch.save(model.state_dict(), ckpt_path)
 
-            # Global Fourier spectrum
-            spec = fourier_spectrum(model)
-            spec_path = os.path.join(ckpt_dir, f"spectrum_round{server_round}.pt")
-            torch.save(spec["spectrum"], spec_path)
+            # Global Fourier spectrum (GrokNet-specific; skipped otherwise)
+            if fourier_applicable(model):
+                spec = fourier_spectrum(model)
+                spec_path = os.path.join(ckpt_dir, f"spectrum_round{server_round}.pt")
+                torch.save(spec["spectrum"], spec_path)
 
             # Per-client W1 (if available)
             if _client_w1_cache["data"] is not None:
@@ -480,7 +490,7 @@ def fed_train(cfg: FedConfig):
                 f"[Round {server_round:>4d}/{cfg.num_rounds}]  "
                 f"train_loss={train_loss:.6f}  test_loss={test_loss:.6f}  "
                 f"train_acc={train_acc:.1f}%  test_acc={test_acc:.1f}%  "
-                f"ipr={ipr['ipr']:.4f}  ({elapsed:.1f}s)"
+                f"ipr={ipr_val:.4f}  ({elapsed:.1f}s)"
             )
 
         return test_loss, {"test_accuracy": test_acc, "train_accuracy": train_acc}
