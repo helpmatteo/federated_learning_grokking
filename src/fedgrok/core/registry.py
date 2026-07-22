@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import torch.nn as nn
 
 from fedgrok.models.groknet import GrokNet
+from fedgrok.models.transformer import GrokFormer
 from fedgrok.core.utils import make_targets_onehot
 
 
@@ -59,6 +60,22 @@ def _build_groknet(cfg):
         hidden_width=cfg.hidden_width,
         output_dim=cfg.p,
         activation=cfg.activation,
+    )
+
+
+@register_model("transformer")
+def _build_transformer(cfg):
+    """Nanda's 1-layer decoder-only transformer for modular arithmetic.
+
+    Consumes the same one-hot 2p input as GrokNet (see GrokFormer). d_model maps
+    to cfg.hidden_width so the config's width knob still means "model width";
+    heads and MLP width use Nanda's defaults. Pair with loss="ce".
+    """
+    return GrokFormer(
+        p=cfg.p,
+        d_model=cfg.hidden_width,
+        n_heads=getattr(cfg, "n_heads", 4),
+        d_mlp=getattr(cfg, "d_mlp", 512),
     )
 
 
