@@ -3,7 +3,7 @@
 Working branch for the multi-setup rewrite. Full plan lives at
 `~/.claude/plans/plan-all-that-needs-nested-seal.md`.
 
-**Paused:** 2026-07-21, mid Phase 2 (model registry done; loss/dataset/minibatch next).
+**Paused:** 2026-07-21, Phase 2 core done (model + loss registries, metric capability). Next: minibatching, then Phase 3.
 
 ## State
 
@@ -11,7 +11,7 @@ Working branch for the multi-setup rewrite. Full plan lives at
 |---|---|
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
-| Tests | **285/285 pass** (`venv/bin/python -m pytest tests/ -q`, ~8.5 min incl. FL integration) |
+| Tests | **297/297 pass** (`venv/bin/python -m pytest tests/ -q`, ~8.5 min incl. FL integration) |
 | Env | `venv/` (py3.10, torch 2.10, flwr 1.27); package installed via `pip install -e . --no-deps` |
 | Hardware | 8× L4; **use 6, ~2 runs/GPU = 12 slots**. Indices 1 and 3 had other work on them — the launcher auto-skips busy GPUs. |
 
@@ -65,34 +65,36 @@ Resume is automatic (skips runs whose result JSON exists). One run = one subproc
 - Verified: two Flower/Ray sims coexist on one GPU (per-process local Ray); resume skips
   completed runs. +18 tests.
 
-## Done — Phase 2 part 1: model registry (`b50ab87`)
+## Done — Phase 2 core (`b50ab87`, `5e31b72`, `35ec12f`)
 
-`fedgrok/core/registry.py` — `build_model(cfg)` dispatches on new `cfg.model` field
-(default `"groknet"`). Wired into federated `_make_model` and centralized `train`; the
-modular 2p/p dim convention now lives in the groknet builder. Verified equivalent to the
-archived baseline (4.8e-7). +7 tests.
+- **Model registry** — `fedgrok/core/registry.py::build_model(cfg)` on `cfg.model`
+  (default `"groknet"`). Wired into both training loops.
+- **Loss registry** — `build_loss(cfg) -> LossSpec(loss_fn, prepare_target)`; `cfg.loss`
+  ∈ {mse, ce}. MSE = one-hot targets, CE = class indices. Wired through every target site.
+  **Critical fix**: `_cfg_to_fit_config`/`_fit_config_to_cfg` now carry `loss` and `model`
+  (they didn't — a CE federated run would have silently trained clients with MSE).
+  CE verified to train end-to-end (mod-97 MLP, CE+AdamW → 100/99.9%).
+- **Metric capability protocol** — `fourier_applicable(model)`; both loops guard IPR /
+  weight-norms / Fourier-spectrum / per-client-W1 and log NaN off-GrokNet, so Phase 3's
+  transformer/MNIST/S₅ won't crash on them.
+- All three verified MSE/GrokNet-equivalent to the archived baseline (4.8e-7). +21 tests.
 
-## Next up — Phase 2 part 2: loss + dataset registries, minibatching, metric capability
+## Next up — finish Phase 2, then Phase 3
 
-1. **Loss registry** (the intricate part — touches target handling). Add `loss: str = "mse"`
-   to Config. `build_loss(cfg)` returns the loss fn **and a target-prep** (MSE needs one-hot
-   via `make_targets_onehot`; CE needs raw class indices). Wire into all target sites: the 3
-   `nn.MSELoss()` + `make_targets_onehot` uses in centralized `train`, federated `GrokClient.fit`,
-   and federated `evaluate_fn`. **Re-verify equivalence** with the `traj.py` harness (scratchpad)
-   — MSE path must stay bit-identical. This unblocks the CE transformer.
-2. **Dataset registry** — `build_dataset(cfg)` / `build_federated_dataset(cfg)` dispatching on a
-   dataset selector (modular now; MNIST/S₅ in Phase 3). Keep modular exactly as-is.
-3. **Metric capability protocol** — `compute_ipr`/`fourier_spectrum`/`neuron_frequency_assignment`/
-   `restricted_excluded_loss` assume `model.W1`, `model.P`, one-hot 2p input. Make each declare
-   applicability and be **skipped (not crash)** on transformer/MNIST/S₅. `weight_norms`,
-   `gini_coefficient`, `effective_rank` are basis-free. **Split `metrics/fourier.py`** into
-   fourier / spectral / basic here (deferred from 0a).
-4. **Minibatching** — everything is full-batch whole-dataset tensors; needed for MNIST and the
-   transformer at batch 512. Keep full-batch as the default so setup A is unchanged.
+1. **Minibatching** (last Phase 2 item). Add `batch_size: int = 0` to Config (0 = full-batch,
+   the default, so setup A and the transformer are unchanged). In centralized `train` and the
+   federated client `fit`, iterate minibatches when `batch_size > 0`. Only MNIST (Omnigrok)
+   needs it. **Re-verify** the full-batch path stays bit-identical with `traj.py`.
+2. **Dataset registry** — do it *with* the Phase 3 datasets: `build_dataset(cfg)` dispatching
+   on a dataset selector (modular now; add MNIST + S₅). Keep modular byte-identical.
+3. **Phase 3 setups** — Nanda transformer (`@register_model("transformer")`, CE, mod-113),
+   Omnigrok MNIST-1k MLP (large init), S₅ composition + coset partition + coset-attribution
+   metric. Each new arch = one registry entry + (if needed) its own progress measure.
 
 **Equivalence harness** (reuse for every training-loop change): `traj.py` in the scratchpad
 runs one config and dumps history JSON; diff against `ref_run1.json` (archived c7c997f
-trajectory). Worst |Δ| < 1e-5 = fp32 noise = OK. This caught the RNG-order bug in 1.1.
+trajectory). Worst |Δ| < 1e-5 = fp32 noise = OK. It has now caught two real bugs (the 1.1
+RNG-order bug and the stale `ipr` reference in 2b).
 
 ## Open tuning note (carried from 1.1)
 
@@ -135,6 +137,6 @@ if a big-K sweep is slow, lower `--per-gpu` or make `num_cpus` fractional in
 ```bash
 cd /home/jse44/modules/ToDL/federated_learning_grokking
 git checkout v2-multisetup
-venv/bin/python -m pytest tests/ -q          # expect 285 passed
+venv/bin/python -m pytest tests/ -q          # expect 297 passed
 ```
-Then continue at **Phase 2 part 2** (loss + dataset registries, minibatching) above.
+Then continue at **Minibatching** (finish Phase 2), then Phase 3, above.
