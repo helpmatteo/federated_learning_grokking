@@ -3,7 +3,7 @@
 Working branch for the multi-setup rewrite. Full plan lives at
 `~/.claude/plans/plan-all-that-needs-nested-seal.md`.
 
-**Paused:** 2026-07-21, after Phase 1 complete (harness + launcher). Next: Phase 2, the registries.
+**Paused:** 2026-07-21, mid Phase 2 (model registry done; loss/dataset/minibatch next).
 
 ## State
 
@@ -11,7 +11,7 @@ Working branch for the multi-setup rewrite. Full plan lives at
 |---|---|
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
-| Tests | **278/278 pass** (`venv/bin/python -m pytest tests/ -q`, ~8.5 min incl. FL integration) |
+| Tests | **285/285 pass** (`venv/bin/python -m pytest tests/ -q`, ~8.5 min incl. FL integration) |
 | Env | `venv/` (py3.10, torch 2.10, flwr 1.27); package installed via `pip install -e . --no-deps` |
 | Hardware | 8× L4; **use 6, ~2 runs/GPU = 12 slots**. Indices 1 and 3 had other work on them — the launcher auto-skips busy GPUs. |
 
@@ -65,19 +65,34 @@ Resume is automatic (skips runs whose result JSON exists). One run = one subproc
 - Verified: two Flower/Ray sims coexist on one GPU (per-process local Ray); resume skips
   completed runs. +18 tests.
 
-## Next up — Phase 2: registries + metric capability protocol
+## Done — Phase 2 part 1: model registry (`b50ab87`)
 
-1. `fedgrok/core/registry.py` — `build_model(cfg)`, `build_loss(cfg)`, `build_dataset(cfg)`.
-   Replace direct `GrokNet(...)` in `_make_model` (federated) and centralized `train`, and
-   the three hardcoded `nn.MSELoss()` sites. This is the prerequisite for Phase 3's new
-   architectures/losses.
-2. **Metric capability protocol** — `fourier`/`ipr`/`fourier_spectrum`/`restricted_excluded_loss`
-   in `metrics/fourier.py` assume `model.W1`, `model.P`, one-hot 2p input. Make each declare
-   applicability and be skipped (not crash) on transformer / MNIST / S₅ models. `weight_norms`,
+`fedgrok/core/registry.py` — `build_model(cfg)` dispatches on new `cfg.model` field
+(default `"groknet"`). Wired into federated `_make_model` and centralized `train`; the
+modular 2p/p dim convention now lives in the groknet builder. Verified equivalent to the
+archived baseline (4.8e-7). +7 tests.
+
+## Next up — Phase 2 part 2: loss + dataset registries, minibatching, metric capability
+
+1. **Loss registry** (the intricate part — touches target handling). Add `loss: str = "mse"`
+   to Config. `build_loss(cfg)` returns the loss fn **and a target-prep** (MSE needs one-hot
+   via `make_targets_onehot`; CE needs raw class indices). Wire into all target sites: the 3
+   `nn.MSELoss()` + `make_targets_onehot` uses in centralized `train`, federated `GrokClient.fit`,
+   and federated `evaluate_fn`. **Re-verify equivalence** with the `traj.py` harness (scratchpad)
+   — MSE path must stay bit-identical. This unblocks the CE transformer.
+2. **Dataset registry** — `build_dataset(cfg)` / `build_federated_dataset(cfg)` dispatching on a
+   dataset selector (modular now; MNIST/S₅ in Phase 3). Keep modular exactly as-is.
+3. **Metric capability protocol** — `compute_ipr`/`fourier_spectrum`/`neuron_frequency_assignment`/
+   `restricted_excluded_loss` assume `model.W1`, `model.P`, one-hot 2p input. Make each declare
+   applicability and be **skipped (not crash)** on transformer/MNIST/S₅. `weight_norms`,
    `gini_coefficient`, `effective_rank` are basis-free. **Split `metrics/fourier.py`** into
    fourier / spectral / basic here (deferred from 0a).
-3. **Minibatching** — everything is full-batch whole-dataset tensors; needed for MNIST and
-   the transformer at batch 512. Keep full-batch as the default so setup A is unchanged.
+4. **Minibatching** — everything is full-batch whole-dataset tensors; needed for MNIST and the
+   transformer at batch 512. Keep full-batch as the default so setup A is unchanged.
+
+**Equivalence harness** (reuse for every training-loop change): `traj.py` in the scratchpad
+runs one config and dumps history JSON; diff against `ref_run1.json` (archived c7c997f
+trajectory). Worst |Δ| < 1e-5 = fp32 noise = OK. This caught the RNG-order bug in 1.1.
 
 ## Open tuning note (carried from 1.1)
 
@@ -120,6 +135,6 @@ if a big-K sweep is slow, lower `--per-gpu` or make `num_cpus` fractional in
 ```bash
 cd /home/jse44/modules/ToDL/federated_learning_grokking
 git checkout v2-multisetup
-venv/bin/python -m pytest tests/ -q          # expect 278 passed
+venv/bin/python -m pytest tests/ -q          # expect 285 passed
 ```
-Then continue at **Phase 2** (registries + metric capability protocol) above.
+Then continue at **Phase 2 part 2** (loss + dataset registries, minibatching) above.
