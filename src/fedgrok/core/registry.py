@@ -1,17 +1,21 @@
-"""Registries mapping a config to the concrete model it selects.
+"""Registries mapping a config to the concrete pieces it selects.
 
-`cfg.model` names an architecture family; `build_model(cfg)` returns a fresh
-nn.Module for it. This is the seam that lets Phase 3 add the Nanda transformer,
-the Omnigrok MNIST MLP, and the S5 model without touching the training loops —
-each is one new `@register_model` entry that knows how to read its dimensions
-off the config.
+`cfg.model` names an architecture family and `build_model(cfg)` returns a fresh
+nn.Module; `cfg.loss` names a loss and `build_loss(cfg)` returns both the loss
+function and the target-prep it needs (MSE trains against one-hot targets, CE
+against class indices). These are the seams that let Phase 3 add the Nanda
+transformer (CE), the Omnigrok MNIST MLP, and the S5 model without touching the
+training loops — each is one new registry entry.
 
-Loss and dataset registries live alongside this once the CE/one-hot target
-handling and the non-modular datasets land (Phase 2/3); kept out for now so the
-model seam can go in cleanly on its own.
+The dataset registry lands with the non-modular datasets in Phase 3.
 """
 
+from dataclasses import dataclass
+
+import torch.nn as nn
+
 from fedgrok.models.groknet import GrokNet
+from fedgrok.core.utils import make_targets_onehot
 
 
 _MODEL_BUILDERS = {}
@@ -56,3 +60,35 @@ def _build_groknet(cfg):
         output_dim=cfg.p,
         activation=cfg.activation,
     )
+
+
+# ── Loss registry ────────────────────────────────────────────────────────────
+
+@dataclass
+class LossSpec:
+    """A loss and the target it expects.
+
+    loss_fn(logits, target) -> scalar; prepare_target(labels, p) -> target,
+    where `labels` are int class indices on the compute device. Keeping the
+    two together means a training loop never has to know whether it is feeding
+    one-hot vectors (MSE) or class indices (CE).
+    """
+    loss_fn: object
+    prepare_target: object
+
+
+def build_loss(cfg):
+    name = getattr(cfg, "loss", "mse")
+    if name == "mse":
+        # Gromov's setting: regress one-hot targets under mean-squared error.
+        return LossSpec(
+            loss_fn=nn.MSELoss(),
+            prepare_target=lambda labels, p: make_targets_onehot(labels, p),
+        )
+    if name == "ce":
+        # Power/Nanda setting: cross-entropy over class-index targets.
+        return LossSpec(
+            loss_fn=nn.CrossEntropyLoss(),
+            prepare_target=lambda labels, p: labels.long(),
+        )
+    raise ValueError(f"Unknown loss {name!r} (expected 'mse' or 'ce')")

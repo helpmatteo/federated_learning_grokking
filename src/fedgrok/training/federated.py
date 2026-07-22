@@ -17,7 +17,6 @@ from collections import OrderedDict
 
 import numpy as np
 import torch
-import torch.nn as nn
 
 import flwr as fl
 from flwr.client import NumPyClient, ClientApp
@@ -29,8 +28,8 @@ from flwr.simulation import run_simulation
 
 from fedgrok.core.fed_config import FedConfig
 from fedgrok.data.partition import make_federated_datasets
-from fedgrok.core.registry import build_model
-from fedgrok.core.utils import make_targets_onehot, make_optimizer, get_device
+from fedgrok.core.registry import build_model, build_loss
+from fedgrok.core.utils import make_optimizer, get_device
 from fedgrok.metrics.fourier import weight_norms, compute_ipr, compute_accuracy, fourier_spectrum
 
 
@@ -81,10 +80,11 @@ def _get_warm_client(cfg, partition_id, device):
         x_local, y_local = client_data[partition_id]
         x_local = x_local.to(device)
         y_local = y_local.to(device)
-        y_local_oh = make_targets_onehot(y_local, cfg.p)
+        # Loss target: one-hot for MSE, class indices for CE (build_loss owns it).
+        y_local_target = build_loss(cfg).prepare_target(y_local, cfg.p)
 
         model = _make_model(cfg).to(device)
-        entry = (model, x_local, y_local_oh, y_local)
+        entry = (model, x_local, y_local_target, y_local)
         _client_cache[key] = entry
     return entry
 
@@ -134,8 +134,10 @@ def _cfg_to_fit_config(cfg: FedConfig, server_round: int):
         "optimizer": cfg.optimizer,
         "weight_decay": cfg.weight_decay,
         "momentum": cfg.momentum,
+        "model": cfg.model,
         "hidden_width": cfg.hidden_width,
         "activation": cfg.activation,
+        "loss": cfg.loss,
         "proximal_mu": cfg.proximal_mu,
         "strategy": cfg.strategy,
         "server_lr": cfg.server_lr,
@@ -161,8 +163,10 @@ def _fit_config_to_cfg(config: dict) -> FedConfig:
         optimizer=config["optimizer"],
         weight_decay=float(config["weight_decay"]),
         momentum=float(config["momentum"]),
+        model=config.get("model", "groknet"),
         hidden_width=int(config["hidden_width"]),
         activation=config["activation"],
+        loss=config.get("loss", "mse"),
         proximal_mu=float(config.get("proximal_mu", 0.0)),
         strategy=config.get("strategy", "fedavg"),
         server_lr=float(config.get("server_lr", 1.0)),
@@ -194,7 +198,8 @@ class GrokClient(NumPyClient):
         p = cfg.p
 
         # Warm model + on-device data (built once per client, reused each round).
-        model, x_local, y_local_oh, y_local = _get_warm_client(cfg, self.partition_id, device)
+        # y_local_target is one-hot (MSE) or class indices (CE) per the loss.
+        model, x_local, y_local_target, y_local = _get_warm_client(cfg, self.partition_id, device)
 
         # Overwrite the model with this round's global weights, in place.
         _load_ndarrays_into(model, parameters)
@@ -204,7 +209,7 @@ class GrokClient(NumPyClient):
         # standard FedAvg/FedProx semantics. For SGD momentum=0 it is a no-op;
         # for AdamW the adaptive estimates restart each round.
         optimizer = make_optimizer(model, cfg)
-        loss_fn = nn.MSELoss()
+        loss_fn = build_loss(cfg).loss_fn
 
         # FedProx: snapshot the global weights for the proximal term.
         proximal_mu = cfg.proximal_mu
@@ -214,7 +219,7 @@ class GrokClient(NumPyClient):
         model.train()
         for _ in range(cfg.local_epochs):
             out = model(x_local)
-            loss = loss_fn(out, y_local_oh)
+            loss = loss_fn(out, y_local_target)
             # FedProx proximal term: (mu/2) * ||w - w_global||^2
             if proximal_mu > 0:
                 prox = sum(
@@ -230,7 +235,7 @@ class GrokClient(NumPyClient):
         model.eval()
         with torch.no_grad():
             out = model(x_local)
-            local_loss = loss_fn(out, y_local_oh).item()
+            local_loss = loss_fn(out, y_local_target).item()
             local_acc = compute_accuracy(out, y_local)
 
         updated_weights = _model_to_ndarrays(model)
@@ -310,16 +315,16 @@ def fed_train(cfg: FedConfig):
 
     # Precompute global data (single call, also populates cache for clients)
     client_data, x_train_full, y_train_full, x_test, y_test = _get_cached_datasets(cfg)
-    y_test_oh = make_targets_onehot(y_test, cfg.p)
-    y_train_full_oh = make_targets_onehot(y_train_full, cfg.p)
 
-    # Move evaluation data to device
+    # Move evaluation data to device, then prepare loss targets there.
     x_test = x_test.to(device)
     y_test = y_test.to(device)
-    y_test_oh = y_test_oh.to(device)
     x_train_full = x_train_full.to(device)
     y_train_full = y_train_full.to(device)
-    y_train_full_oh = y_train_full_oh.to(device)
+
+    loss_spec = build_loss(cfg)
+    y_test_target = loss_spec.prepare_target(y_test, cfg.p)
+    y_train_full_target = loss_spec.prepare_target(y_train_full, cfg.p)
 
     # Print partition sizes
     print(f"Clients: {cfg.num_clients}, partition: {cfg.partition}, "
@@ -340,7 +345,7 @@ def fed_train(cfg: FedConfig):
     # Mutable container to capture final model parameters from evaluate_fn
     _final_ndarrays = [None]
 
-    loss_fn = nn.MSELoss()
+    loss_fn = loss_spec.loss_fn
     start_time = time.time()
 
     # Mutable container for inter-callback communication (closure-shared).
@@ -424,10 +429,10 @@ def fed_train(cfg: FedConfig):
         model.eval()
         with torch.no_grad():
             out_test = model(x_test)
-            test_loss = loss_fn(out_test, y_test_oh).item()
+            test_loss = loss_fn(out_test, y_test_target).item()
             test_acc = compute_accuracy(out_test, y_test)
             out_train = model(x_train_full)
-            train_loss = loss_fn(out_train, y_train_full_oh).item()
+            train_loss = loss_fn(out_train, y_train_full_target).item()
             train_acc = compute_accuracy(out_train, y_train_full)
 
         wn = weight_norms(model)

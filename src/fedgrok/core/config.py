@@ -25,6 +25,7 @@ class Config:
     ] = "quadratic"
 
     # --- Training ---
+    loss: Literal["mse", "ce"] = "mse"   # mse: one-hot targets (Gromov); ce: class indices
     optimizer: Literal["gd", "adamw"] = "gd"
     lr: float = 50.0                     # learning rate (50 for GD, 1e-4 for AdamW)
     weight_decay: float = 0.0            # explicit weight decay

@@ -512,3 +512,36 @@ class TestEvalEvery:
         """The last round must appear even when it is not a multiple of eval_every."""
         sub = self._run(7)  # 20 is not a multiple of 7
         assert sub["round"][-1] == 20
+
+
+# ── Loss propagates to clients ────────────────────────────────────────────────
+
+
+class TestLossPropagation:
+    """cfg.loss and cfg.model must survive the fit-config round-trip to clients.
+
+    _cfg_to_fit_config serialises the config to a scalar dict that Flower ships
+    to each client, which rebuilds it with _fit_config_to_cfg. If loss/model are
+    dropped there, a CE run would silently train its clients with the default
+    MSE — the exact silent-field-drop the hand-maintained dict invites.
+    """
+
+    def test_loss_and_model_survive_fit_config_roundtrip(self):
+        from fedgrok.training.federated import _cfg_to_fit_config, _fit_config_to_cfg
+        cfg = FedConfig(p=97, loss="ce", model="groknet", optimizer="adamw",
+                        lr=1e-3, num_clients=4, partition="iid")
+        rebuilt = _fit_config_to_cfg(_cfg_to_fit_config(cfg, server_round=1))
+        assert rebuilt.loss == "ce"
+        assert rebuilt.model == "groknet"
+
+    def test_client_uses_ce_target_shape(self):
+        """A CE client's prepared target must be class indices, not one-hot."""
+        from fedgrok.training.federated import _get_warm_client, _dataset_cache, _client_cache
+        _dataset_cache.clear()
+        _client_cache.clear()
+        cfg = FedConfig(p=7, loss="ce", num_clients=2, partition="iid",
+                        hidden_width=16, seed=42)
+        _, _, y_target, y_local = _get_warm_client(cfg, 0, torch.device("cpu"))
+        assert y_target.dim() == 1            # class indices, not (n, p) one-hot
+        assert y_target.dtype == torch.int64
+        assert torch.equal(y_target, y_local)

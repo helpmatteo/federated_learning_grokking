@@ -1,15 +1,14 @@
-"""Training loop: full-batch gradient descent or AdamW with MSE loss."""
+"""Training loop: full-batch gradient descent or AdamW, MSE or CE loss."""
 
 import json
 import os
 import time
 import torch
-import torch.nn as nn
 from fedgrok.core.config import Config
 from fedgrok.data.modular import make_dataset
-from fedgrok.core.registry import build_model
+from fedgrok.core.registry import build_model, build_loss
 from fedgrok.metrics.fourier import weight_norms, gradient_norms, compute_ipr, compute_accuracy, fourier_spectrum
-from fedgrok.core.utils import get_device, make_optimizer, make_targets_onehot
+from fedgrok.core.utils import get_device, make_optimizer
 
 
 def train(cfg: Config):
@@ -18,25 +17,26 @@ def train(cfg: Config):
     device = get_device()
     print(f"Using device: {device}")
 
-    # Data (build one-hots on CPU, then move everything to device)
+    # Data
     x_train, y_train, x_test, y_test = make_dataset(cfg)
     p = cfg.p
-    y_train_oh = make_targets_onehot(y_train, p)
-    y_test_oh = make_targets_onehot(y_test, p)
 
-    # Move data to device
+    # Move data to device, then prepare loss targets there (one-hot for MSE,
+    # class indices for CE — build_loss owns that choice).
     x_train = x_train.to(device)
     y_train = y_train.to(device)
-    y_train_oh = y_train_oh.to(device)
     x_test = x_test.to(device)
     y_test = y_test.to(device)
-    y_test_oh = y_test_oh.to(device)
+
+    loss = build_loss(cfg)
+    loss_fn = loss.loss_fn
+    y_train_target = loss.prepare_target(y_train, p)
+    y_test_target = loss.prepare_target(y_test, p)
 
     # Model (via the registry, so cfg.model selects the architecture)
     model = build_model(cfg).to(device)
 
     optimizer = make_optimizer(model, cfg)
-    loss_fn = nn.MSELoss()
 
     # History
     history = {
@@ -54,16 +54,16 @@ def train(cfg: Config):
         # ── Forward + backward ──────────────────────────────────────────
         model.train()
         out_train = model(x_train)
-        loss = loss_fn(out_train, y_train_oh)
+        train_loss_t = loss_fn(out_train, y_train_target)
 
         optimizer.zero_grad()
-        loss.backward()
+        train_loss_t.backward()
 
         # Log before step (so gradient norms are available)
         if epoch % cfg.log_every == 0:
             with torch.no_grad():
                 out_test = model(x_test)
-                test_loss = loss_fn(out_test, y_test_oh).item()
+                test_loss = loss_fn(out_test, y_test_target).item()
                 train_acc = compute_accuracy(out_train, y_train)
                 test_acc = compute_accuracy(out_test, y_test)
 
@@ -72,7 +72,7 @@ def train(cfg: Config):
             ipr = compute_ipr(model)
 
             history["epoch"].append(epoch)
-            history["train_loss"].append(loss.item())
+            history["train_loss"].append(train_loss_t.item())
             history["test_loss"].append(test_loss)
             history["train_acc"].append(train_acc)
             history["test_acc"].append(test_acc)
@@ -86,7 +86,7 @@ def train(cfg: Config):
                 elapsed = time.time() - start
                 print(
                     f"[{epoch:>6d}/{cfg.epochs}]  "
-                    f"train_loss={loss.item():.6f}  test_loss={test_loss:.6f}  "
+                    f"train_loss={train_loss_t.item():.6f}  test_loss={test_loss:.6f}  "
                     f"train_acc={train_acc:.1f}%  test_acc={test_acc:.1f}%  "
                     f"ipr={ipr['ipr']:.4f}  ({elapsed:.1f}s)"
                 )

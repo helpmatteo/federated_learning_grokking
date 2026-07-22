@@ -1,11 +1,14 @@
-"""Tests for the model registry."""
+"""Tests for the model and loss registries."""
 
 import pytest
+import torch
 
 from fedgrok.core.config import Config
 from fedgrok.core.fed_config import FedConfig
 from fedgrok.models.groknet import GrokNet
-from fedgrok.core.registry import build_model, registered_models, register_model
+from fedgrok.core.registry import (
+    build_model, registered_models, register_model, build_loss,
+)
 
 
 class TestBuildModel:
@@ -42,3 +45,48 @@ class TestBuildModel:
     def test_double_registration_raises(self):
         with pytest.raises(ValueError, match="already registered"):
             register_model("groknet")(lambda cfg: None)
+
+
+class TestBuildLoss:
+    def test_default_loss_is_mse(self):
+        assert Config().loss == "mse"
+
+    def test_mse_target_is_onehot_float(self):
+        spec = build_loss(Config(loss="mse"))
+        labels = torch.tensor([0, 2, 4])
+        target = spec.prepare_target(labels, 7)
+        assert target.shape == (3, 7)
+        assert target.dtype == torch.float32
+        # one row per label, a single 1.0 in the labelled column
+        assert torch.equal(target.sum(dim=1), torch.ones(3))
+        assert target[1, 2] == 1.0
+
+    def test_ce_target_is_class_indices(self):
+        spec = build_loss(Config(loss="ce"))
+        labels = torch.tensor([0, 2, 4])
+        target = spec.prepare_target(labels, 7)
+        assert target.shape == (3,)
+        assert target.dtype == torch.int64
+        assert torch.equal(target, labels)
+
+    def test_mse_loss_runs_on_logits(self):
+        spec = build_loss(Config(loss="mse"))
+        logits = torch.randn(3, 7)
+        target = spec.prepare_target(torch.tensor([0, 1, 2]), 7)
+        assert torch.isfinite(spec.loss_fn(logits, target))
+
+    def test_ce_loss_runs_on_logits(self):
+        spec = build_loss(Config(loss="ce"))
+        logits = torch.randn(3, 7)
+        target = spec.prepare_target(torch.tensor([0, 1, 2]), 7)
+        assert torch.isfinite(spec.loss_fn(logits, target))
+
+    def test_unknown_loss_raises(self):
+        with pytest.raises(ValueError, match="Unknown loss"):
+            build_loss(Config(loss="hinge"))
+
+    def test_target_follows_label_device(self):
+        for name in ("mse", "ce"):
+            spec = build_loss(Config(loss=name))
+            labels = torch.tensor([0, 1, 2])
+            assert spec.prepare_target(labels, 7).device == labels.device
