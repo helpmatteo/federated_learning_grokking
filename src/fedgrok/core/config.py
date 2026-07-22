@@ -30,7 +30,8 @@ class Config:
     lr: float = 50.0                     # learning rate (50 for GD, 1e-4 for AdamW)
     weight_decay: float = 0.0            # explicit weight decay
     momentum: float = 0.0               # momentum for GD (0.0 = vanilla GD)
-    epochs: int = 10_000                 # number of full-batch epochs
+    batch_size: int = 0                  # 0 = full batch (Gromov default); >0 = minibatch SGD
+    epochs: int = 10_000                 # number of epochs (= gradient steps when full-batch)
     log_every: int = 100                 # log metrics every N epochs
 
     # --- Output ---

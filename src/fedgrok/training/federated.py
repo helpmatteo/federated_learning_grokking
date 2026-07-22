@@ -136,6 +136,7 @@ def _cfg_to_fit_config(cfg: FedConfig, server_round: int):
         "optimizer": cfg.optimizer,
         "weight_decay": cfg.weight_decay,
         "momentum": cfg.momentum,
+        "batch_size": cfg.batch_size,
         "model": cfg.model,
         "hidden_width": cfg.hidden_width,
         "activation": cfg.activation,
@@ -165,6 +166,7 @@ def _fit_config_to_cfg(config: dict) -> FedConfig:
         optimizer=config["optimizer"],
         weight_decay=float(config["weight_decay"]),
         momentum=float(config["momentum"]),
+        batch_size=int(config.get("batch_size", 0)),
         model=config.get("model", "groknet"),
         hidden_width=int(config["hidden_width"]),
         activation=config["activation"],
@@ -218,11 +220,9 @@ class GrokClient(NumPyClient):
         if proximal_mu > 0:
             global_params = [w.detach().clone() for w in model.parameters()]
 
-        model.train()
-        for _ in range(cfg.local_epochs):
-            out = model(x_local)
-            loss = loss_fn(out, y_local_target)
-            # FedProx proximal term: (mu/2) * ||w - w_global||^2
+        def _step(xb, yb):
+            """One gradient step on a batch, with the FedProx term if enabled."""
+            loss = loss_fn(model(xb), yb)
             if proximal_mu > 0:
                 prox = sum(
                     torch.sum((p - gp) ** 2)
@@ -232,6 +232,21 @@ class GrokClient(NumPyClient):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+        model.train()
+        bs = cfg.batch_size
+        n_local = x_local.shape[0]
+        for _ in range(cfg.local_epochs):
+            if bs and bs > 0:
+                # A local epoch is a shuffled minibatch pass. randperm is only
+                # reached here, so the full-batch path stays RNG-identical.
+                perm = torch.randperm(n_local, device=device)
+                for i in range(0, n_local, bs):
+                    idx = perm[i:i + bs]
+                    _step(x_local[idx], y_local_target[idx])
+            else:
+                # Full-batch local GD: one local epoch = one step.
+                _step(x_local, y_local_target)
 
         # Return updated weights (moved to CPU) and metrics
         model.eval()

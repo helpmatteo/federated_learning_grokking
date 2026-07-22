@@ -405,3 +405,37 @@ class TestTaskDomains:
     def test_unknown_task_raises(self):
         with pytest.raises(ValueError, match="Unknown task"):
             task_operands("not_a_task", 7)
+
+
+# ── Minibatching ──────────────────────────────────────────────────────────────
+
+
+class TestMinibatching:
+    """batch_size=0 is full-batch (Gromov default); >0 is minibatch SGD.
+
+    Full-batch bit-identity is verified out of band against the pre-minibatch
+    commit; here we check the field default and that the minibatch path runs and
+    produces a well-formed, finite history.
+    """
+
+    def test_batch_size_defaults_to_full_batch(self):
+        assert Config().batch_size == 0
+
+    def test_minibatch_centralized_runs(self):
+        from fedgrok.training.centralized import train
+        cfg = Config(task="addition", p=17, alpha=0.5, seed=42, hidden_width=32,
+                     loss="mse", optimizer="gd", lr=1.0, batch_size=32,
+                     epochs=20, log_every=5, output_dir="/tmp/test_mb")
+        history, _ = train(cfg)
+        assert len(history["epoch"]) == 5           # epochs 0,5,10,15,20
+        assert all(x == x for x in history["train_loss"])   # all finite (no NaN)
+
+    def test_minibatch_and_full_batch_both_learn_direction(self):
+        """Sanity: both paths reduce training loss over a short run."""
+        from fedgrok.training.centralized import train
+        for bs in (0, 32):
+            cfg = Config(task="addition", p=17, alpha=0.5, seed=0, hidden_width=32,
+                         loss="mse", optimizer="gd", lr=1.0, batch_size=bs,
+                         epochs=40, log_every=10, output_dir="/tmp/test_mb2")
+            history, _ = train(cfg)
+            assert history["train_loss"][-1] < history["train_loss"][0]

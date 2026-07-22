@@ -53,16 +53,37 @@ def train(cfg: Config):
 
     start = time.time()
 
+    minibatch = cfg.batch_size and cfg.batch_size > 0
+    n_train = x_train.shape[0]
+
     for epoch in range(cfg.epochs + 1):
         # ── Forward + backward ──────────────────────────────────────────
         model.train()
-        out_train = model(x_train)
-        train_loss_t = loss_fn(out_train, y_train_target)
+        if minibatch:
+            # One epoch = one shuffled pass in minibatches (Omnigrok/MNIST).
+            # randperm is only ever called here, so the full-batch path below
+            # leaves the RNG stream untouched and stays bit-identical.
+            perm = torch.randperm(n_train, device=device)
+            for i in range(0, n_train, cfg.batch_size):
+                idx = perm[i:i + cfg.batch_size]
+                optimizer.zero_grad()
+                loss_i = loss_fn(model(x_train[idx]), y_train_target[idx])
+                loss_i.backward()
+                optimizer.step()
+            # Recompute the full-batch train state for logging.
+            with torch.no_grad():
+                out_train = model(x_train)
+                train_loss_value = loss_fn(out_train, y_train_target).item()
+        else:
+            # Full-batch GD: one epoch = one step. Log before stepping so the
+            # gradient norms reflect this step's gradient (step is at the bottom).
+            out_train = model(x_train)
+            train_loss_t = loss_fn(out_train, y_train_target)
+            optimizer.zero_grad()
+            train_loss_t.backward()
+            train_loss_value = train_loss_t.item()
 
-        optimizer.zero_grad()
-        train_loss_t.backward()
-
-        # Log before step (so gradient norms are available)
+        # Log before step (so gradient norms are available in the full-batch path)
         if epoch % cfg.log_every == 0:
             with torch.no_grad():
                 out_test = model(x_test)
@@ -84,7 +105,7 @@ def train(cfg: Config):
                 wn1 = wn2 = gn1 = gn2 = ipr_val = nan
 
             history["epoch"].append(epoch)
-            history["train_loss"].append(train_loss_t.item())
+            history["train_loss"].append(train_loss_value)
             history["test_loss"].append(test_loss)
             history["train_acc"].append(train_acc)
             history["test_acc"].append(test_acc)
@@ -98,7 +119,7 @@ def train(cfg: Config):
                 elapsed = time.time() - start
                 print(
                     f"[{epoch:>6d}/{cfg.epochs}]  "
-                    f"train_loss={train_loss_t.item():.6f}  test_loss={test_loss:.6f}  "
+                    f"train_loss={train_loss_value:.6f}  test_loss={test_loss:.6f}  "
                     f"train_acc={train_acc:.1f}%  test_acc={test_acc:.1f}%  "
                     f"ipr={ipr_val:.4f}  ({elapsed:.1f}s)"
                 )
@@ -115,7 +136,10 @@ def train(cfg: Config):
                 spec_path = os.path.join(ckpt_dir, f"spectrum_epoch{epoch}.pt")
                 torch.save(spec["spectrum"], spec_path)
 
-        optimizer.step()
+        # Full-batch takes its single step here (after logging its gradient);
+        # the minibatch path already stepped inside its pass.
+        if not minibatch:
+            optimizer.step()
 
     # Save results
     os.makedirs(cfg.output_dir, exist_ok=True)
