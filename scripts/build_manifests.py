@@ -67,9 +67,30 @@ def t0_poly_pilot():
     )
 
 
+def t0_mnist_wd_band():
+    """Locate the Omnigrok Goldilocks weight-decay band for MNIST-1k.
+
+    The pipeline is verified (it reaches ~91% test), but a clean grok — fast
+    memorisation then *delayed* generalisation — only appears in a narrow decay
+    band: too weak and test never catches up within budget; too strong and there
+    is no delay at all. This sweep over lr*wd (with large init) finds the band.
+    Centralized, MSE, 3-layer MLP width 200, minibatch, 3 seeds.
+    """
+    return expand_grid(
+        {"mode": "centralized", "dataset": "mnist", "model": "mlp",
+         "hidden_width": 200, "n_layers": 3, "init_scale": 9.0,
+         "loss": "mse", "optimizer": "adamw", "lr": 1e-3, "batch_size": 200,
+         "n_train": 1000, "n_test": 5000, "epochs": 20000, "log_every": 100},
+        # lr*wd in {1e-5, 3e-5, 1e-4, 3e-4, 1e-3}
+        {"weight_decay": [0.01, 0.03, 0.1, 0.3, 1.0], "seed": SEEDS3},
+        tags={"tier": "T0", "group": "mnist_wd_band", "experiment": "mnist"},
+    )
+
+
 BUILDERS = {
     "t0_wd_grid": t0_wd_grid,
     "t0_poly_pilot": t0_poly_pilot,
+    "t0_mnist_wd_band": t0_mnist_wd_band,
 }
 
 

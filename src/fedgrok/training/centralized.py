@@ -5,7 +5,7 @@ import os
 import time
 import torch
 from fedgrok.core.config import Config
-from fedgrok.data.modular import make_dataset
+from fedgrok.data.registry import build_dataset, dataset_dims
 from fedgrok.core.registry import build_model, build_loss
 from fedgrok.metrics.fourier import (
     weight_norms, gradient_norms, compute_ipr, compute_accuracy,
@@ -20,9 +20,11 @@ def train(cfg: Config):
     device = get_device()
     print(f"Using device: {device}")
 
-    # Data
-    x_train, y_train, x_test, y_test = make_dataset(cfg)
-    p = cfg.p
+    # Data (via the registry, so cfg.dataset selects modular / MNIST / ...)
+    x_train, y_train, x_test, y_test = build_dataset(cfg)
+    # Number of output classes: p for modular, but 10 for MNIST — take it from
+    # the dataset dims so the MSE one-hot width is correct for every dataset.
+    n_classes = dataset_dims(cfg)[1]
 
     # Move data to device, then prepare loss targets there (one-hot for MSE,
     # class indices for CE — build_loss owns that choice).
@@ -33,8 +35,8 @@ def train(cfg: Config):
 
     loss = build_loss(cfg)
     loss_fn = loss.loss_fn
-    y_train_target = loss.prepare_target(y_train, p)
-    y_test_target = loss.prepare_target(y_test, p)
+    y_train_target = loss.prepare_target(y_train, n_classes)
+    y_test_target = loss.prepare_target(y_test, n_classes)
 
     # Model (via the registry, so cfg.model selects the architecture)
     model = build_model(cfg).to(device)

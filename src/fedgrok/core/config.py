@@ -13,12 +13,17 @@ class Config:
                                          #   x2_y2_xy, x3_xy2_y
 
     # --- Data ---
+    dataset: str = "modular"             # dataset family (see fedgrok.data.registry)
     alpha: float = 0.5                   # fraction of p^2 dataset used for training
     seed: int = 42                       # random seed for train/test split
+    n_train: int = 1000                  # subset size for non-modular datasets (MNIST)
+    n_test: int = 5000                   # held-out size for non-modular datasets
 
     # --- Architecture ---
     model: str = "groknet"               # architecture family (see fedgrok.core.registry)
     hidden_width: int = 100              # N: width of the single hidden layer
+    n_layers: int = 3                    # hidden layers for the generic "mlp" model (Omnigrok)
+    init_scale: float = 1.0              # init multiplier; >1 is the Omnigrok large-init trick
     activation: Literal[
         "quadratic", "relu", "gelu",
         "abs", "quartic"

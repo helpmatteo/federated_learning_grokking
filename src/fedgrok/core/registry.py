@@ -16,6 +16,8 @@ import torch.nn as nn
 
 from fedgrok.models.groknet import GrokNet
 from fedgrok.models.transformer import GrokFormer
+from fedgrok.models.mlp import MLP
+from fedgrok.data.registry import dataset_dims
 from fedgrok.core.utils import make_targets_onehot
 
 
@@ -76,6 +78,20 @@ def _build_transformer(cfg):
         d_model=cfg.hidden_width,
         n_heads=getattr(cfg, "n_heads", 4),
         d_mlp=getattr(cfg, "d_mlp", 512),
+    )
+
+
+@register_model("mlp")
+def _build_mlp(cfg):
+    """Generic ReLU MLP (Omnigrok MNIST). Sized from the dataset's dims, with
+    the large-init scale from cfg.init_scale."""
+    input_dim, output_dim = dataset_dims(cfg)
+    return MLP(
+        input_dim=input_dim,
+        hidden_width=cfg.hidden_width,
+        output_dim=output_dim,
+        n_layers=cfg.n_layers,
+        init_scale=cfg.init_scale,
     )
 
 
