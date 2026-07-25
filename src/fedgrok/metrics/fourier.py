@@ -14,14 +14,23 @@ import torch
 import numpy as np
 
 
-def fourier_applicable(model) -> bool:
-    """True iff `model` exposes the GrokNet interface the Fourier metrics need.
+def fourier_applicable(model, cfg=None) -> bool:
+    """True iff the DFT-based Fourier metrics are meaningful for this run.
 
-    The metrics require the weight matrix `W1` and the modulus `P`, and assume
-    the first p input columns are the one-hot operand. Other architectures do
-    not satisfy this, so their callers append NaN instead of computing it.
+    Two conditions:
+      1. `model` exposes the GrokNet interface the metrics read — weight matrix
+         `W1` and output size `P`, with the first columns the one-hot operand.
+         A transformer / MNIST MLP lacks this.
+      2. The task is over a CYCLIC group. The DFT presumes Z_p structure; on a
+         non-abelian group like S_n it is meaningless, so even a GrokNet run on
+         the "s5" dataset must skip it (use coset-attribution metrics instead).
+         Only checked when `cfg` is supplied.
     """
-    return hasattr(model, "W1") and hasattr(model, "P")
+    if not (hasattr(model, "W1") and hasattr(model, "P")):
+        return False
+    if cfg is not None and getattr(cfg, "dataset", "modular") != "modular":
+        return False
+    return True
 
 
 def weight_norms(model):

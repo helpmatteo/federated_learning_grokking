@@ -52,29 +52,32 @@ def registered_models():
 
 @register_model("groknet")
 def _build_groknet(cfg):
-    """Gromov's 2-layer MLP for modular arithmetic.
+    """Gromov's 2-layer MLP for token-composition tasks.
 
-    Input/output dimensions are the modular-arithmetic convention: two
-    concatenated one-hot operands (2p in) and one-hot class logits (p out).
+    Sizes from the dataset dims: two concatenated one-hot operands (input_dim)
+    and one-hot class logits (output_dim). For modular arithmetic that is
+    (2p, p); for S_n composition it is (2|G|, |G|).
     """
+    input_dim, output_dim = dataset_dims(cfg)
     return GrokNet(
-        input_dim=2 * cfg.p,
+        input_dim=input_dim,
         hidden_width=cfg.hidden_width,
-        output_dim=cfg.p,
+        output_dim=output_dim,
         activation=cfg.activation,
     )
 
 
 @register_model("transformer")
 def _build_transformer(cfg):
-    """Nanda's 1-layer decoder-only transformer for modular arithmetic.
+    """Nanda's 1-layer decoder-only transformer for token-composition tasks.
 
-    Consumes the same one-hot 2p input as GrokNet (see GrokFormer). d_model maps
-    to cfg.hidden_width so the config's width knob still means "model width";
-    heads and MLP width use Nanda's defaults. Pair with loss="ce".
+    Consumes the same concatenated one-hot input as GrokNet (see GrokFormer).
+    The vocabulary / output size is the dataset's output_dim (p for modular,
+    |G| for S_n), and d_model maps to cfg.hidden_width. Pair with loss="ce".
     """
+    _, output_dim = dataset_dims(cfg)
     return GrokFormer(
-        p=cfg.p,
+        p=output_dim,
         d_model=cfg.hidden_width,
         n_heads=getattr(cfg, "n_heads", 4),
         d_mlp=getattr(cfg, "d_mlp", 512),

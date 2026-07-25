@@ -18,6 +18,7 @@ class Config:
     seed: int = 42                       # random seed for train/test split
     n_train: int = 1000                  # subset size for non-modular datasets (MNIST)
     n_test: int = 5000                   # held-out size for non-modular datasets
+    group_n: int = 5                     # n for the symmetric-group S_n dataset (S5 = 120 elems)
 
     # --- Architecture ---
     model: str = "groknet"               # architecture family (see fedgrok.core.registry)

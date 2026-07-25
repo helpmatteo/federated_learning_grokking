@@ -96,7 +96,7 @@ def train(cfg: Config):
             # weight_norms / gradient_norms / IPR are GrokNet-specific (read W1/W2).
             # On other architectures they don't apply — log NaN rather than crash.
             nan = float("nan")
-            if fourier_applicable(model):
+            if fourier_applicable(model, cfg):
                 wn = weight_norms(model)
                 gn = gradient_norms(model)
                 ipr_val = compute_ipr(model)["ipr"]
@@ -133,7 +133,7 @@ def train(cfg: Config):
             os.makedirs(ckpt_dir, exist_ok=True)
             ckpt_path = os.path.join(ckpt_dir, f"ckpt_epoch{epoch}.pt")
             torch.save(model.state_dict(), ckpt_path)
-            if fourier_applicable(model):
+            if fourier_applicable(model, cfg):
                 spec = fourier_spectrum(model)
                 spec_path = os.path.join(ckpt_dir, f"spectrum_epoch{epoch}.pt")
                 torch.save(spec["spectrum"], spec_path)

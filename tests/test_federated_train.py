@@ -545,3 +545,43 @@ class TestLossPropagation:
         assert y_target.dim() == 1            # class indices, not (n, p) one-hot
         assert y_target.dtype == torch.int64
         assert torch.equal(y_target, y_local)
+
+
+# ── Fit-config round-trips every field ────────────────────────────────────────
+
+
+class TestFitConfigCompleteness:
+    """The generated fit-config must carry EVERY FedConfig field to the client.
+
+    This is the permanent guard against the class of bug where a new config
+    field (loss, model, batch_size, dataset, ...) is added but not threaded
+    through the hand-maintained serialisation, silently mis-training clients.
+    """
+
+    def test_every_field_round_trips(self):
+        import dataclasses
+        from fedgrok.training.federated import _cfg_to_fit_config, _fit_config_to_cfg
+
+        # A config with a non-default value in every field we can safely set.
+        cfg = FedConfig(
+            p=53, task="subtraction", dataset="s5", group_n=5, alpha=0.3, seed=7,
+            model="transformer", hidden_width=64, n_layers=2, init_scale=3.0,
+            activation="relu", loss="ce", optimizer="adamw", lr=1e-3,
+            weight_decay=1.0, momentum=0.0, batch_size=64,
+            num_clients=8, num_rounds=10, local_epochs=3, fraction_train=0.5,
+            partition="dirichlet", dirichlet_alpha=0.1, proximal_mu=0.01,
+            strategy="fedprox", server_lr=0.1, tau=1e-2, eval_every=5,
+        )
+        rebuilt = _fit_config_to_cfg(_cfg_to_fit_config(cfg, server_round=1))
+
+        for field in dataclasses.fields(FedConfig):
+            assert getattr(rebuilt, field.name) == getattr(cfg, field.name), (
+                f"field {field.name!r} did not survive the fit-config round-trip"
+            )
+
+    def test_server_round_is_added_but_not_a_config_field(self):
+        from fedgrok.training.federated import _cfg_to_fit_config, _fit_config_to_cfg
+        fc = _cfg_to_fit_config(FedConfig(p=17), server_round=42)
+        assert fc["server_round"] == 42
+        # and reconstruction ignores it (not a FedConfig field)
+        assert _fit_config_to_cfg(fc).p == 17

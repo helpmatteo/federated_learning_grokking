@@ -10,6 +10,7 @@ Each client reconstructs its data partition from the config + partition-id
 on the full test set after each round.
 """
 
+import dataclasses
 import json
 import os
 import time
@@ -29,6 +30,7 @@ from flwr.simulation import run_simulation
 from fedgrok.core.fed_config import FedConfig
 from fedgrok.data.partition import make_federated_datasets
 from fedgrok.core.registry import build_model, build_loss
+from fedgrok.data.registry import dataset_dims
 from fedgrok.core.utils import make_optimizer, get_device
 from fedgrok.metrics.fourier import (
     weight_norms, compute_ipr, compute_accuracy, fourier_spectrum, fourier_applicable,
@@ -83,7 +85,7 @@ def _get_warm_client(cfg, partition_id, device):
         x_local = x_local.to(device)
         y_local = y_local.to(device)
         # Loss target: one-hot for MSE, class indices for CE (build_loss owns it).
-        y_local_target = build_loss(cfg).prepare_target(y_local, cfg.p)
+        y_local_target = build_loss(cfg).prepare_target(y_local, dataset_dims(cfg)[1])
 
         model = _make_model(cfg).to(device)
         entry = (model, x_local, y_local_target, y_local)
@@ -120,63 +122,27 @@ def _make_model(cfg):
     return build_model(cfg)
 
 
+# Field names of FedConfig, computed once. Every field is a Flower Scalar
+# (int/float/str/bool), so the whole config round-trips through the fit-config
+# dict without hand-listing fields — which is what previously dropped loss,
+# model and batch_size and silently mis-trained clients.
+_FEDCONFIG_FIELDS = {f.name for f in dataclasses.fields(FedConfig)}
+
+
 def _cfg_to_fit_config(cfg: FedConfig, server_round: int):
-    """Serialize config into a dict that Flower can send to clients."""
-    return {
-        "server_round": server_round,
-        "p": cfg.p,
-        "task": cfg.task,
-        "alpha": cfg.alpha,
-        "seed": cfg.seed,
-        "num_clients": cfg.num_clients,
-        "partition": cfg.partition,
-        "dirichlet_alpha": cfg.dirichlet_alpha,
-        "local_epochs": cfg.local_epochs,
-        "lr": cfg.lr,
-        "optimizer": cfg.optimizer,
-        "weight_decay": cfg.weight_decay,
-        "momentum": cfg.momentum,
-        "batch_size": cfg.batch_size,
-        "model": cfg.model,
-        "hidden_width": cfg.hidden_width,
-        "activation": cfg.activation,
-        "loss": cfg.loss,
-        "proximal_mu": cfg.proximal_mu,
-        "strategy": cfg.strategy,
-        "server_lr": cfg.server_lr,
-        "tau": cfg.tau,
-        "track_client_drift": cfg.track_client_drift,
-        "checkpoint_client_weights": cfg.checkpoint_client_weights,
-        "checkpoint_every": cfg.checkpoint_every,
-    }
+    """Serialize the whole config into a dict Flower can send to clients.
+
+    Generated from the dataclass fields so no field can be silently dropped.
+    """
+    config = dataclasses.asdict(cfg)
+    config["server_round"] = server_round
+    return config
 
 
 def _fit_config_to_cfg(config: dict) -> FedConfig:
     """Reconstruct FedConfig from the dict sent by the server."""
-    return FedConfig(
-        p=int(config["p"]),
-        task=config["task"],
-        alpha=float(config["alpha"]),
-        seed=int(config["seed"]),
-        num_clients=int(config["num_clients"]),
-        partition=config["partition"],
-        dirichlet_alpha=float(config["dirichlet_alpha"]),
-        local_epochs=int(config["local_epochs"]),
-        lr=float(config["lr"]),
-        optimizer=config["optimizer"],
-        weight_decay=float(config["weight_decay"]),
-        momentum=float(config["momentum"]),
-        batch_size=int(config.get("batch_size", 0)),
-        model=config.get("model", "groknet"),
-        hidden_width=int(config["hidden_width"]),
-        activation=config["activation"],
-        loss=config.get("loss", "mse"),
-        proximal_mu=float(config.get("proximal_mu", 0.0)),
-        strategy=config.get("strategy", "fedavg"),
-        server_lr=float(config.get("server_lr", 1.0)),
-        tau=float(config.get("tau", 1e-3)),
-        track_client_drift=bool(config.get("track_client_drift", True)),
-    )
+    kwargs = {k: v for k, v in config.items() if k in _FEDCONFIG_FIELDS}
+    return FedConfig(**kwargs)
 
 
 def compute_drift(w_before: list, w_after: list) -> float:
@@ -259,7 +225,7 @@ class GrokClient(NumPyClient):
         drift = compute_drift(parameters, updated_weights)
         weight_norm = float(sum(np.sum(w**2) for w in updated_weights) ** 0.5)
         # IPR is GrokNet-specific; NaN on other architectures.
-        local_ipr = compute_ipr(model)["ipr"] if fourier_applicable(model) else float("nan")
+        local_ipr = compute_ipr(model)["ipr"] if fourier_applicable(model, cfg) else float("nan")
 
         # Extract W1 for per-client Fourier analysis (only at checkpoint rounds)
         # Serialize as bytes since Flower metrics only support Scalar types
@@ -268,7 +234,7 @@ class GrokClient(NumPyClient):
         is_checkpoint_round = (ckpt_every > 0 and server_round > 0
                                and server_round % ckpt_every == 0)
         if (config.get("checkpoint_client_weights", False) and is_checkpoint_round
-                and fourier_applicable(model)):
+                and fourier_applicable(model, cfg)):
             client_w1_bytes = model.W1.data[:, :cfg.p].cpu().numpy().tobytes()
         else:
             client_w1_bytes = None
@@ -342,8 +308,9 @@ def fed_train(cfg: FedConfig):
     y_train_full = y_train_full.to(device)
 
     loss_spec = build_loss(cfg)
-    y_test_target = loss_spec.prepare_target(y_test, cfg.p)
-    y_train_full_target = loss_spec.prepare_target(y_train_full, cfg.p)
+    n_classes = dataset_dims(cfg)[1]
+    y_test_target = loss_spec.prepare_target(y_test, n_classes)
+    y_train_full_target = loss_spec.prepare_target(y_train_full, n_classes)
 
     # Print partition sizes
     print(f"Clients: {cfg.num_clients}, partition: {cfg.partition}, "
@@ -455,7 +422,7 @@ def fed_train(cfg: FedConfig):
             train_acc = compute_accuracy(out_train, y_train_full)
 
         # weight_norms / IPR are GrokNet-specific; NaN on other architectures.
-        if fourier_applicable(model):
+        if fourier_applicable(model, cfg):
             wn = weight_norms(model)
             wn1, wn2 = wn["weight_norm_layer1"], wn["weight_norm_layer2"]
             ipr_val = compute_ipr(model)["ipr"]
@@ -489,7 +456,7 @@ def fed_train(cfg: FedConfig):
             torch.save(model.state_dict(), ckpt_path)
 
             # Global Fourier spectrum (GrokNet-specific; skipped otherwise)
-            if fourier_applicable(model):
+            if fourier_applicable(model, cfg):
                 spec = fourier_spectrum(model)
                 spec_path = os.path.join(ckpt_dir, f"spectrum_round{server_round}.pt")
                 torch.save(spec["spectrum"], spec_path)

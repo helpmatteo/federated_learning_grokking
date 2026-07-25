@@ -57,3 +57,16 @@ def _build_mnist(cfg):
     # Imported lazily so torchvision is only required when MNIST is actually used.
     from fedgrok.data.mnist import load_mnist_subset
     return load_mnist_subset(cfg.n_train, cfg.n_test, cfg.seed)
+
+
+def _sn_dims(cfg):
+    from fedgrok.data.groups import group_order
+    g = group_order(getattr(cfg, "group_n", 5))
+    return (2 * g, g)
+
+
+@register_dataset("s5", dims_fn=_sn_dims)
+def _build_s5(cfg):
+    """Symmetric-group S_n composition (n = cfg.group_n; S5 by default)."""
+    from fedgrok.data.groups import make_sn_dataset
+    return make_sn_dataset(cfg)
