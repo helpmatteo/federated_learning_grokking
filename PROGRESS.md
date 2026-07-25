@@ -3,7 +3,7 @@
 Working branch for the multi-setup rewrite. Full plan lives at
 `~/.claude/plans/plan-all-that-needs-nested-seal.md`.
 
-**Paused:** 2026-07-21, Phase 2 complete + Phase 3a (transformer groks). Next: Phase 3b MNIST-1k.
+**Paused:** 2026-07-21, Phase 3a/3b/3c-core done — transformer, MNIST infra, and S5 all in; transformer+S5 grok. Next: S5 coset partition + non-abelian metric, then Phase 4.
 
 ## State
 
@@ -11,7 +11,8 @@ Working branch for the multi-setup rewrite. Full plan lives at
 |---|---|
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
-| Tests | **309/309 pass** (`venv/bin/python -m pytest tests/ -q`, ~8.5 min incl. FL integration) |
+| Tests | **333/333 pass** (`venv/bin/python -m pytest tests/ -q`, ~8.5 min incl. FL integration) |
+| Groks verified | quad-MLP+modular (original); transformer+modular (T_grok 6200); transformer+S5 (T_grok ~20000, non-abelian) |
 | Env | `venv/` (py3.10, torch 2.10, flwr 1.27); package installed via `pip install -e . --no-deps` |
 | Hardware | 8× L4; **use 6, ~2 runs/GPU = 12 slots**. Indices 1 and 3 had other work on them — the launcher auto-skips busy GPUs. |
 
@@ -90,23 +91,37 @@ Resume is automatic (skips runs whose result JSON exists). One run = one subproc
   lr 1e-3 wd 1.0, CE → train≥99% at epoch 200, test≥95% at epoch 6200 (6000-epoch gap),
   ends 100/100. Fourier metrics NaN throughout (capability protocol working).
 
-## Next up — Phase 3b/3c
+## Done — Phase 3b/3c-core (`a36072d`, `365a7c1`)
 
-1. **Transformer progress measures** — it currently logs NaN for all mechanistic metrics.
-   Add CE-appropriate / embedding-space Fourier measures (Nanda's restricted/excluded loss
-   operate on the embedding + unembed; the DFT is over the token embedding W_E, not W1). Wire
-   via the capability protocol so they run for `model="transformer"` only.
-2. **Omnigrok MNIST-1k** (in progress) — needs the **dataset registry**: add `build_dataset(cfg)`
-   dispatching on a `dataset` selector (modular now; add `mnist`). MNIST-1k = 1k subset, MSE on
-   one-hot, 3-layer ReLU MLP width 200, **init scaled by α>1** (the load-bearing trick — without
-   large init MNIST just learns, no delay). New model `@register_model("mlp")` with init-scale
-   field. Uses `batch_size>0`. Torch/torchvision MNIST download or a cached copy.
-3. **S₅ composition** — 120-perm group, 14.4k pairs, one-hot 120+120→120 (GrokNet/transformer
-   run unchanged at these dims). Coset partition in `data/partition.py` (5 cosets of S₄ ↔ 5
-   clients). Coset-attribution metric (Stander-style) in a new `metrics/nonabelian.py` — the Z_p
-   DFT is meaningless here. This is where the deferred `metrics/fourier.py` split should happen.
+- **MNIST-1k** (`a36072d`) — dataset registry (`build_dataset`/`dataset_dims`, dispatching on
+  `cfg.dataset`; modular byte-identical), `data/mnist.py` (torchvision 0.25, pinned to torch
+  2.10), `models/mlp.py` (generic ReLU MLP + `init_scale` large-init knob). Pipeline reaches
+  ~91% test. **Grok not yet located** — Omnigrok's clean grok is in a narrow weight-decay band
+  (weak decay → gap stalls; wd=1.0 → 91% with no delay). Sweep queued: `manifests/t0_mnist_wd_band.jsonl`.
+- **S5 core** (`365a7c1`) — `data/groups.py` (S_n composition, "s5" dataset). Model builders
+  size from `dataset_dims` (2|G|/|G|), not `cfg.p`. `fourier_applicable(model, cfg)` now
+  dataset-aware (False on S5). **Robust fit-config**: whole dataclass round-trips via
+  `dataclasses.asdict` — no more hand-listed fields dropping loss/model/batch_size; guarded by
+  a completeness test. **S5 groks** on the transformer (train≥99% @200, test ~1% for ~14k
+  epochs then → 92%).
 
-Each new arch = one registry entry (+ dataset entry if non-modular, + its own progress measure).
+## Next up — finish Phase 3c, then Phase 4
+
+1. **S5 coset partition** — new mode in `data/partition.py`: partition training samples by the
+   left coset of their first operand w.r.t. a subgroup (S4 → 5 cosets ↔ 5 clients; A5 → 2). This
+   is the "heterogeneity over algebraic structure" split (each client's local task lacks the
+   structure the global task needs). Needs the group elements from `data/groups.py` to compute
+   cosets; the partition currently only sees operand indices, so thread the group through.
+2. **Coset-attribution metric** — new `metrics/nonabelian.py`, Stander-style logit attribution
+   to coset-membership functions (the DFT is meaningless on S5). Wire via the capability protocol
+   to run for `dataset="s5"`. **This is where the deferred `metrics/fourier.py` split lands**
+   (fourier / spectral / basic / nonabelian).
+3. **Transformer + S5 progress measures** — both currently log NaN mechanistically. Embedding-
+   space measures (Nanda restricted/excluded loss over W_E for the transformer; coset attribution
+   for S5). Lower priority than the FL results.
+4. **Phase 4** — FL algorithms (SCAFFOLD, FedDyn, FedAvgM, FedExP) in `_build_strategy` +
+   server-LR calibration. SCAFFOLD/FedDyn need per-client state across rounds (module-dict keyed
+   by partition_id, like `_client_cache`).
 
 **Equivalence harness** (reuse for every training-loop change): `traj.py` in the scratchpad
 runs one config and dumps history JSON; diff against `ref_run1.json` (archived c7c997f
@@ -154,6 +169,6 @@ if a big-K sweep is slow, lower `--per-gpu` or make `num_cpus` fractional in
 ```bash
 cd /home/jse44/modules/ToDL/federated_learning_grokking
 git checkout v2-multisetup
-venv/bin/python -m pytest tests/ -q          # expect 309 passed
+venv/bin/python -m pytest tests/ -q          # expect 333 passed
 ```
-Then continue at **Phase 3b** (MNIST-1k + dataset registry) above.
+Then continue at **S5 coset partition** (finish Phase 3c) above.
