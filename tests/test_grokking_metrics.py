@@ -52,12 +52,28 @@ class TestSummarizeSeeds:
         assert summary["n_grokked"] == 3
         assert summary["n_seeds"] == 3
 
-    def test_partial_grokking(self):
+    def test_partial_grokking_is_censored_not_inf(self):
+        """A non-grokked seed is right-censored, not infinite. The headline is
+        fraction grokked + KM median; t_grok_mean is now the mean over the
+        seeds that DID grok (not inf-if-any-fail — that was the bug)."""
         results = [
-            {"t_grok": 500, "t_50": 300, "final_test_acc": 99.0},
-            {"t_grok": float("inf"), "t_50": float("inf"), "final_test_acc": 1.0},
+            {"t_grok": 500, "t_50": 300, "final_test_acc": 99.0, "steps_run": 50000},
+            {"t_grok": float("inf"), "t_50": float("inf"), "final_test_acc": 1.0,
+             "steps_run": 50000},
         ]
         summary = summarize_seeds(results)
-        assert summary["t_grok_mean"] == float("inf")
         assert summary["n_grokked"] == 1
         assert summary["n_seeds"] == 2
+        assert summary["fraction_grokked"] == 0.5
+        # descriptive mean over grokked seeds is finite, not inf
+        assert summary["t_grok_mean"] == pytest.approx(500.0)
+        # KM median is well-defined (not inf) with one grok of two
+        assert summary["t_grok_km_median"] == pytest.approx(500.0)
+
+    def test_full_summary_reports_survival_keys(self):
+        results = [{"t_grok": t, "t_50": t - 100, "final_test_acc": 99.0}
+                   for t in (500, 600, 550)]
+        summary = summarize_seeds(results)
+        assert summary["fraction_grokked"] == 1.0
+        assert "t_grok_km_median" in summary
+        assert "t_grok_ci_low" in summary and "t_grok_ci_high" in summary

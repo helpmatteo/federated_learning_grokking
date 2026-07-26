@@ -67,29 +67,52 @@ def extract_grokking_results(history: dict) -> dict:
     }
 
 
-def summarize_seeds(results: List[dict]) -> dict:
-    """Aggregate grokking metrics across seeds (mean +/- std).
+def summarize_seeds(results: List[dict], budget: float = None) -> dict:
+    """Aggregate grokking metrics across seeds with right-censoring.
 
-    If not ALL seeds grokked, t_grok_mean = inf (conservative).
-    t_50 is averaged only over seeds that achieved T_50.
-    Uses ddof=1 (sample std) for std computation.
+    Seeds that did not grok within budget are right-censored (we know only
+    T_grok > budget), not infinite. The headline is therefore the fraction
+    grokked plus the Kaplan-Meier median (with a bootstrap CI), not a mean that
+    goes to inf the moment one seed fails.
+
+    Censoring time per non-grokked seed: its `steps_run` if present, else the
+    passed `budget`, else the largest finite grok time observed (a conservative
+    fallback). `t_grok_mean/std` are kept as descriptive stats over the seeds
+    that DID grok — no longer inf-if-any-fail.
+
+    See fedgrok.analysis.survival for the estimators.
     """
+    from fedgrok.analysis.survival import summarize_survival
+
     n = len(results)
     t_groks = [r["t_grok"] for r in results]
     t_50s = [r["t_50"] for r in results]
     final_accs = [r["final_test_acc"] for r in results]
 
-    n_grokked = sum(1 for t in t_groks if t < float("inf"))
     finite_groks = [t for t in t_groks if t < float("inf")]
     finite_50s = [t for t in t_50s if t < float("inf")]
+    fallback = max(finite_groks) if finite_groks else float("inf")
+
+    durations, events = [], []
+    for r in results:
+        t = r["t_grok"]
+        if t < float("inf"):
+            durations.append(t)
+            events.append(1)
+        else:
+            durations.append(r.get("steps_run") or budget or fallback)
+            events.append(0)
+
+    surv = summarize_survival(durations, events)
 
     return {
-        "n_seeds": n,
-        "n_grokked": n_grokked,
-        "t_grok_mean": float(np.mean(finite_groks)) if n_grokked == n else float("inf"),
-        "t_grok_std": float(np.std(finite_groks, ddof=1)) if n_grokked == n and n > 1 else 0.0 if n_grokked == n else float("inf"),
+        **surv,                                          # n_seeds, n_grokked,
+                                                         # fraction_grokked, KM median + CI
+        # descriptive stats over the grokked seeds only (not inf-if-any-fail)
+        "t_grok_mean": float(np.mean(finite_groks)) if finite_groks else float("inf"),
+        "t_grok_std": float(np.std(finite_groks, ddof=1)) if len(finite_groks) > 1 else 0.0,
         "t_50_mean": float(np.mean(finite_50s)) if finite_50s else float("inf"),
-        "t_50_std": float(np.std(finite_50s, ddof=1)) if len(finite_50s) > 1 else 0.0 if finite_50s else float("inf"),
+        "t_50_std": float(np.std(finite_50s, ddof=1)) if len(finite_50s) > 1 else 0.0,
         "final_acc_mean": float(np.mean(final_accs)),
         "final_acc_std": float(np.std(final_accs, ddof=1)) if n > 1 else 0.0,
     }
