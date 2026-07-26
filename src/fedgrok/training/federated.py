@@ -185,8 +185,19 @@ class GrokClient(NumPyClient):
         if proximal_mu > 0:
             global_params = [w.detach().clone() for w in model.parameters()]
 
+        # SCAFFOLD: fetch this round's server control variate c and this client's
+        # c_i; the g - c_i + c correction is applied after each backward.
+        scaffold_cv_bytes = config.get("scaffold_cv")
+        scaffold = scaffold_cv_bytes is not None
+        if scaffold:
+            from fedgrok.training import scaffold as _sc
+            shapes = [w.shape for w in parameters]
+            server_cv = _sc._cv_from_bytes(scaffold_cv_bytes, shapes)
+            cv_key = (_dataset_cache_key(cfg), self.partition_id)
+            client_cv = _sc.get_client_cv(cv_key, parameters)
+
         def _step(xb, yb):
-            """One gradient step on a batch, with the FedProx term if enabled."""
+            """One gradient step on a batch (+ FedProx / SCAFFOLD corrections)."""
             loss = loss_fn(model(xb), yb)
             if proximal_mu > 0:
                 prox = sum(
@@ -196,11 +207,14 @@ class GrokClient(NumPyClient):
                 loss = loss + (proximal_mu / 2.0) * prox
             optimizer.zero_grad()
             loss.backward()
+            if scaffold:
+                _sc.apply_correction(model, server_cv, client_cv)
             optimizer.step()
 
         model.train()
         bs = cfg.batch_size
         n_local = x_local.shape[0]
+        n_steps = 0
         for _ in range(cfg.local_epochs):
             if bs and bs > 0:
                 # A local epoch is a shuffled minibatch pass. randperm is only
@@ -209,9 +223,11 @@ class GrokClient(NumPyClient):
                 for i in range(0, n_local, bs):
                     idx = perm[i:i + bs]
                     _step(x_local[idx], y_local_target[idx])
+                    n_steps += 1
             else:
                 # Full-batch local GD: one local epoch = one step.
                 _step(x_local, y_local_target)
+                n_steps += 1
 
         # Return updated weights (moved to CPU) and metrics
         model.eval()
@@ -245,6 +261,17 @@ class GrokClient(NumPyClient):
             metrics_dict["w1_shape_0"] = model.W1.data.shape[0]
             metrics_dict["w1_shape_1"] = cfg.p
 
+        # SCAFFOLD: update this client's control variate and report Δc_i so the
+        # server can update c. lr is the local learning rate; n_steps the number
+        # of local gradient steps actually taken (full-batch or minibatch).
+        if scaffold:
+            new_cv, delta_cv = _sc.client_cv_update(
+                parameters, updated_weights, server_cv, client_cv,
+                lr=cfg.lr, n_steps=n_steps,
+            )
+            _sc.set_client_cv(cv_key, new_cv)
+            metrics_dict["scaffold_dc"] = _sc._cv_bytes(delta_cv)
+
         return (
             updated_weights,
             len(y_local),
@@ -258,8 +285,18 @@ class GrokClient(NumPyClient):
 
 # ── Strategy builder ─────────────────────────────────────────────────────────
 
-def _build_strategy(cfg, init_params, evaluate_fn, fit_metrics_aggregation_fn=None):
+def _build_strategy(cfg, init_params, evaluate_fn, fit_metrics_aggregation_fn=None,
+                    scaffold_ctx=None):
     """Build Flower strategy based on config.strategy field."""
+    # SCAFFOLD ships the server control variate c to clients in the fit config;
+    # the on_fit_config closure reads the live c from scaffold_ctx each round.
+    def _on_fit_config(rnd):
+        config = _cfg_to_fit_config(cfg, rnd)
+        if scaffold_ctx is not None:
+            from fedgrok.training import scaffold as _sc
+            config["scaffold_cv"] = _sc._cv_bytes(scaffold_ctx["server_cv_box"][0])
+        return config
+
     common_kwargs = dict(
         fraction_fit=cfg.fraction_train,
         fraction_evaluate=0.0,
@@ -267,10 +304,19 @@ def _build_strategy(cfg, init_params, evaluate_fn, fit_metrics_aggregation_fn=No
         min_available_clients=cfg.num_clients,
         initial_parameters=init_params,
         evaluate_fn=evaluate_fn,
-        on_fit_config_fn=lambda rnd: _cfg_to_fit_config(cfg, rnd),
+        on_fit_config_fn=_on_fit_config,
     )
     if fit_metrics_aggregation_fn is not None:
         common_kwargs["fit_metrics_aggregation_fn"] = fit_metrics_aggregation_fn
+
+    if cfg.strategy == "scaffold":
+        from fedgrok.training.scaffold import ScaffoldStrategy
+        return ScaffoldStrategy(
+            **common_kwargs,
+            server_cv_box=scaffold_ctx["server_cv_box"],
+            num_total_clients=cfg.num_clients,
+            param_shapes=scaffold_ctx["param_shapes"],
+        )
 
     if cfg.strategy == "fedadam":
         # Server-side adaptive optimiser (Adam) on the pseudo-gradient.
@@ -487,11 +533,23 @@ def fed_train(cfg: FedConfig):
     # Initial model for FedAvg. Its RNG draw MUST come before the eval model's,
     # since these initial weights are the run's starting point.
     init_model = _make_model(cfg)
-    init_params = ndarrays_to_parameters(_model_to_ndarrays(init_model))
+    init_ndarrays = _model_to_ndarrays(init_model)
+    init_params = ndarrays_to_parameters(init_ndarrays)
 
     # Now safe to build the reusable eval model (params get overwritten each
     # round, so its own initial values are irrelevant — only the RNG order was).
     _eval_model_box[0] = _make_model(cfg).to(device)
+
+    # SCAFFOLD: server control variate c (starts at 0) + per-client c_i store,
+    # shared with the strategy and the on_fit_config closure via scaffold_ctx.
+    scaffold_ctx = None
+    if cfg.strategy == "scaffold":
+        from fedgrok.training import scaffold as _sc
+        _sc.reset_client_cv()
+        scaffold_ctx = {
+            "server_cv_box": [_sc.zeros_like_params(init_ndarrays)],
+            "param_shapes": [a.shape for a in init_ndarrays],
+        }
 
     # ── Build Flower apps ────────────────────────────────────────────────
 
@@ -504,7 +562,8 @@ def fed_train(cfg: FedConfig):
 
     def server_fn(context: Context):
         strategy = _build_strategy(fed_cfg, init_params, evaluate_fn,
-                                   fit_metrics_aggregation_fn=_aggregate_fit_metrics)
+                                   fit_metrics_aggregation_fn=_aggregate_fit_metrics,
+                                   scaffold_ctx=scaffold_ctx)
         return ServerAppComponents(
             strategy=strategy,
             config=ServerConfig(num_rounds=fed_cfg.num_rounds),
