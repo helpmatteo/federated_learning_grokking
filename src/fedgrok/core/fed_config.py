@@ -20,10 +20,12 @@ class FedConfig(Config):
     proximal_mu: float = 0.0              # FedProx proximal term strength
                                           # (0.0 = FedAvg, >0 = FedProx)
     strategy: Literal[
-        "fedavg", "fedprox", "fedadam"
+        "fedavg", "fedprox", "fedadam", "fedavgm", "fedyogi", "scaffold", "feddyn"
     ] = "fedavg"
-    server_lr: float = 1.0               # server-side learning rate (FedAdam)
-    tau: float = 1e-3                     # FedAdam adaptivity parameter
+    server_lr: float = 1.0               # server-side learning rate (FedAdam/Yogi/AvgM)
+    server_momentum: float = 0.0         # server momentum (FedAvgM); DiLoCo's outer Nesterov
+    tau: float = 1e-3                     # adaptivity parameter (FedAdam/FedYogi)
+    feddyn_alpha: float = 0.01           # FedDyn dynamic-regularisation strength
     track_client_drift: bool = True       # enable per-round drift logging
     eval_every: int = 1                   # run global evaluation every N rounds
                                           # (1 = every round; higher = fewer curve

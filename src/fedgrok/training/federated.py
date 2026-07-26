@@ -23,8 +23,7 @@ import flwr as fl
 from flwr.client import NumPyClient, ClientApp
 from flwr.common import Context, ndarrays_to_parameters
 from flwr.server import ServerApp, ServerConfig, ServerAppComponents
-from flwr.server.strategy import FedAvg
-from flwr.server.strategy import FedAdam
+from flwr.server.strategy import FedAvg, FedAdam, FedAvgM, FedYogi
 from flwr.simulation import run_simulation
 
 from fedgrok.core.fed_config import FedConfig
@@ -274,15 +273,23 @@ def _build_strategy(cfg, init_params, evaluate_fn, fit_metrics_aggregation_fn=No
         common_kwargs["fit_metrics_aggregation_fn"] = fit_metrics_aggregation_fn
 
     if cfg.strategy == "fedadam":
-        return FedAdam(
+        # Server-side adaptive optimiser (Adam) on the pseudo-gradient.
+        return FedAdam(**common_kwargs, eta=cfg.server_lr, tau=cfg.tau)
+    if cfg.strategy == "fedyogi":
+        # Server-side Yogi — Adam's sign-based sibling; often stronger than Adam.
+        return FedYogi(**common_kwargs, eta=cfg.server_lr, tau=cfg.tau)
+    if cfg.strategy == "fedavgm":
+        # Server-side heavy-ball momentum on the pseudo-gradient. This IS
+        # DiLoCo's outer optimiser, so it bridges to the local-SGD-at-scale line.
+        return FedAvgM(
             **common_kwargs,
-            eta=cfg.server_lr,
-            tau=cfg.tau,
+            server_learning_rate=cfg.server_lr,
+            server_momentum=cfg.server_momentum,
         )
-    else:
-        # Both "fedavg" and "fedprox" use FedAvg strategy;
-        # FedProx proximal term is applied client-side in GrokClient.fit()
-        return FedAvg(**common_kwargs)
+    # "fedavg" and "fedprox" both use the plain FedAvg strategy; FedProx's
+    # proximal term is applied client-side in GrokClient.fit(). SCAFFOLD and
+    # FedDyn are custom (per-client state) and handled in their own commit.
+    return FedAvg(**common_kwargs)
 
 
 # ── Flower Server + Evaluation ───────────────────────────────────────────────
