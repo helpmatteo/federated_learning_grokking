@@ -87,10 +87,43 @@ def t0_mnist_wd_band():
     )
 
 
+def t3_server_lr_calibration():
+    """Fair server-LR tuning for the server-optimiser strategies.
+
+    The original exp5 tuned FedAdam's server LR but not the others', so its
+    ~10x "speedup" was partly a tuning artifact. This sweeps server_lr for every
+    tunable strategy on one representative heterogeneous cell, 3 seeds, so each
+    method can be fixed at its own best LR before the main comparison. FedAvg /
+    FedProx / SCAFFOLD have no server-LR knob (implicitly 1.0) and are the fixed
+    references. FedAvgM additionally needs its momentum, swept lightly here.
+    """
+    cell = {"mode": "federated", "task": "addition", "p": 97, "alpha": 0.3,
+            "hidden_width": 256, "num_clients": 10, "local_epochs": 5,
+            "partition": "dirichlet", "dirichlet_alpha": 0.1, "num_rounds": 10000,
+            "lr": 50.0, "eval_every": 20}
+    specs = []
+    for strat in ("fedadam", "fedyogi"):
+        specs += expand_grid(
+            {**cell, "strategy": strat},
+            {"server_lr": [0.01, 0.1, 0.3, 1.0], "seed": SEEDS3},
+            tags={"tier": "T3", "group": "server_lr_cal", "experiment": "cal",
+                  "algorithm": strat},
+        )
+    specs += expand_grid(
+        {**cell, "strategy": "fedavgm"},
+        {"server_lr": [0.1, 0.3, 1.0], "server_momentum": [0.0, 0.9],
+         "seed": SEEDS3},
+        tags={"tier": "T3", "group": "server_lr_cal", "experiment": "cal",
+              "algorithm": "fedavgm"},
+    )
+    return specs
+
+
 BUILDERS = {
     "t0_wd_grid": t0_wd_grid,
     "t0_poly_pilot": t0_poly_pilot,
     "t0_mnist_wd_band": t0_mnist_wd_band,
+    "t3_server_lr_calibration": t3_server_lr_calibration,
 }
 
 
