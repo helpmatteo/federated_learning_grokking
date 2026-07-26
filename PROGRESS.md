@@ -3,7 +3,7 @@
 Working branch for the multi-setup rewrite. Full plan lives at
 `~/.claude/plans/plan-all-that-needs-nested-seal.md`.
 
-**Paused:** 2026-07-21, Phases 0–3 all done (correctness, harness/launcher, registries, three grokking setups + S5 coset FL). Next: Phase 4 FL algorithms.
+**Paused:** 2026-07-21, Phases 0–4 all done (correctness, harness/launcher, registries, three grokking setups + S5 coset FL, FL algorithm baselines incl. SCAFFOLD). Next: Phase 5 statistics.
 
 ## State
 
@@ -11,8 +11,10 @@ Working branch for the multi-setup rewrite. Full plan lives at
 |---|---|
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
-| Tests | **342/342 pass** (`venv/bin/python -m pytest tests/ -q`, ~8.5 min incl. FL integration) |
+| Tests | **354/354 pass** (`venv/bin/python -m pytest tests/ -q`, ~10 min incl. FL integration) |
 | Groks verified | quad-MLP+modular (original); transformer+modular (T_grok 6200); transformer+S5 (T_grok ~20000, non-abelian) |
+| FL algorithms | FedAvg, FedProx, FedAvgM, FedYogi, FedAdam (native) + SCAFFOLD (adapted); server-LR calibration manifest queued |
+| deps | torch 2.10 + torchvision 0.25 (pinned pair); flwr 1.27 |
 | Env | `venv/` (py3.10, torch 2.10, flwr 1.27); package installed via `pip install -e . --no-deps` |
 | Hardware | 8× L4; **use 6, ~2 runs/GPU = 12 slots**. Indices 1 and 3 had other work on them — the launcher auto-skips busy GPUs. |
 
@@ -114,22 +116,37 @@ Resume is automatic (skips runs whose result JSON exists). One run = one subproc
 - **Coset-attribution metric** — `metrics/nonabelian.py::coset_attribution` (coset_accuracy +
   coset_purity), the S5 analogue of IPR. Verified at chance (0.197≈1/5) untrained, 1.0 perfect.
 
-## Next up — Phase 4: FL algorithms (the standalone reject-risk from the review)
+## Done — Phase 4: FL algorithms (`7293081`, `3fa8f27`, `72f01e5`)
 
-Add to `_build_strategy` in `fedgrok/training/federated.py` (currently only branches FedAdam
-vs FedAvg):
-1. **FedAvgM** — server-side heavy-ball momentum on the pseudo-gradient. No per-client state;
-   simplest, and it IS DiLoCo's outer optimizer, so high framing value. Do first.
-2. **FedExP** — adaptive server step >1. No per-client state.
-3. **SCAFFOLD** and **FedDyn** — need **per-client state persisted across rounds** (control
-   variates c_i / dynamic-reg terms). Hold in a module-dict keyed by partition_id, exactly like
-   `_client_cache`. SCAFFOLD is the load-bearing run: if grokking still fails under it, drift is
-   not the mechanism. Budget the most time here.
-4. **Server-LR calibration** — sweep server LR for FedAvgM/FedAdam/FedExP **and FedAvg** so the
-   comparison is fair (fixes the original exp5 defect where only FedAdam was tuned).
+- **Native strategies** (`7293081`) — FedAvgM (server momentum = DiLoCo outer) + FedYogi added
+  to `_build_strategy`; FedAdam/FedProx already there. FedAvgM(lr=1,mom=0) verified == FedAvg.
+- **SCAFFOLD** (`3fa8f27`) — the load-bearing drift correction. flwr_baselines is gone and Flower
+  has no standalone scaffold baseline, so this adapts Flower's niid_bench Option-II via the metrics
+  channel: `fedgrok/training/scaffold.py` (per-client c_i module-dict, `apply_correction`,
+  `client_cv_update`, `ScaffoldStrategy`), plus a scaffold branch in `GrokClient.fit` and the
+  server_cv wiring in `fed_train`. **Round-1 reduces to FedAvg exactly** (c=c_i=0 → zero correction,
+  verified diff=0); FedAvg itself stays bit-identical (9.5e-7). **FedDyn dropped** (no Flower
+  reference; FedProx + SCAFFOLD span the two drift-correction mechanisms).
+- **Server-LR calibration** (`72f01e5`) — `manifests/t3_server_lr_calibration.jsonl` (42 runs)
+  sweeps server_lr for FedAdam/FedYogi/FedAvgM so each is tuned fairly (fixes the exp5 defect).
 
-Flower carries per-client state through the metrics channel (bytes) or a module-dict; the codebase
-already serialises per-client W1 as bytes, so reuse that pattern or the `_client_cache` approach.
+## Next up — Phase 5: statistics + figures
+
+1. **Censored survival statistics** — replace `summarize_seeds` (`analysis/grokking_metrics.py:89`,
+   sets `t_grok_mean=inf` if ANY seed fails) with fraction-grokked + Kaplan–Meier median with
+   right-censoring. Runs that don't grok in budget are censored, not `inf`. Add bootstrapped CIs.
+2. **Provenance-tracked figures** — regenerate the paper figures from `results/data/runs_v2.csv`
+   (collected via `scripts/collect_runs.py`), each recording its manifest ID + CSV rows. This is
+   also where the plotting scripts under `scripts/plotting/` get their shared helpers extracted.
+
+## Deferred follow-ups (lower priority)
+
+- **Wire mechanistic metrics into per-epoch history** — `coset_attribution` (S5) and embedding-
+  space measures (transformer W_E restricted/excluded loss). Fold the `metrics/fourier.py` split
+  (fourier/spectral/basic/nonabelian) in here.
+- **MNIST grok band** — run `manifests/t0_mnist_wd_band.jsonl`.
+- **Native robust aggregators** — FedMedian / FedTrimmedAvg / Krum / Bulyan are all in stock Flower
+  (zero custom code); add to `_build_strategy` if the robustness axis is wanted.
 
 ## Deferred follow-ups (lower priority than Phase 4)
 
@@ -185,6 +202,6 @@ if a big-K sweep is slow, lower `--per-gpu` or make `num_cpus` fractional in
 ```bash
 cd /home/jse44/modules/ToDL/federated_learning_grokking
 git checkout v2-multisetup
-venv/bin/python -m pytest tests/ -q          # expect 342 passed
+venv/bin/python -m pytest tests/ -q          # expect 354 passed
 ```
-Then continue at **Phase 4** (FL algorithms) above.
+Then continue at **Phase 5** (survival statistics + figures) above.
