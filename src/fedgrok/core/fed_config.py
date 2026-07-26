@@ -13,7 +13,7 @@ class FedConfig(Config):
     local_epochs: int = 5                 # local SGD steps per client per round
     fraction_train: float = 1.0           # fraction of clients selected per round
     partition: Literal[
-        "iid", "operand", "target", "dirichlet"
+        "iid", "operand", "target", "dirichlet", "coset"
     ] = "iid"
     dirichlet_alpha: float = 0.5          # concentration param for Dirichlet partition
                                           # (α→∞: IID, α→0: one class per client)

@@ -63,6 +63,56 @@ def build_sn_grid(n: int):
     return x, labels, ia, ib
 
 
+def _parity(perm) -> int:
+    """Sign of a permutation as 0 (even) / 1 (odd), via inversion count."""
+    inversions = 0
+    n = len(perm)
+    for i in range(n):
+        for j in range(i + 1, n):
+            if perm[i] > perm[j]:
+                inversions += 1
+    return inversions % 2
+
+
+def _in_subgroup(perm, subgroup: str, n: int) -> bool:
+    """Membership test for the supported subgroups of S_n."""
+    if subgroup == "a_n":
+        return _parity(perm) == 0                 # even permutations (A_n)
+    if subgroup == "s_nm1":
+        return perm[n - 1] == n - 1               # stabiliser of the last point (S_{n-1})
+    raise ValueError(f"Unknown subgroup {subgroup!r} (expected 'a_n' or 's_nm1')")
+
+
+def coset_labels(n: int, subgroup: str):
+    """Left-coset index of every element of S_n w.r.t. `subgroup`.
+
+    Returns an int array of length |S_n|: elements in the same left coset gH
+    share a label, labels are 0..(index-1). For S5, "s_nm1" gives 5 cosets (of
+    S4, 24 each) and "a_n" gives 2 cosets (of A5, 60 each). This is the algebraic
+    structure the coset FL partition splits clients along.
+    """
+    elements = _elements(n)
+    index = {perm: i for i, perm in enumerate(elements)}
+    H = [i for i, perm in enumerate(elements) if _in_subgroup(perm, subgroup, n)]
+
+    # Left coset gH keyed by its smallest member index; distinct keys -> labels.
+    label_of = {}
+    key_to_label = {}
+    for gi, g in enumerate(elements):
+        members = [index[_compose(g, elements[h])] for h in H]
+        key = min(members)
+        if key not in key_to_label:
+            key_to_label[key] = len(key_to_label)
+        label_of[gi] = key_to_label[key]
+
+    return np.array([label_of[i] for i in range(len(elements))], dtype=np.int64)
+
+
+def num_cosets(n: int, subgroup: str) -> int:
+    """|S_n| / |H| — the number of cosets (= client count for the coset split)."""
+    return int(coset_labels(n, subgroup).max()) + 1
+
+
 def make_sn_dataset(cfg):
     """Build S_n composition and split into train/test (mirrors make_dataset).
 

@@ -19,6 +19,7 @@ class Config:
     n_train: int = 1000                  # subset size for non-modular datasets (MNIST)
     n_test: int = 5000                   # held-out size for non-modular datasets
     group_n: int = 5                     # n for the symmetric-group S_n dataset (S5 = 120 elems)
+    coset_subgroup: str = "s_nm1"        # subgroup for the coset FL partition: s_nm1 (S4) or a_n (A5)
 
     # --- Architecture ---
     model: str = "groknet"               # architecture family (see fedgrok.core.registry)

@@ -12,17 +12,46 @@ from fedgrok.data.modular import make_dataset
 
 _DATASET_BUILDERS = {}
 _DATASET_DIMS = {}
+_DATASET_GRIDS = {}
 
 
-def register_dataset(name, dims_fn):
-    """Register a `build(cfg) -> (xtr, ytr, xte, yte)` and a `dims(cfg) -> (in, out)`."""
+def register_dataset(name, dims_fn, grid_fn=None):
+    """Register a dataset.
+
+    build_fn(cfg) -> (xtr, ytr, xte, yte); dims_fn(cfg) -> (in, out).
+    grid_fn(cfg) -> (x_np, labels_np, operand_a_np) is optional: only the
+    "grid" datasets (modular, S_n composition) expose the full unsplit grid and
+    the first-operand index per sample, which the operand/coset FL partitions
+    need. Datasets without it (MNIST) support only iid/dirichlet partitions.
+    """
     def _decorator(build_fn):
         if name in _DATASET_BUILDERS:
             raise ValueError(f"Dataset {name!r} already registered")
         _DATASET_BUILDERS[name] = build_fn
         _DATASET_DIMS[name] = dims_fn
+        if grid_fn is not None:
+            _DATASET_GRIDS[name] = grid_fn
         return build_fn
     return _decorator
+
+
+def has_grid(cfg) -> bool:
+    return getattr(cfg, "dataset", "modular") in _DATASET_GRIDS
+
+
+def dataset_grid(cfg):
+    """(x, labels, operand_a) for a grid dataset — the full unsplit grid.
+
+    operand_a is the first-operand index per sample (group-element index for
+    S_n, n-index for modular), used by the operand and coset FL partitions.
+    """
+    name = getattr(cfg, "dataset", "modular")
+    if name not in _DATASET_GRIDS:
+        raise ValueError(
+            f"Dataset {name!r} has no grid; operand/coset partitions need one. "
+            f"Grid datasets: {sorted(_DATASET_GRIDS)}"
+        )
+    return _DATASET_GRIDS[name](cfg)
 
 
 def build_dataset(cfg):
@@ -46,7 +75,14 @@ def registered_datasets():
 
 # ── Built-in datasets ────────────────────────────────────────────────────────
 
-@register_dataset("modular", dims_fn=lambda cfg: (2 * cfg.p, cfg.p))
+def _modular_grid(cfg):
+    from fedgrok.data.modular import build_encoded_grid
+    x, labels, nn, _mm = build_encoded_grid(cfg.task, cfg.p)
+    return x, labels, nn                       # operand_a = first operand n
+
+
+@register_dataset("modular", dims_fn=lambda cfg: (2 * cfg.p, cfg.p),
+                  grid_fn=_modular_grid)
 def _build_modular(cfg):
     # Byte-identical to the previous direct make_dataset call.
     return make_dataset(cfg)
@@ -65,7 +101,13 @@ def _sn_dims(cfg):
     return (2 * g, g)
 
 
-@register_dataset("s5", dims_fn=_sn_dims)
+def _sn_grid(cfg):
+    from fedgrok.data.groups import build_sn_grid
+    x, labels, ia, _ib = build_sn_grid(getattr(cfg, "group_n", 5))
+    return x, labels, ia                       # operand_a = first operand's element index
+
+
+@register_dataset("s5", dims_fn=_sn_dims, grid_fn=_sn_grid)
 def _build_s5(cfg):
     """Symmetric-group S_n composition (n = cfg.group_n; S5 by default)."""
     from fedgrok.data.groups import make_sn_dataset

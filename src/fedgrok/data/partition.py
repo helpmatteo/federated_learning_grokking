@@ -1,11 +1,15 @@
 """Data partitioning strategies for federated grokking.
 
-Four partition modes, all operating on the training set:
+Partition modes, all operating on the training set:
   - iid:       random equal-sized shards
-  - operand:   partition by first operand n (fragments Fourier input structure)
-  - target:    partition by output class f(n,m) mod p (fragments output space)
+  - operand:   partition by first operand (fragments the input structure)
+  - target:    partition by output class (fragments the output space)
   - dirichlet: Dirichlet(dirichlet_alpha) over target classes — continuously
                interpolates between IID (alpha→∞) and one class per client (alpha→0)
+  - coset:     (S_n only) partition by the left coset of the first operand w.r.t.
+               a subgroup — "heterogeneity over algebraic structure", where each
+               client's local elements are algebraically closed in a meaningful
+               way and lack the structure the global task needs.
 
 The test set stays global for server-side evaluation.
 """
@@ -13,7 +17,8 @@ The test set stays global for server-side evaluation.
 import numpy as np
 import torch
 from fedgrok.core.fed_config import FedConfig
-from fedgrok.data.modular import build_encoded_grid, split_indices
+from fedgrok.data.modular import split_indices
+from fedgrok.data.registry import dataset_grid, has_grid
 
 
 def make_federated_datasets(cfg: FedConfig):
@@ -23,14 +28,22 @@ def make_federated_datasets(cfg: FedConfig):
         client_data: list of (x_train_i, y_train_i) tensors, one per client
         x_test, y_test: global test set tensors
 
-    The grid and the split come from fedgrok.data.modular, so a federated run
-    and a centralized run with the same config train on identical data.  These
-    were previously reimplemented here, giving two sources of truth.
+    The grid and the split come from the dataset registry, so a federated run
+    and a centralized run with the same config train on identical data. Grid
+    datasets (modular, S_n) support every partition; non-grid datasets (MNIST)
+    have no operand structure, so operand/coset partitions do not apply.
     """
     p = cfg.p
     K = cfg.num_clients
 
-    x, labels, nn, mm = build_encoded_grid(cfg.task, p)
+    if not has_grid(cfg):
+        raise NotImplementedError(
+            f"Federated training for dataset {cfg.dataset!r} is not wired yet "
+            f"(no grid; only centralized). Grid datasets support FL."
+        )
+
+    # operand_a: first-operand index per sample (n for modular, element index for S_n).
+    x, labels, operand_a = dataset_grid(cfg)
 
     # The partitioners below draw from this same RandomState *after* the split
     # has advanced it. Passing rng (not seed) preserves that exact consumption
@@ -40,7 +53,7 @@ def make_federated_datasets(cfg: FedConfig):
 
     x_train_all = x[train_idx]
     y_train_all = labels[train_idx]
-    nn_train = nn[train_idx]  # first operand for each training sample
+    operand_train = operand_a[train_idx]  # first operand for each training sample
 
     # Global test set
     x_test = torch.from_numpy(x[test_idx])
@@ -50,11 +63,13 @@ def make_federated_datasets(cfg: FedConfig):
     if cfg.partition == "iid":
         client_indices = _partition_iid(len(train_idx), K, rng)
     elif cfg.partition == "operand":
-        client_indices = _partition_by_operand(nn_train, p, K)
+        client_indices = _partition_by_operand(operand_train, p, K)
     elif cfg.partition == "target":
         client_indices = _partition_by_target(y_train_all, p, K)
     elif cfg.partition == "dirichlet":
         client_indices = _partition_dirichlet(y_train_all, p, K, cfg.dirichlet_alpha, rng)
+    elif cfg.partition == "coset":
+        client_indices = _partition_by_coset(operand_train, cfg, K)
     else:
         raise ValueError(f"Unknown partition: {cfg.partition}")
 
@@ -104,6 +119,31 @@ def _partition_by_operand(nn_train, p, num_clients):
         mask = (nn_train % num_clients) == i
         client_indices.append(np.where(mask)[0])
     return client_indices
+
+
+def _partition_by_coset(operand_train, cfg, num_clients):
+    """Partition by the left coset of the first operand (S_n only).
+
+    Client c gets every training sample whose first operand lies in coset c of
+    the chosen subgroup. This is the algebraic-structure heterogeneity split:
+    for S5 with the S4 subgroup there are 5 cosets of 24 elements, so 5 clients
+    each see a coset's worth of first operands — a genuinely different local
+    slice than a random or label-based split.
+
+    Requires num_clients == number of cosets; otherwise some clients would be
+    empty or some cosets dropped.
+    """
+    from fedgrok.data.groups import coset_labels
+
+    labels = coset_labels(getattr(cfg, "group_n", 5), cfg.coset_subgroup)
+    n_cosets = int(labels.max()) + 1
+    if num_clients != n_cosets:
+        raise ValueError(
+            f"coset partition of subgroup {cfg.coset_subgroup!r} has {n_cosets} "
+            f"cosets, but num_clients={num_clients}. Set num_clients={n_cosets}."
+        )
+    sample_coset = labels[operand_train]
+    return [np.where(sample_coset == c)[0] for c in range(num_clients)]
 
 
 def _partition_by_target(y_train, p, num_clients):

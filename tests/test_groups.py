@@ -78,3 +78,99 @@ class TestS5ModelSizing:
         assert fourier_applicable(model, cfg) is False
         # ... but the same model on a modular cfg is fine
         assert fourier_applicable(model, Config(dataset="modular", p=120)) is True
+
+
+# ── Coset structure, partition, and attribution metric ────────────────────────
+
+
+class TestCosets:
+    def test_s4_subgroup_gives_5_cosets_of_24(self):
+        from fedgrok.data.groups import coset_labels
+        import numpy as np
+        labels = coset_labels(5, "s_nm1")
+        assert labels.max() + 1 == 5
+        assert sorted(np.bincount(labels)) == [24, 24, 24, 24, 24]
+
+    def test_a5_subgroup_gives_2_cosets_of_60(self):
+        from fedgrok.data.groups import coset_labels
+        import numpy as np
+        labels = coset_labels(5, "a_n")
+        assert labels.max() + 1 == 2
+        assert sorted(np.bincount(labels)) == [60, 60]
+
+    def test_identity_lies_in_the_subgroup_coset(self):
+        """Element 0 (the identity) is in H, so its coset is the subgroup itself."""
+        from fedgrok.data.groups import coset_labels, _elements, _in_subgroup
+        labels = coset_labels(5, "s_nm1")
+        # every element whose coset label equals the identity's must be in H
+        id_label = labels[0]
+        elements = _elements(5)
+        for i, lab in enumerate(labels):
+            if lab == id_label:
+                assert _in_subgroup(elements[i], "s_nm1", 5)
+
+    def test_unknown_subgroup_raises(self):
+        from fedgrok.data.groups import coset_labels
+        with pytest.raises(ValueError, match="Unknown subgroup"):
+            coset_labels(5, "z5")
+
+
+class TestCosetPartition:
+    def test_five_balanced_non_empty_clients(self):
+        from fedgrok.core.fed_config import FedConfig
+        from fedgrok.data.partition import make_federated_datasets
+        cfg = FedConfig(dataset="s5", group_n=5, alpha=0.5, seed=42,
+                        num_clients=5, partition="coset", coset_subgroup="s_nm1")
+        client_data, _, y_train, _, _ = make_federated_datasets(cfg)
+        sizes = [len(y) for _, y in client_data]
+        assert len(sizes) == 5
+        assert all(s > 0 for s in sizes)
+        assert sum(sizes) == len(y_train)
+
+    def test_wrong_client_count_rejected(self):
+        from fedgrok.core.fed_config import FedConfig
+        from fedgrok.data.partition import make_federated_datasets
+        cfg = FedConfig(dataset="s5", group_n=5, num_clients=3, partition="coset")
+        with pytest.raises(ValueError, match="cosets"):
+            make_federated_datasets(cfg)
+
+    def test_mnist_federated_not_wired(self):
+        """Non-grid datasets have no operand structure -> clear FL error."""
+        from fedgrok.core.fed_config import FedConfig
+        from fedgrok.data.partition import make_federated_datasets
+        with pytest.raises(NotImplementedError, match="not wired"):
+            make_federated_datasets(FedConfig(dataset="mnist", num_clients=5))
+
+
+class TestCosetAttribution:
+    def test_chance_level_untrained(self):
+        import torch
+        from fedgrok.core.config import Config
+        from fedgrok.core.registry import build_model
+        from fedgrok.data.registry import build_dataset
+        from fedgrok.metrics.nonabelian import coset_attribution, nonabelian_applicable
+        cfg = Config(dataset="s5", group_n=5, model="groknet", hidden_width=32,
+                     coset_subgroup="s_nm1")
+        assert nonabelian_applicable(cfg) and not nonabelian_applicable(Config())
+        x, y, _, _ = build_dataset(cfg)
+        r = coset_attribution(build_model(cfg), x[:2000], y[:2000], cfg)
+        # 5 equal cosets -> coset accuracy near 1/5 at init
+        assert 0.1 < r["coset_accuracy"] < 0.3
+
+    def test_perfect_predictions_saturate(self):
+        import torch
+        import torch.nn.functional as F
+        from fedgrok.core.config import Config
+        from fedgrok.data.registry import build_dataset
+        from fedgrok.metrics.nonabelian import coset_attribution
+        cfg = Config(dataset="s5", group_n=5, coset_subgroup="s_nm1")
+        x, y, _, _ = build_dataset(cfg)
+
+        class Perfect(torch.nn.Module):
+            P = 120
+            def forward(self, xb):
+                return F.one_hot(y[:xb.shape[0]], 120).float()
+
+        r = coset_attribution(Perfect(), x[:1000], y[:1000], cfg)
+        assert r["coset_accuracy"] == pytest.approx(1.0)
+        assert r["coset_purity"] == pytest.approx(1.0)
