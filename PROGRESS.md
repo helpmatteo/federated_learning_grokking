@@ -3,7 +3,7 @@
 Working branch for the multi-setup rewrite. Full plan lives at
 `~/.claude/plans/plan-all-that-needs-nested-seal.md`.
 
-**Paused:** 2026-07-21, Phase 3a/3b/3c-core done — transformer, MNIST infra, and S5 all in; transformer+S5 grok. Next: S5 coset partition + non-abelian metric, then Phase 4.
+**Paused:** 2026-07-21, Phases 0–3 all done (correctness, harness/launcher, registries, three grokking setups + S5 coset FL). Next: Phase 4 FL algorithms.
 
 ## State
 
@@ -11,7 +11,7 @@ Working branch for the multi-setup rewrite. Full plan lives at
 |---|---|
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
-| Tests | **333/333 pass** (`venv/bin/python -m pytest tests/ -q`, ~8.5 min incl. FL integration) |
+| Tests | **342/342 pass** (`venv/bin/python -m pytest tests/ -q`, ~8.5 min incl. FL integration) |
 | Groks verified | quad-MLP+modular (original); transformer+modular (T_grok 6200); transformer+S5 (T_grok ~20000, non-abelian) |
 | Env | `venv/` (py3.10, torch 2.10, flwr 1.27); package installed via `pip install -e . --no-deps` |
 | Hardware | 8× L4; **use 6, ~2 runs/GPU = 12 slots**. Indices 1 and 3 had other work on them — the launcher auto-skips busy GPUs. |
@@ -105,23 +105,39 @@ Resume is automatic (skips runs whose result JSON exists). One run = one subproc
   a completeness test. **S5 groks** on the transformer (train≥99% @200, test ~1% for ~14k
   epochs then → 92%).
 
-## Next up — finish Phase 3c, then Phase 4
+## Done — Phase 3c complete (`6dd4a4b`)
 
-1. **S5 coset partition** — new mode in `data/partition.py`: partition training samples by the
-   left coset of their first operand w.r.t. a subgroup (S4 → 5 cosets ↔ 5 clients; A5 → 2). This
-   is the "heterogeneity over algebraic structure" split (each client's local task lacks the
-   structure the global task needs). Needs the group elements from `data/groups.py` to compute
-   cosets; the partition currently only sees operand indices, so thread the group through.
-2. **Coset-attribution metric** — new `metrics/nonabelian.py`, Stander-style logit attribution
-   to coset-membership functions (the DFT is meaningless on S5). Wire via the capability protocol
-   to run for `dataset="s5"`. **This is where the deferred `metrics/fourier.py` split lands**
-   (fourier / spectral / basic / nonabelian).
-3. **Transformer + S5 progress measures** — both currently log NaN mechanistically. Embedding-
-   space measures (Nanda restricted/excluded loss over W_E for the transformer; coset attribution
-   for S5). Lower priority than the FL results.
-4. **Phase 4** — FL algorithms (SCAFFOLD, FedDyn, FedAvgM, FedExP) in `_build_strategy` +
-   server-LR calibration. SCAFFOLD/FedDyn need per-client state across rounds (module-dict keyed
-   by partition_id, like `_client_cache`).
+- **S5 coset partition** — `data/groups.py::coset_labels` (S4 → 5 cosets, A5 → 2);
+  `data/partition.py` "coset" mode shards clients by the coset of each sample's first operand.
+  `make_federated_datasets` is now dataset-aware (`dataset_grid`/`has_grid`), so S_n FL works;
+  MNIST FL raises a clear "not wired" error. Modular FL bit-identical (4.8e-7).
+- **Coset-attribution metric** — `metrics/nonabelian.py::coset_attribution` (coset_accuracy +
+  coset_purity), the S5 analogue of IPR. Verified at chance (0.197≈1/5) untrained, 1.0 perfect.
+
+## Next up — Phase 4: FL algorithms (the standalone reject-risk from the review)
+
+Add to `_build_strategy` in `fedgrok/training/federated.py` (currently only branches FedAdam
+vs FedAvg):
+1. **FedAvgM** — server-side heavy-ball momentum on the pseudo-gradient. No per-client state;
+   simplest, and it IS DiLoCo's outer optimizer, so high framing value. Do first.
+2. **FedExP** — adaptive server step >1. No per-client state.
+3. **SCAFFOLD** and **FedDyn** — need **per-client state persisted across rounds** (control
+   variates c_i / dynamic-reg terms). Hold in a module-dict keyed by partition_id, exactly like
+   `_client_cache`. SCAFFOLD is the load-bearing run: if grokking still fails under it, drift is
+   not the mechanism. Budget the most time here.
+4. **Server-LR calibration** — sweep server LR for FedAvgM/FedAdam/FedExP **and FedAvg** so the
+   comparison is fair (fixes the original exp5 defect where only FedAdam was tuned).
+
+Flower carries per-client state through the metrics channel (bytes) or a module-dict; the codebase
+already serialises per-client W1 as bytes, so reuse that pattern or the `_client_cache` approach.
+
+## Deferred follow-ups (lower priority than Phase 4)
+
+- **Wire mechanistic metrics into the training-loop history** — `coset_attribution` for S5 and
+  embedding-space measures (Nanda restricted/excluded loss over the transformer's W_E) for the
+  transformer. Both currently compute fine as standalone functions but aren't logged per-epoch.
+  Fold the deferred `metrics/fourier.py` split (fourier/spectral/basic/nonabelian) in here.
+- **Locate the MNIST grok band** — run `manifests/t0_mnist_wd_band.jsonl` (queued).
 
 **Equivalence harness** (reuse for every training-loop change): `traj.py` in the scratchpad
 runs one config and dumps history JSON; diff against `ref_run1.json` (archived c7c997f
@@ -169,6 +185,6 @@ if a big-K sweep is slow, lower `--per-gpu` or make `num_cpus` fractional in
 ```bash
 cd /home/jse44/modules/ToDL/federated_learning_grokking
 git checkout v2-multisetup
-venv/bin/python -m pytest tests/ -q          # expect 333 passed
+venv/bin/python -m pytest tests/ -q          # expect 342 passed
 ```
-Then continue at **S5 coset partition** (finish Phase 3c) above.
+Then continue at **Phase 4** (FL algorithms) above.
