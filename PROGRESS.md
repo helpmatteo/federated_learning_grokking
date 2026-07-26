@@ -3,7 +3,7 @@
 Working branch for the multi-setup rewrite. Full plan lives at
 `~/.claude/plans/plan-all-that-needs-nested-seal.md`.
 
-**Paused:** 2026-07-21, Phases 0–4 all done (correctness, harness/launcher, registries, three grokking setups + S5 coset FL, FL algorithm baselines incl. SCAFFOLD). Next: Phase 5 statistics.
+**Paused:** 2026-07-21. **v2 code complete across all plan phases (0–5).** What remains is EXECUTION (run the manifests) + the figures that depend on it, plus deferred follow-ups.
 
 ## State
 
@@ -11,9 +11,10 @@ Working branch for the multi-setup rewrite. Full plan lives at
 |---|---|
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
-| Tests | **354/354 pass** (`venv/bin/python -m pytest tests/ -q`, ~10 min incl. FL integration) |
+| Tests | **364/364 pass** (`venv/bin/python -m pytest tests/ -q`, ~10.5 min incl. FL integration) |
 | Groks verified | quad-MLP+modular (original); transformer+modular (T_grok 6200); transformer+S5 (T_grok ~20000, non-abelian) |
 | FL algorithms | FedAvg, FedProx, FedAvgM, FedYogi, FedAdam (native) + SCAFFOLD (adapted); server-LR calibration manifest queued |
+| Statistics | censored survival (KM median + fraction-grokked + bootstrap CI); `scripts/summarize_runs.py` |
 | deps | torch 2.10 + torchvision 0.25 (pinned pair); flwr 1.27 |
 | Env | `venv/` (py3.10, torch 2.10, flwr 1.27); package installed via `pip install -e . --no-deps` |
 | Hardware | 8× L4; **use 6, ~2 runs/GPU = 12 slots**. Indices 1 and 3 had other work on them — the launcher auto-skips busy GPUs. |
@@ -130,23 +131,41 @@ Resume is automatic (skips runs whose result JSON exists). One run = one subproc
 - **Server-LR calibration** (`72f01e5`) — `manifests/t3_server_lr_calibration.jsonl` (42 runs)
   sweeps server_lr for FedAdam/FedYogi/FedAvgM so each is tuned fairly (fixes the exp5 defect).
 
-## Next up — Phase 5: statistics + figures
+## Done — Phase 5 part 1: censored survival statistics (`3563d17`)
 
-1. **Censored survival statistics** — replace `summarize_seeds` (`analysis/grokking_metrics.py:89`,
-   sets `t_grok_mean=inf` if ANY seed fails) with fraction-grokked + Kaplan–Meier median with
-   right-censoring. Runs that don't grok in budget are censored, not `inf`. Add bootstrapped CIs.
-2. **Provenance-tracked figures** — regenerate the paper figures from `results/data/runs_v2.csv`
-   (collected via `scripts/collect_runs.py`), each recording its manifest ID + CSV rows. This is
-   also where the plotting scripts under `scripts/plotting/` get their shared helpers extracted.
+`fedgrok/analysis/survival.py` (kaplan_meier, km_median, fraction_grokked, bootstrap_ci);
+`summarize_seeds` now reports fraction-grokked + KM median + CI instead of inf-if-any-fail;
+`scripts/summarize_runs.py` builds the survival table from any runs CSV. Demonstrated on the
+real exp5 H2 data (FedProx-0.001: old `inf` → fraction 0.33 surfaced; FedAdam-0.1 KM median
+2875 [2450,3100]).
 
-## Deferred follow-ups (lower priority)
+## The v2 code is complete — remaining work is EXECUTION
+
+1. **Run the sweeps.** The machinery is built and idempotent; nothing else is code-blocked.
+   ```bash
+   venv/bin/python scripts/build_manifests.py                       # (re)generate manifests/
+   venv/bin/python scripts/launch_sweep.py manifests/t0_wd_grid.jsonl --per-gpu 2
+   # ... other manifests (t0_poly_pilot, t0_mnist_wd_band, t3_server_lr_calibration) ...
+   venv/bin/python scripts/collect_runs.py                          # -> results/data/runs_v2.csv
+   venv/bin/python scripts/summarize_runs.py results/data/runs_v2.csv
+   ```
+   The full plan's Tier-1/2 grids (the E-sweep, K-sweep, participation, structured partitions,
+   the multi-setup replication) still need their manifests written in `scripts/build_manifests.py`
+   — only the Tier-0 + calibration manifests exist so far. Writing those grids is the next concrete
+   coding task, then launching them.
+
+2. **Phase 5 part 2 — provenance-tracked figures.** BLOCKED on (1): there is nothing meaningful to
+   plot until the sweeps produce `runs_v2.csv`. When ready, regenerate figures from that CSV, each
+   stamped with its manifest ID + row IDs; extract shared helpers from `scripts/plotting/` then.
+
+## Deferred follow-ups (lower priority, not blocking)
 
 - **Wire mechanistic metrics into per-epoch history** — `coset_attribution` (S5) and embedding-
   space measures (transformer W_E restricted/excluded loss). Fold the `metrics/fourier.py` split
   (fourier/spectral/basic/nonabelian) in here.
-- **MNIST grok band** — run `manifests/t0_mnist_wd_band.jsonl`.
 - **Native robust aggregators** — FedMedian / FedTrimmedAvg / Krum / Bulyan are all in stock Flower
   (zero custom code); add to `_build_strategy` if the robustness axis is wanted.
+- **The deferred DP / compression / Byzantine follow-up paper** — out of scope for v2 (see plan).
 
 ## Deferred follow-ups (lower priority than Phase 4)
 
@@ -202,6 +221,6 @@ if a big-K sweep is slow, lower `--per-gpu` or make `num_cpus` fractional in
 ```bash
 cd /home/jse44/modules/ToDL/federated_learning_grokking
 git checkout v2-multisetup
-venv/bin/python -m pytest tests/ -q          # expect 354 passed
+venv/bin/python -m pytest tests/ -q          # expect 364 passed
 ```
-Then continue at **Phase 5** (survival statistics + figures) above.
+Then continue at **writing the Tier-1/2 sweep manifests** + running them, above.
