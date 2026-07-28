@@ -360,6 +360,24 @@ def t3_algorithm_comparison():
     return specs
 
 
+def t2_k_breakdown():
+    """The t1_probe follow-up: push K up, where breakdown is most likely.
+
+    The probe found DELAY but no breakdown at K=10. Fragmenting the data across
+    more clients is the axis most likely to actually break the circuit, so this
+    is the K-sweep alone at E=5 (the cheap, known-good E), 3 partitions x 5
+    seeds. It is a strict subset of t2_phase_diagram's k_fixed_total group, so
+    ids match and running it means those cells are already done when the full
+    T2 sweep is launched.
+    """
+    return expand_grid(
+        {**SETUP_A, "local_epochs": 5},
+        {"num_clients": [5, 10, 20, 50],
+         "partition": ["iid", "dirichlet", "operand"], "seed": SEEDS5},
+        tags={"tier": "T2", "group": "k_fixed_total", "experiment": "phase"},
+    )
+
+
 BUILDERS = {
     "t0_wd_grid": t0_wd_grid,
     "t0_poly_pilot": t0_poly_pilot,
@@ -367,6 +385,7 @@ BUILDERS = {
     "t1_probe": t1_probe,
     "t1_replication": t1_replication,
     "t2_phase_diagram": t2_phase_diagram,
+    "t2_k_breakdown": t2_k_breakdown,
     "t3_server_lr_calibration": t3_server_lr_calibration,
     "t3_algorithm_comparison": t3_algorithm_comparison,
 }
