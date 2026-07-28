@@ -165,6 +165,36 @@ generalisation at all), so it can't inform the WD question here — rerun nearer
 **T0 polynomial pilot** (3 seeds): `x2_plus_y2` groks 3/3 (KM median 7000 [6900, 7000]) →
 kept in the operation set; `x2_y2_xy` censored 0/3 → correctly excluded. The gate worked.
 
+**T1 probe — the breakdown gate** (18/24; the E=250 cells were cancelled for cost). K=10,
+α=0.3, p=97, 3 seeds, fixed 10k rounds:
+
+| E | partition | steps | grokked | KM median T_grok |
+|---|---|---|---|---|
+| 1 | iid / operand | 10,000 | 0/3 | censored — **by budget, not federation** |
+| 5 | iid | 50,000 | 3/3 | 12900 [12900, 13700] |
+| 5 | operand | 50,000 | 3/3 | 12700 [12600, 13400] |
+| 50 | iid | 500,000 | 3/3 | 23000 [22000, 25000] |
+| 50 | operand | 500,000 | 3/3 | 17000 [16000, 18000] |
+
+- **The E=1 identity reproduced in the wild.** iid and operand gave *identical* test
+  accuracies seed-for-seed (33.5 / 34.1 / 17.2) — at E=1 FedAvg is exactly centralized GD
+  regardless of partition, which is the `test_fedavg_identity.py` property in a real sweep.
+- **Local steps delay grokking**: 12,900 → 23,000 from E=5 to E=50 (iid), ~1.8× on the
+  compute-matched `total_steps` axis. Real, not a budget artifact.
+- **The E=1 cells are NOT breakdown evidence** — 100% train with ~30% test looks like the
+  gate condition, but they only got 10,000 steps against the ~12,900 needed.
+- Curiosity for T2 to confirm at 5 seeds: operand groks *faster* than iid at E=50
+  (17,000 vs 23,000).
+
+**GATE VERDICT: not passed — the story at K=10 is delay, not breakdown.** No cell fails to
+grok for a federated reason. Per the plan this means don't treat "FL breaks grokking" as
+established; the breakdown search moves to higher K / stronger heterogeneity
+(`manifests/t2_k_breakdown.jsonl`, launched).
+
+**Decision taken from this evidence:** rounds stay fixed, but the E axis is trimmed to
+`E_SPINE = {5, 10, 25, 50}` — E∈{1,2} are under-budgeted at 10k rounds and E∈{100,250} are
+too expensive (2.5M steps/run). See the E RANGE note in `scripts/build_manifests.py`.
+
 ## Remaining work is EXECUTION
 
 **All manifests are written** (829 unique runs across 8 files in `manifests/`). The loop is:
@@ -182,10 +212,11 @@ the launcher's stdout — use `-u`, or just watch `ls results/data/runs/*.json |
 |---|---|---|
 | `t0_wd_grid` | 45 | **done** — see results above |
 | `t0_poly_pilot` | 6 | **done** — see results above |
-| `t1_probe` | 24 | launched 2026-07-28; the breakdown gate for T2/T3 |
+| `t1_probe` | 24 | **done** (18 ok, 6 E=250 cancelled) — gate verdict above; do not relaunch |
+| `t2_k_breakdown` | 60 | **launched 2026-07-28** — the probe's follow-up at higher K |
 | `t0_mnist_wd_band` | 15 | pending |
-| `t1_replication` | 252 | pending |
-| `t2_phase_diagram` | 475 | pending — **gated on `t1_probe`** |
+| `t1_replication` | 150 | pending |
+| `t2_phase_diagram` | 415 | pending (`t2_k_breakdown` is a subset — those cells will skip) |
 | `t3_server_lr_calibration` | 42 | pending (run before `t3_algorithm_comparison`) |
 | `t3_algorithm_comparison` | 90 | pending — fix each method at its calibrated server LR first |
 
