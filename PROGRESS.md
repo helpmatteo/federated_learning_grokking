@@ -216,6 +216,42 @@ dirichlet} × 5 seeds, α=0.3, E=5, p=97, 10k rounds. KM median [95% CI]:
 - **Cost datum:** K=50 runs take ~75 min vs ~22 min at low K — Flower's per-round cost scales
   with actor count. Budget ~2–2.5 h/run at K=97; this reprices the 20-seed boundary cells.
 
+## MNIST-1k groks — all four setups now confirmed (2026-07-28)
+
+`t0_mnist_wd_band` complete, 15/15, ~90 s per run (whole sweep under 4 min). Centralized,
+3-layer MLP width 200, init_scale 9, MSE + AdamW, 1k subset, minibatch 200, 20k epochs.
+
+| lr·λ | memorise (train≥99%) | generalise (test≥90%) | DELAY | grokked | peak test |
+|---|---|---|---|---|---|
+| 1e-5 | 600 | never | — | 0/3 | 89.2% |
+| 3e-5 | 600 | 11100 | ~10500 | 3/3 | 91.1% |
+| **1e-4** | 500 | **3800** | **3300** | 3/3 | **92.7%** |
+| 3e-4 | 500 | 3000 | 2500 | 3/3 | 92.4% |
+| 1e-3 | 800 | 3200 | 2400 | 3/3 | 91.5% |
+
+- **Clean delayed generalisation.** Train hits 100% by epoch ~600 in every cell; test lags by
+  2,400–10,500 epochs. Best band is **lr·λ = 1e-4** (highest test accuracy, clean 3,300-epoch
+  delay) — use it for any follow-up. MNIST stays centralized-only by design
+  (`make_federated_datasets` rejects it: no operand structure to partition on).
+- **Weight decay ACCELERATES grokking here**, monotonically, and at lr·λ=1e-5 generalisation
+  never completes. That is the published Omnigrok result reproduced.
+- **This corrects an earlier explanation.** The modular sweep found WD neutral-to-slowing, and
+  that was attributed to the "AdamW/CE transformer regime". Wrong: MNIST here is **MSE + AdamW**
+  and accelerates, modular is **MSE + GD** and does not. The discriminator is the **optimizer**
+  (AdamW's decoupled decay vs GD's coupled decay), **not the loss**.
+
+**Threshold fix that this exposed** (`analysis/grokking_metrics.py`, `data/registry.py`):
+`compute_t_grok` had a hardcoded 95% bar. MNIST-1k peaks near 93%, so all 15 runs were
+recorded `t_grok=inf` — "never grokked" — while the histories plainly showed grokking. A
+measurement artifact reported as a scientific null. The bar is now a **dataset property**
+(`registry.grok_threshold(cfg)`): modular 95.0 (unchanged — every prior modular result is
+unaffected, verified bit-identical), **s5 85.0**, **mnist 90.0**, with the reasoning documented
+at the registration site. S5 was heading for the same silent failure: its ceiling is ~92%, so
+all 72 planned S5 replication runs would have recorded `inf` at a 95% bar.
+
+`grok_threshold` is now recorded in every result row and is a survival cell key — a `t_grok`
+is only interpretable next to the bar it was measured at.
+
 ## Readiness blockers before the full campaign (identified 2026-07-28)
 
 Five fixes must land before committing to a full campaign. Two of them silently corrupt
@@ -257,7 +293,7 @@ the launcher's stdout — use `-u`, or just watch `ls results/data/runs/*.json |
 | `t0_poly_pilot` | 6 | **done** — see results above |
 | `t1_probe` | 24 | **done** (18 ok, 6 E=250 cancelled) — gate verdict above; do not relaunch |
 | `t2_k_breakdown` | 60 | **done** (2026-07-28, ~3h wall-clock on 12 slots) — 60/60, zero censored. Results + the structured-heterogeneity finding above. 6 cells auto-skipped as already done by the probe (content-hash dedup working across manifests). |
-| `t0_mnist_wd_band` | 15 | pending |
+| `t0_mnist_wd_band` | 15 | **done** (2026-07-28, <4 min) — MNIST groks; results + the threshold fix above |
 | `t1_replication` | 150 | pending |
 | `t2_phase_diagram` | 415 | pending (`t2_k_breakdown` is a subset — those cells will skip) |
 | `t3_server_lr_calibration` | 42 | pending (run before `t3_algorithm_comparison`) |

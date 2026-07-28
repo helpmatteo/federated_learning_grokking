@@ -17,6 +17,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 from fedgrok.analysis.grokking_metrics import extract_grokking_results, summarize_seeds
+from fedgrok.data.registry import grok_threshold
 
 
 @dataclass
@@ -40,7 +41,7 @@ def run_single_centralized(cfg, label: str = "") -> dict:
     from fedgrok.training.centralized import train
     print(f"\n--- Centralized run: {label} seed={cfg.seed} ---")
     history, model = train(cfg)
-    metrics = extract_grokking_results(history)
+    metrics = extract_grokking_results(history, threshold=grok_threshold(cfg))
     metrics["history_path"] = os.path.join(
         cfg.output_dir,
         f"history_{cfg.task}_{cfg.optimizer}_p{cfg.p}_N{cfg.hidden_width}_a{cfg.alpha}_s{cfg.seed}.json"
@@ -53,7 +54,7 @@ def run_single_federated(cfg, label: str = "") -> dict:
     from fedgrok.training.federated import fed_train
     print(f"\n--- Federated run: {label} seed={cfg.seed} ---")
     history, model = fed_train(cfg)
-    metrics = extract_grokking_results(history)
+    metrics = extract_grokking_results(history, threshold=grok_threshold(cfg))
     return metrics
 
 

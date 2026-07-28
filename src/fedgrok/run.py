@@ -23,6 +23,7 @@ import time
 
 from fedgrok.manifest import build_config, run_id, TAG_KEYS
 from fedgrok.analysis.grokking_metrics import extract_grokking_results
+from fedgrok.data.registry import grok_threshold
 
 
 DEFAULT_RESULTS_DIR = "results/data/runs"
@@ -64,7 +65,8 @@ def run_spec(spec: dict, results_root: str = DEFAULT_RESULTS_DIR,
         raise ValueError(f"Unknown mode: {mode!r}")
     wall_s = time.time() - t0
 
-    metrics = extract_grokking_results(history)
+    threshold = grok_threshold(cfg)
+    metrics = extract_grokking_results(history, threshold=threshold)
     t_grok = metrics["t_grok"]
 
     # One row, schema-compatible with results/data/runs.csv. Config fields are
@@ -76,7 +78,13 @@ def run_spec(spec: dict, results_root: str = DEFAULT_RESULTS_DIR,
         # grouping tags (may be absent)
         **{k: spec[k] for k in ("tier", "group", "experiment", "setting",
                                 "algorithm", "manifest") if k in spec},
-        # config
+        # config — setup identity first. Without dataset/model/loss a t1
+        # replication row cannot say whether it is the groknet or the
+        # transformer on S5; they were separable only by hidden_width, and
+        # only by accident.
+        "dataset": cfg.dataset, "model": cfg.model, "loss": cfg.loss,
+        "batch_size": cfg.batch_size, "init_scale": cfg.init_scale,
+        "n_layers": cfg.n_layers, "group_n": cfg.group_n,
         "task": cfg.task, "optimizer": cfg.optimizer, "p": cfg.p,
         "hidden_width": cfg.hidden_width, "alpha": cfg.alpha, "seed": cfg.seed,
         "lr": cfg.lr, "weight_decay": cfg.weight_decay,
@@ -86,12 +94,17 @@ def run_spec(spec: dict, results_root: str = DEFAULT_RESULTS_DIR,
         "fraction_train": cfg_dict.get("fraction_train"),
         "partition": cfg_dict.get("partition"),
         "dirichlet_alpha": cfg_dict.get("dirichlet_alpha"),
+        "coset_subgroup": cfg_dict.get("coset_subgroup"),
         "proximal_mu": cfg_dict.get("proximal_mu"),
         "strategy": cfg_dict.get("strategy"),
         "server_lr": cfg_dict.get("server_lr"),
+        "server_momentum": cfg_dict.get("server_momentum"),
         "tau": cfg_dict.get("tau"),
         "eval_every": cfg_dict.get("eval_every"),
-        # outcomes
+        "checkpoint_every": cfg_dict.get("checkpoint_every"),
+        # outcomes — grok_threshold is recorded because it varies by dataset,
+        # so a t_grok is only interpretable next to the bar it was measured at.
+        "grok_threshold": threshold,
         "t_grok": t_grok,
         "t_50": metrics["t_50"],
         "final_acc": metrics["final_test_acc"],

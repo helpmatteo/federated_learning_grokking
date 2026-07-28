@@ -1,4 +1,18 @@
 id,mode,tier,group,experiment,setting,algorithm,task,optimizer,p,hidden_width,alpha,seed,num_clients,local_epochs,num_rounds,fraction_train,partition,dirichlet_alpha,proximal_mu,strategy,server_lr,tau,eval_every,lr,weight_decay,t_grok,t_50,final_acc,final_train_acc,final_ipr,grokked,censored,steps_run,wall_s
+cent_00ea48559025,centralized,T0,mnist_wd_band,mnist,,,addition,adamw,97,200,0.5,456,,,,,,,,,,,,0.001,0.01,inf,5100,88.0799949169159,100.0,nan,False,True,20000.0,95.7
+cent_1573c40bbe22,centralized,T0,mnist_wd_band,mnist,,,addition,adamw,97,200,0.5,456,,,,,,,,,,,,0.001,1.0,3300,200,91.5399968624115,100.0,nan,True,False,20000.0,86.4
+cent_16e486725bd2,centralized,T0,mnist_wd_band,mnist,,,addition,adamw,97,200,0.5,123,,,,,,,,,,,,0.001,0.03,8300,3300,91.57999753952026,100.0,nan,True,False,20000.0,95.5
+cent_1b59b0b9d2a0,centralized,T0,mnist_wd_band,mnist,,,addition,adamw,97,200,0.5,42,,,,,,,,,,,,0.001,0.01,inf,5000,89.17999863624573,100.0,nan,False,True,20000.0,94.4
+cent_20031bba5dad,centralized,T0,mnist_wd_band,mnist,,,addition,adamw,97,200,0.5,456,,,,,,,,,,,,0.001,0.1,3800,1300,92.15999841690063,100.0,nan,True,False,20000.0,94.0
+cent_217a439da67a,centralized,T0,mnist_wd_band,mnist,,,addition,adamw,97,200,0.5,123,,,,,,,,,,,,0.001,0.3,2600,500,92.77999997138977,100.0,nan,True,False,20000.0,85.6
+cent_2bc2d519138e,centralized,T0,mnist_wd_band,mnist,,,addition,adamw,97,200,0.5,42,,,,,,,,,,,,0.001,0.3,3400,600,92.35999584197998,100.0,nan,True,False,20000.0,92.7
+cent_2e323463cfde,centralized,T0,mnist_wd_band,mnist,,,addition,adamw,97,200,0.5,456,,,,,,,,,,,,0.001,0.3,3000,500,92.1999990940094,100.0,nan,True,False,20000.0,87.6
+cent_84c2a7072f9e,centralized,T0,mnist_wd_band,mnist,,,addition,adamw,97,200,0.5,456,,,,,,,,,,,,0.001,0.03,12200,3300,91.07999801635742,100.0,nan,True,False,20000.0,94.7
+cent_97cfe660e6dd,centralized,T0,mnist_wd_band,mnist,,,addition,adamw,97,200,0.5,123,,,,,,,,,,,,0.001,1.0,2900,200,91.38000011444092,100.0,nan,True,False,20000.0,94.4
+cent_a0ce5775992b,centralized,T0,mnist_wd_band,mnist,,,addition,adamw,97,200,0.5,123,,,,,,,,,,,,0.001,0.01,inf,5100,89.80000019073486,100.0,nan,False,True,20000.0,90.4
+cent_a1a76cad5361,centralized,T0,mnist_wd_band,mnist,,,addition,adamw,97,200,0.5,42,,,,,,,,,,,,0.001,1.0,3200,300,91.67999625205994,100.0,nan,True,False,20000.0,84.9
+cent_a4646ec62ab6,centralized,T0,mnist_wd_band,mnist,,,addition,adamw,97,200,0.5,42,,,,,,,,,,,,0.001,0.1,4100,1400,92.67999529838562,100.0,nan,True,False,20000.0,93.1
+cent_a4826d010ec0,centralized,T0,mnist_wd_band,mnist,,,addition,adamw,97,200,0.5,42,,,,,,,,,,,,0.001,0.03,11100,3400,90.75999855995178,100.0,nan,True,False,20000.0,92.7
 cent_addition_09e741279193,centralized,T0,wd_grid,wd,,,addition,adamw,97,256,0.5,1011,,,,,,,,,,,,0.001,1.0,200,200,100.0,100.0,0.40563255548477173,True,False,50000.0,31.7
 cent_addition_0f6262fcd0e1,centralized,T0,wd_grid,wd,,,addition,gd,97,256,0.5,42,,,,,,,,,,,,50.0,0.0002,inf,inf,1.041445229202509,1.0204081423580647,0.0,False,True,50000.0,46.6
 cent_addition_17980ac9f34d,centralized,T0,wd_grid,wd,,,addition,adamw,97,256,0.5,456,,,,,,,,,,,,0.001,0.1,200,200,100.0,100.0,0.49881622195243835,True,False,50000.0,52.8
@@ -44,6 +58,7 @@ cent_addition_d86b0365abcd,centralized,T0,wd_grid,wd,,,addition,adamw,97,256,0.5
 cent_addition_e688f05caeb3,centralized,T0,wd_grid,wd,,,addition,adamw,97,256,0.5,123,,,,,,,,,,,,0.001,0.0,200,200,100.0,100.0,0.5033429265022278,True,False,50000.0,51.2
 cent_addition_fcd185d7bd73,centralized,T0,wd_grid,wd,,,addition,gd,97,256,0.5,789,,,,,,,,,,,,50.0,0.0002,inf,inf,1.381509006023407,0.6802720949053764,0.0,False,True,50000.0,43.9
 cent_addition_ff1c7972a6de,centralized,T0,wd_grid,wd,,,addition,gd,97,256,0.5,456,,,,,,,,,,,,50.0,2e-05,inf,inf,0.9989372454583645,1.0629251599311829,0.0,False,True,50000.0,48.7
+cent_c0e1996e91da,centralized,T0,mnist_wd_band,mnist,,,addition,adamw,97,200,0.5,123,,,,,,,,,,,,0.001,0.1,3400,1400,92.65999794006348,100.0,nan,True,False,20000.0,89.3
 cent_x2_plus_y2_2b8780dc5f15,centralized,T0,poly_pilot,pilot,,,x2_plus_y2,gd,97,256,0.5,42,,,,,,,,,,,,50.0,0.0,6900,5400,100.0,100.0,0.0881650373339653,True,False,50000.0,25.6
 cent_x2_plus_y2_4b52490d5849,centralized,T0,poly_pilot,pilot,,,x2_plus_y2,gd,97,256,0.5,456,,,,,,,,,,,,50.0,0.0,7000,5700,100.0,100.0,0.1289415806531906,True,False,50000.0,25.6
 cent_x2_plus_y2_a606b082683b,centralized,T0,poly_pilot,pilot,,,x2_plus_y2,gd,97,256,0.5,123,,,,,,,,,,,,50.0,0.0,7000,5600,100.0,100.0,0.10940702259540558,True,False,50000.0,25.4

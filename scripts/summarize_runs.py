@@ -24,10 +24,15 @@ from fedgrok.analysis.survival import summarize_survival
 
 # Columns that identify a config cell (a run differs from its cell-mates only by
 # seed). Kept broad; missing columns in a given CSV are simply ignored.
+# `num_rounds` and `grok_threshold` are cell keys, not incidental config: two
+# runs at different budgets have different censoring times, and two runs judged
+# at different accuracy bars are not measuring the same event. Pooling either
+# silently mixes incomparable observations into one survival curve.
 DEFAULT_CELL_KEYS = [
-    "experiment", "setting", "algorithm", "mode", "task", "p", "alpha",
-    "num_clients", "local_epochs", "fraction_train", "partition",
-    "dirichlet_alpha", "strategy", "weight_decay",
+    "experiment", "setting", "algorithm", "mode", "dataset", "model", "loss",
+    "task", "p", "alpha", "num_clients", "local_epochs", "num_rounds",
+    "fraction_train", "partition", "dirichlet_alpha", "strategy",
+    "weight_decay", "grok_threshold",
 ]
 
 

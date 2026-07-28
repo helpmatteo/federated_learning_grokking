@@ -13,9 +13,13 @@ from fedgrok.data.modular import make_dataset
 _DATASET_BUILDERS = {}
 _DATASET_DIMS = {}
 _DATASET_GRIDS = {}
+_DATASET_THRESHOLDS = {}
+
+DEFAULT_GROK_THRESHOLD = 95.0
 
 
-def register_dataset(name, dims_fn, grid_fn=None):
+def register_dataset(name, dims_fn, grid_fn=None,
+                     grok_threshold=DEFAULT_GROK_THRESHOLD):
     """Register a dataset.
 
     build_fn(cfg) -> (xtr, ytr, xte, yte); dims_fn(cfg) -> (in, out).
@@ -23,16 +27,50 @@ def register_dataset(name, dims_fn, grid_fn=None):
     "grid" datasets (modular, S_n composition) expose the full unsplit grid and
     the first-operand index per sample, which the operand/coset FL partitions
     need. Datasets without it (MNIST) support only iid/dirichlet partitions.
+
+    grok_threshold is the test accuracy (%) that counts as "generalised" on
+    this dataset — see `grok_threshold()` below for why it cannot be one
+    global constant.
     """
     def _decorator(build_fn):
         if name in _DATASET_BUILDERS:
             raise ValueError(f"Dataset {name!r} already registered")
         _DATASET_BUILDERS[name] = build_fn
         _DATASET_DIMS[name] = dims_fn
+        _DATASET_THRESHOLDS[name] = grok_threshold
         if grid_fn is not None:
             _DATASET_GRIDS[name] = grid_fn
         return build_fn
     return _decorator
+
+
+def grok_threshold(cfg) -> float:
+    """Test accuracy (%) that counts as generalisation on cfg's dataset.
+
+    A single global 95% is WRONG once the study spans datasets with different
+    achievable ceilings: MNIST-1k tops out near 93%, so a 95% bar records every
+    run as `t_grok = inf` — "never grokked" — even when the history plainly
+    shows memorisation at epoch ~600 and generalisation thousands of epochs
+    later. That is a measurement artifact reported as a scientific null.
+
+    Per-dataset values and the reasoning behind them:
+
+      modular  95.0  chance 1/p (~1%), ceiling 100%. Wide margin either side;
+                     this is the historical value and is unchanged, so every
+                     modular result ever recorded is unaffected.
+      s5       85.0  chance 1/120 (~0.8%), ceiling ~92%. Test accuracy jumps
+                     from ~1% essentially discontinuously, so anything in
+                     10-90 returns the same step; 85 is picked for headroom
+                     under the ceiling rather than for sensitivity.
+      mnist    90.0  chance 10%, ceiling ~93%. Here the threshold genuinely
+                     matters — test accuracy climbs gradually through the 80s,
+                     so a bar set too low fires during memorisation and erases
+                     the delay. 90 is the level four of the five weight-decay
+                     bands reach and the weakest (lr*wd=1e-5, peak 89.2%) does
+                     not, which is the honest reading of that cell.
+    """
+    return _DATASET_THRESHOLDS.get(getattr(cfg, "dataset", "modular"),
+                                   DEFAULT_GROK_THRESHOLD)
 
 
 def has_grid(cfg) -> bool:
@@ -88,7 +126,7 @@ def _build_modular(cfg):
     return make_dataset(cfg)
 
 
-@register_dataset("mnist", dims_fn=lambda cfg: (784, 10))
+@register_dataset("mnist", dims_fn=lambda cfg: (784, 10), grok_threshold=90.0)
 def _build_mnist(cfg):
     # Imported lazily so torchvision is only required when MNIST is actually used.
     from fedgrok.data.mnist import load_mnist_subset
@@ -107,7 +145,7 @@ def _sn_grid(cfg):
     return x, labels, ia                       # operand_a = first operand's element index
 
 
-@register_dataset("s5", dims_fn=_sn_dims, grid_fn=_sn_grid)
+@register_dataset("s5", dims_fn=_sn_dims, grid_fn=_sn_grid, grok_threshold=85.0)
 def _build_s5(cfg):
     """Symmetric-group S_n composition (n = cfg.group_n; S5 by default)."""
     from fedgrok.data.groups import make_sn_dataset

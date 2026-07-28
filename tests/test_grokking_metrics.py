@@ -1,5 +1,7 @@
 import pytest
-from fedgrok.analysis.grokking_metrics import compute_t_grok, compute_t_50, summarize_seeds
+from fedgrok.analysis.grokking_metrics import (
+    compute_t_grok, compute_t_50, summarize_seeds, extract_grokking_results,
+)
 
 
 class TestTGrok:
@@ -77,3 +79,44 @@ class TestSummarizeSeeds:
         assert summary["fraction_grokked"] == 1.0
         assert "t_grok_km_median" in summary
         assert "t_grok_ci_low" in summary and "t_grok_ci_high" in summary
+
+
+class TestDatasetAwareThreshold:
+    """The grok bar must follow the dataset's achievable ceiling.
+
+    A global 95% recorded every MNIST-1k run as `t_grok = inf` even though the
+    histories show memorisation at ~600 epochs and generalisation thousands of
+    epochs later — a measurement artifact reported as a scientific null.
+    """
+
+    def test_modular_bar_is_unchanged(self):
+        """Every modular result ever recorded must be unaffected by this change."""
+        from fedgrok.core.config import Config
+        from fedgrok.data.registry import grok_threshold
+        assert grok_threshold(Config()) == 95.0
+
+    def test_mnist_and_s5_sit_below_their_ceilings(self):
+        from fedgrok.core.config import Config
+        from fedgrok.data.registry import grok_threshold
+        assert grok_threshold(Config(dataset="mnist")) == 90.0   # ceiling ~93%
+        assert grok_threshold(Config(dataset="s5")) == 85.0      # ceiling ~92%
+
+    def test_mnist_curve_groks_at_its_own_bar_but_not_at_95(self):
+        """The real MNIST shape: train memorises early, test climbs into the 90s."""
+        steps = list(range(0, 10000, 1000))
+        # test accuracy plateaus at 92.7% — the measured lr*wd=1e-4 band
+        accs = [10.0, 78.0, 84.0, 88.0, 91.0, 92.0, 92.5, 92.7, 92.7, 92.7]
+        assert compute_t_grok(steps, accs, threshold=95.0) == float("inf")
+        assert compute_t_grok(steps, accs, threshold=90.0) == 4000
+
+    def test_weakest_decay_band_is_honestly_censored(self):
+        """lr*wd=1e-5 peaks at 89.2% — below 90, so censoring is correct here."""
+        steps = list(range(0, 5000, 1000))
+        accs = [10.0, 80.0, 86.0, 88.5, 89.2]
+        assert compute_t_grok(steps, accs, threshold=90.0) == float("inf")
+
+    def test_extract_passes_the_threshold_through(self):
+        history = {"epoch": [0, 100, 200], "test_acc": [10.0, 91.0, 92.0],
+                   "train_acc": [50.0, 100.0, 100.0]}
+        assert extract_grokking_results(history)["t_grok"] == float("inf")
+        assert extract_grokking_results(history, threshold=90.0)["t_grok"] == 100

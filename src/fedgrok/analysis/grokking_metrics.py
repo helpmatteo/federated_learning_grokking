@@ -43,16 +43,21 @@ def compute_t_50(steps: list, test_accs: list, threshold: float = 50.0) -> float
     return float("inf")
 
 
-def extract_grokking_results(history: dict) -> dict:
+def extract_grokking_results(history: dict, threshold: float = 95.0) -> dict:
     """Extract grokking metrics from a training history dict.
 
     Works with both centralized (key: 'epoch') and federated (key: 'total_steps').
+
+    `threshold` is the test accuracy that counts as generalisation. It is
+    dataset-dependent — pass `fedgrok.data.registry.grok_threshold(cfg)`, which
+    documents the per-dataset values. The 95.0 default preserves the modular
+    behaviour for callers that have no cfg to hand.
     """
     steps = history.get("total_steps", history.get("epoch", []))
     test_accs = history.get("test_acc", [])
     train_accs = history.get("train_acc", [])
 
-    t_grok = compute_t_grok(steps, test_accs)
+    t_grok = compute_t_grok(steps, test_accs, threshold=threshold)
     t_50 = compute_t_50(steps, test_accs)
     final_test_acc = test_accs[-1] if test_accs else 0.0
     final_train_acc = train_accs[-1] if train_accs else 0.0
