@@ -86,6 +86,12 @@ def t0_poly_pilot():
     Doshi et al. (2406.03495) separate learnable from non-learnable modular
     polynomials for this architecture; a task that does not grok centrally can
     tell us nothing about FL, so gate the operation set on this.
+
+    RESULT (run 2026-07-28, 3 seeds, GD lr=50, alpha=0.5, p=97):
+        x2_plus_y2  3/3 grok, KM median 7000 [6900, 7000]  -> KEEP
+        x2_y2_xy    0/3 grok (censored at 50k)             -> EXCLUDE
+    The operation set in t1_replication therefore uses x2_plus_y2 and not
+    x2_y2_xy, which is exactly what this gate is for.
     """
     return expand_grid(
         {"mode": "centralized", "p": 97, "alpha": 0.5, "hidden_width": 256,
