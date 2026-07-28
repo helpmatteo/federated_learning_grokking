@@ -139,20 +139,60 @@ Resume is automatic (skips runs whose result JSON exists). One run = one subproc
 real exp5 H2 data (FedProx-0.001: old `inf` → fraction 0.33 surfaced; FedAdam-0.1 KM median
 2875 [2450,3100]).
 
-## The v2 code is complete — remaining work is EXECUTION
+## Results so far (v2 pipeline, `results/data/runs_v2.csv`)
 
-1. **Run the sweeps.** The machinery is built and idempotent; nothing else is code-blocked.
-   ```bash
-   venv/bin/python scripts/build_manifests.py                       # (re)generate manifests/
-   venv/bin/python scripts/launch_sweep.py manifests/t0_wd_grid.jsonl --per-gpu 2
-   # ... other manifests (t0_poly_pilot, t0_mnist_wd_band, t3_server_lr_calibration) ...
-   venv/bin/python scripts/collect_runs.py                          # -> results/data/runs_v2.csv
-   venv/bin/python scripts/summarize_runs.py results/data/runs_v2.csv
-   ```
-   The full plan's Tier-1/2 grids (the E-sweep, K-sweep, participation, structured partitions,
-   the multi-setup replication) still need their manifests written in `scripts/build_manifests.py`
-   — only the Tier-0 + calibration manifests exist so far. Writing those grids is the next concrete
-   coding task, then launching them.
+**T0 weight-decay grid — the review's blocker #1, resolved** (45 runs, GD lr=50, p=97,
+α=0.5, MSE, 5 seeds, KM median [95% CI]):
+
+| lr·λ | λ | grokked | T_grok |
+|---|---|---|---|
+| 0 | 0 | 5/5 | 7600 [7500, 7800] |
+| 1e-5 | 2e-7 | 5/5 | 7700 [7500, 7800] |
+| 1e-4 | 2e-6 | 5/5 | 8300 [8200, 8600] |
+| 1e-3 | 2e-5 | 0/5 | censored |
+| 1e-2 | 2e-4 | 0/5 | censored |
+
+The v1 "WD prevents grokking at every strength" was an artifact — but **not** a sign flip
+(which is what I predicted when first diagnosing it). Grokking is *preserved* up to
+lr·λ = 1e-4; the old values (lr·λ 0.5–50) sat far past the usable band. The real boundary is
+lr·λ ≈ 1e-3, where train accuracy never exceeds 8% and decays back to 1% — decay outruns
+learning, so memorisation never happens and there is nothing to grok from. Within the band WD
+is neutral-to-mildly-slowing, consistent with Gromov (this setup groks unregularised); the
+"WD accelerates grokking" result is specific to the AdamW/CE transformer regime.
+**Caveat:** the AdamW arm hits 100/100 by epoch 200 at α=0.5 regardless of λ (no delayed
+generalisation at all), so it can't inform the WD question here — rerun nearer the boundary.
+
+**T0 polynomial pilot** (3 seeds): `x2_plus_y2` groks 3/3 (KM median 7000 [6900, 7000]) →
+kept in the operation set; `x2_y2_xy` censored 0/3 → correctly excluded. The gate worked.
+
+## Remaining work is EXECUTION
+
+**All manifests are written** (829 unique runs across 8 files in `manifests/`). The loop is:
+
+```bash
+venv/bin/python scripts/build_manifests.py                       # (re)generate manifests/
+venv/bin/python scripts/launch_sweep.py manifests/<name>.jsonl --gpus 0,2,4,5,6,7 --per-gpu 2
+venv/bin/python scripts/collect_runs.py                          # -> results/data/runs_v2.csv
+venv/bin/python scripts/summarize_runs.py results/data/runs_v2.csv --group <cols>
+```
+Resume is automatic; re-running a manifest only executes what's missing. Note `nohup` buffers
+the launcher's stdout — use `-u`, or just watch `ls results/data/runs/*.json | wc -l`.
+
+| manifest | runs | status |
+|---|---|---|
+| `t0_wd_grid` | 45 | **done** — see results above |
+| `t0_poly_pilot` | 6 | **done** — see results above |
+| `t1_probe` | 24 | launched 2026-07-28; the breakdown gate for T2/T3 |
+| `t0_mnist_wd_band` | 15 | pending |
+| `t1_replication` | 252 | pending |
+| `t2_phase_diagram` | 475 | pending — **gated on `t1_probe`** |
+| `t3_server_lr_calibration` | 42 | pending (run before `t3_algorithm_comparison`) |
+| `t3_algorithm_comparison` | 90 | pending — fix each method at its calibrated server LR first |
+
+**The `t1_probe` gate:** if no cell reaches ~100% train accuracy while failing to grok, the
+"FL breaks grokking" framing has no support, and the plan says stop and re-frame *before*
+spending T2/T3. Check with
+`summarize_runs.py results/data/runs_v2.csv --group local_epochs,partition`.
 
 2. **Phase 5 part 2 — provenance-tracked figures.** BLOCKED on (1): there is nothing meaningful to
    plot until the sweeps produce `runs_v2.csv`. When ready, regenerate figures from that CSV, each
