@@ -378,6 +378,80 @@ def t2_k_breakdown():
     )
 
 
+def t2_boundary():
+    """The campaign that settles whether federation ever BREAKS grokking.
+
+    Everything measured so far is delay, not breakdown: the alpha=0.3 plane
+    groks 60/60 across K in {5..50}, and the probe found delay at K=10. The one
+    standing breakdown claim comes from v1 exp2 at alpha=0.25, and it does not
+    survive inspection.
+
+    WHY THE OLD RESULT IS NOT EVIDENCE. exp2 ran `t_max=50000`. Its alpha=0.25,
+    E=5, iid ladder (3 seeds, T_grok):
+
+        K=2   23285 25315 27190      K=20  27215 29720 33025
+        K=5   23625 25845 27880      K=50  40600 43975 CENSORED
+        K=10  24450 26780 28790      K=97  CENSORED x3
+
+    K=50 groks at 41-44k against a 50k budget. K=97's 0/3 is exactly what
+    continued monotone delay looks like when it runs past the budget — the same
+    trap as the E=1 probe cells, in the one place where censoring is supposed to
+    BE the signal. Nothing there separates "federation broke the circuit" from
+    "K=97 needs 60-90k steps".
+
+    THE BUDGET. 20k rounds x E=5 = 100k gradient steps:
+      - 2.3x the largest observed K=50 grok time (44k), so a censored K=97 sits
+        well clear of its neighbour rather than 14% above it;
+      - 1.33x the largest T_grok ever recorded at alpha<=0.25 (75425).
+    Uniform across cells so every run shares one censoring time — a survival
+    comparison across K is meaningless otherwise.
+
+    THE CELLS.
+      K=97 iid      the question.
+      K=50 iid      proves the budget sufficed. If K=97 AND K=50 both censor,
+                    the budget is still short and the sweep says nothing.
+      K=20 iid      reproduces v1's 27-33k, confirming the v2 harness matches
+                    exp2 before anything is concluded from a difference.
+      K=97 operand  the rescue test. t2_k_breakdown found operand significantly
+                    FASTER than iid at K=50 (13700 [13000,14000] vs 15200
+                    [14600,16000]), and dirichlet tracking iid exactly — so it
+                    is structure, not heterogeneity. Whether that advantage
+                    survives to K=97 is a sharper question than the breakdown.
+      Nearly free in wall-clock: the ten K=97 runs occupy slots the 1.2h K=20
+      runs were never going to fill.
+
+    5 seeds, not 1: grokking is stochastic (v1's K=50 cell was 2/3). Not 20
+    either — seeds only buy CI separation where the grok fraction is partial,
+    and which cell that is, is what this wave finds out. Deepening is wave 2.
+
+    CHECKPOINTS ON. `checkpoint_every` is a config field and so feeds the run-id
+    hash: enabling it later re-runs everything. The per-client W1 snapshots are
+    what the frequency-consensus mechanism analysis needs, and this is the wave
+    we least want to repeat. ~9.6 MB per checkpoint at K=97, 20 checkpoints per
+    run, ~2.5 GB total.
+
+    Verified before writing: all three partitions shard cleanly at alpha=0.25
+    up to K=97 (smallest shard 7 samples, dirichlet; no empty shards).
+    Cost, from the fitted model (9.8 + 1.291*K + 0.418*E) min at 10k rounds:
+    K=20 1.2h, K=50 2.5h, K=97 4.5h per run -> ~7.5h wall-clock on 12 slots.
+    """
+    boundary = {**SETUP_A, "alpha": 0.25, "local_epochs": 5,
+                "num_rounds": 20_000,
+                "checkpoint_every": 1_000,
+                "checkpoint_client_weights": True}
+    specs = expand_grid(
+        {**boundary, "partition": "iid"},
+        {"num_clients": [20, 50, 97], "seed": SEEDS5},
+        tags={"tier": "T2", "group": "boundary", "experiment": "boundary"},
+    )
+    specs += expand_grid(
+        {**boundary, "partition": "operand", "num_clients": 97},
+        {"seed": SEEDS5},
+        tags={"tier": "T2", "group": "boundary", "experiment": "boundary"},
+    )
+    return specs
+
+
 BUILDERS = {
     "t0_wd_grid": t0_wd_grid,
     "t0_poly_pilot": t0_poly_pilot,
@@ -386,6 +460,7 @@ BUILDERS = {
     "t1_replication": t1_replication,
     "t2_phase_diagram": t2_phase_diagram,
     "t2_k_breakdown": t2_k_breakdown,
+    "t2_boundary": t2_boundary,
     "t3_server_lr_calibration": t3_server_lr_calibration,
     "t3_algorithm_comparison": t3_algorithm_comparison,
 }
