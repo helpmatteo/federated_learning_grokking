@@ -41,7 +41,20 @@ SEEDS3 = [42, 123, 456]
 #     (steps = rounds x E), so raw wall-clock and total compute are NOT matched
 #     across the E-spine, and low-E cells see proportionally fewer steps. When
 #     comparing cells at equal compute, slice on `total_steps`, not on round.
+#
+# E RANGE (set by the t1_probe results, 2026-07-28): with rounds fixed, the
+# extremes of the E axis are unusable in opposite directions, so the spine is
+# restricted to E in {5, 10, 25, 50}:
+#   - E = 1, 2 are UNDER-BUDGETED. At 10k rounds E=1 gets 10k gradient steps,
+#     but this cell needs ~12.9k to grok (measured), so it censors for lack of
+#     budget rather than for any federated reason — an uninformative cell that
+#     invites exactly the wrong conclusion. (The E=1 identity is anyway proven
+#     exactly in tests/test_fedavg_identity.py, so the spine does not need it.)
+#   - E = 100, 250 are TOO EXPENSIVE. E=250 x 10k rounds is 2.5M gradient steps
+#     per run (~1.5-2.5h); the probe's E=250 cells were cancelled for this.
+# E in {5, 10, 25, 50} is a 10x span, all cells affordable and all informative.
 FL_ROUNDS = 10_000
+E_SPINE = [5, 10, 25, 50]
 FL_EVAL_EVERY = 20          # ~500 curve points per run
 
 # The one-shot (R=1) cell is the sole exception: with a single round there is no
@@ -162,11 +175,24 @@ SETUP_A = {"mode": "federated", "task": "addition", "p": 97, "alpha": 0.3,
 
 
 def t1_probe():
-    """The early breakdown check — runs alongside replication, gates T2/T3.
+    """The early breakdown check — COMPLETED 2026-07-28, kept as a record.
 
-    If NO cell here reaches ~100% train accuracy while failing to grok, the
-    "FL breaks grokking" framing has no support and the plan says stop and
-    re-frame before spending the big tiers. Cheap: 24 runs.
+    E values are left as they were actually run ({1,5,50,250}) so this manifest
+    documents the executed sweep. Do NOT relaunch it: the E=250 cells were
+    cancelled for cost and the E=1 cells proved under-budgeted, which is exactly
+    why the going-forward spine is E_SPINE = {5,10,25,50} (see the E RANGE note
+    at the top of this module). The T2 e-spine supersedes this.
+
+    RESULT (18/24 completed, K=10, alpha=0.3, p=97, 3 seeds, KM median T_grok):
+        E=1   iid/operand  0/3 grok  — censored by BUDGET, not by federation
+                                       (10k steps available, ~12.9k needed).
+                                       iid and operand were identical seed-for-
+                                       seed: the E=1 FedAvg identity in the wild.
+        E=5   iid 12900 / operand 12700   3/3
+        E=50  iid 23000 / operand 17000   3/3
+    Verdict: DELAY, not breakdown, at K=10 — grokking slows ~1.8x from E=5 to
+    E=50 on the compute-matched step axis, but never fails. The breakdown search
+    moves to higher K and stronger heterogeneity (the T2 K-sweep).
     """
     return expand_grid(
         {**SETUP_A, "num_clients": 10},
@@ -195,7 +221,7 @@ def t1_replication():
          "optimizer": "adamw", "lr": 1e-3, "weight_decay": 1.0,
          "num_clients": 10,
          "num_rounds": FL_ROUNDS, "eval_every": FL_EVAL_EVERY},
-        {"local_epochs": [1, 5, 25, 100],
+        {"local_epochs": [5, 25],
          "partition": ["iid", "operand", "dirichlet"], "seed": SEEDS3},
         tags={"tier": "T1", "group": "transformer", "experiment": "replication"},
     )
@@ -208,21 +234,21 @@ def t1_replication():
     for model, width in (("groknet", 256), ("transformer", 128)):
         specs += expand_grid(
             {**s5_base, "model": model, "hidden_width": width, "num_clients": 10},
-            {"local_epochs": [1, 5, 25, 100], "partition": ["iid", "dirichlet"],
+            {"local_epochs": [5, 25], "partition": ["iid", "dirichlet"],
              "seed": SEEDS3},
             tags={"tier": "T1", "group": "s5", "experiment": "replication"},
         )
         specs += expand_grid(
             {**s5_base, "model": model, "hidden_width": width,
              "num_clients": 5, "partition": "coset", "coset_subgroup": "s_nm1"},
-            {"local_epochs": [1, 5, 25, 100], "seed": SEEDS3},
+            {"local_epochs": [5, 25], "seed": SEEDS3},
             tags={"tier": "T1", "group": "s5_coset", "experiment": "replication"},
         )
 
     # Prime ladder (finite-size scaling of the breakdown boundary).
     specs += expand_grid(
         {**SETUP_A, "num_clients": 10},
-        {"p": [53, 97, 113, 151], "local_epochs": [1, 5, 50],
+        {"p": [53, 97, 113, 151], "local_epochs": [5, 50],
          "partition": ["iid", "operand"], "seed": SEEDS3},
         tags={"tier": "T1", "group": "prime_ladder", "experiment": "replication"},
     )
@@ -232,7 +258,7 @@ def t1_replication():
     specs += expand_grid(
         {**SETUP_A, "num_clients": 10},
         {"task": ["addition", "subtraction", "division", "x2_plus_y2"],
-         "local_epochs": [1, 5, 50], "partition": ["iid", "operand"],
+         "local_epochs": [5, 50], "partition": ["iid", "operand"],
          "seed": SEEDS3},
         tags={"tier": "T1", "group": "operations", "experiment": "replication"},
     )
@@ -251,7 +277,7 @@ def t2_phase_diagram():
     # E-spine: E from the exact centralized identity (E=1) out to near-independent.
     specs += expand_grid(
         {**SETUP_A, "num_clients": 10},
-        {"local_epochs": [1, 2, 5, 10, 25, 50, 100, 250],
+        {"local_epochs": E_SPINE,
          "partition": ["iid", "dirichlet", "operand"], "seed": SEEDS5},
         tags={"tier": "T2", "group": "e_spine", "experiment": "phase"},
     )
