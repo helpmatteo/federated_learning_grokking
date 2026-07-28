@@ -191,6 +191,49 @@ grok for a federated reason. Per the plan this means don't treat "FL breaks grok
 established; the breakdown search moves to higher K / stronger heterogeneity
 (`manifests/t2_k_breakdown.jsonl`, launched).
 
+**T2 K-breakdown — COMPLETE** (60/60, 2026-07-28). K∈{5,10,20,50} × {iid, operand,
+dirichlet} × 5 seeds, α=0.3, E=5, p=97, 10k rounds. KM median [95% CI]:
+
+| K | iid | operand | dirichlet |
+|---|---|---|---|
+| 5 | 13200 [12700, 13500] | 13100 [12600, 13400] | 13400 [12700, 13600] |
+| 10 | 13400 [13400, 13700] | 13200 [13200, 13500] | 13600 [13000, 13900] |
+| 20 | 13700 [13200, 14100] | 13300 [12700, 13500] | 13900 [13200, 14200] |
+| 50 | 15200 [14600, 16000] | **13700 [13000, 14000]** | 15400 [14700, 16100] |
+
+- **Every cell 5/5, zero censoring.** The α=0.3 plane is dead as a breakdown regime: a 10×
+  increase in K buys ~16% delay and nothing else. This is the control arm, and it is clean.
+- **Structured heterogeneity ACCELERATES grokking, and the effect scales with K.** At K=50
+  the operand partition is significantly faster than iid (non-overlapping CIs); the gap is
+  ~0 at K=5, ~400 steps at K=20, ~1500 steps at K=50. Operand at K=50 is no slower than
+  iid at K=5.
+- **It is structure, not heterogeneity.** Dirichlet (unstructured non-IID) tracks iid
+  exactly at every K. So this is not "non-IID helps" — only the *coherent* partition helps.
+- **Mechanism hypothesis for T4:** an operand shard is a coherent slice of the group rather
+  than a random sample, so clients plausibly select a *shared* frequency basis and averaging
+  reinforces it, where iid clients find arbitrary frequency sets that partially cancel.
+  Testable with the per-client checkpoints the readiness fixes add.
+- **Cost datum:** K=50 runs take ~75 min vs ~22 min at low K — Flower's per-round cost scales
+  with actor count. Budget ~2–2.5 h/run at K=97; this reprices the 20-seed boundary cells.
+
+## Readiness blockers before the full campaign (identified 2026-07-28)
+
+Five fixes must land before committing to a full campaign. Two of them silently corrupt
+results and cost a re-run to discover late.
+
+| # | Fix | Evidence |
+|---|---|---|
+| 1 | **Budget: 20k rounds at E=5** (=100k steps) | v1 at α=0.25: median T_grok 27,505, max 75,425. At 10k rounds (50k steps) **5.6% of genuine groks are censored** — repeating the E=1 mistake exactly where censoring *is* the signal |
+| 2 | **`checkpoint_every` on boundary cells** | No manifest sets it. Frequency-consensus analysis is post-hoc impossible without per-client weights (~100 MB/config from v1 exp7) |
+| 3 | **20 seeds at boundary cells** | `fraction_grokked` is the order parameter. Wilson 95% CI width at a true 50% transition: 3 seeds→0.73, 5→0.65, 10→0.53, 20→0.40. Cannot separate K=50 from K=97 at 5 |
+| 4 | **Wire mechanistic metrics into history** | `coset_attribution` + transformer embedding measures compute standalone, never log per-epoch. Same trap as #2 |
+| 5 | **Add α as a manifest axis** | Every FL manifest inherits α=0.3 — now proven safe. The boundary is at **α=0.25, K≥50** (v1: 3/3 at K≤20, 2/3 at K=50, 0/3 at K=97) |
+
+**Boundary campaign spec** (after the fixes): α ∈ {0.22, 0.25, 0.28} × K ∈ {20, 50, 97},
+E=5, 20k rounds, 20 seeds at α=0.25 / 5 on the bracketing α, checkpoints + per-client W1 on,
+plus the fixed-per-client-n control arm (separates "federation broke it" from "shards too
+small" — without it the result collapses to the obvious objection).
+
 **Decision taken from this evidence:** rounds stay fixed, but the E axis is trimmed to
 `E_SPINE = {5, 10, 25, 50}` — E∈{1,2} are under-budgeted at 10k rounds and E∈{100,250} are
 too expensive (2.5M steps/run). See the E RANGE note in `scripts/build_manifests.py`.
@@ -213,7 +256,7 @@ the launcher's stdout — use `-u`, or just watch `ls results/data/runs/*.json |
 | `t0_wd_grid` | 45 | **done** — see results above |
 | `t0_poly_pilot` | 6 | **done** — see results above |
 | `t1_probe` | 24 | **done** (18 ok, 6 E=250 cancelled) — gate verdict above; do not relaunch |
-| `t2_k_breakdown` | 60 | **IN FLIGHT** (started 2026-07-28, ~22 min/run, 12 slots ≈ 2h). 6 cells auto-skipped as already done by the probe — the content-hash dedup working across manifests. Wave 1: K=5 and K=10 grok at 12.6–13.6k on all partitions (no breakdown at low K); **K=20 / K=50 are the cells that matter and land in later waves**. |
+| `t2_k_breakdown` | 60 | **done** (2026-07-28, ~3h wall-clock on 12 slots) — 60/60, zero censored. Results + the structured-heterogeneity finding above. 6 cells auto-skipped as already done by the probe (content-hash dedup working across manifests). |
 | `t0_mnist_wd_band` | 15 | pending |
 | `t1_replication` | 150 | pending |
 | `t2_phase_diagram` | 415 | pending (`t2_k_breakdown` is a subset — those cells will skip) |
