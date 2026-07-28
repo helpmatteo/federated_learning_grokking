@@ -213,7 +213,7 @@ the launcher's stdout — use `-u`, or just watch `ls results/data/runs/*.json |
 | `t0_wd_grid` | 45 | **done** — see results above |
 | `t0_poly_pilot` | 6 | **done** — see results above |
 | `t1_probe` | 24 | **done** (18 ok, 6 E=250 cancelled) — gate verdict above; do not relaunch |
-| `t2_k_breakdown` | 60 | **launched 2026-07-28** — the probe's follow-up at higher K |
+| `t2_k_breakdown` | 60 | **IN FLIGHT** (started 2026-07-28, ~22 min/run, 12 slots ≈ 2h). 6 cells auto-skipped as already done by the probe — the content-hash dedup working across manifests. Wave 1: K=5 and K=10 grok at 12.6–13.6k on all partitions (no breakdown at low K); **K=20 / K=50 are the cells that matter and land in later waves**. |
 | `t0_mnist_wd_band` | 15 | pending |
 | `t1_replication` | 150 | pending |
 | `t2_phase_diagram` | 415 | pending (`t2_k_breakdown` is a subset — those cells will skip) |
