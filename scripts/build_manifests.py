@@ -6,6 +6,11 @@ re-running never changes ids and the launcher's resume stays valid.
 
     python scripts/build_manifests.py            # write all
     python scripts/build_manifests.py t0_wd_grid # write one
+
+Run ids are content hashes of the config, so a cell that appears in two
+manifests (e.g. an E-spine point that is also a probe point) gets the SAME id
+and the launcher executes it once — the second manifest's copy is skipped by
+the normal resume check. Overlap between tiers is therefore free, not waste.
 """
 
 import os
@@ -13,11 +18,35 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from fedgrok.manifest import expand_grid, write_manifest
+from fedgrok.manifest import expand_grid, run_id, write_manifest
 
 MANIFEST_DIR = os.path.join(os.path.dirname(__file__), "..", "manifests")
 SEEDS5 = [42, 123, 456, 789, 1011]
 SEEDS3 = [42, 123, 456]
+
+# Every FL cell runs a FIXED number of communication rounds, so E is a clean
+# *communication* axis and rounds — the expensive resource in FL — are matched
+# across cells.
+#
+# NOTE (deliberate choice): we do NOT set num_rounds = budget // E to equalise
+# gradient steps across E. That compute-matching is done at ANALYSIS time
+# instead, using the `total_steps` axis the training loop already logs
+# (alongside `sequential_steps` and `n_participating`) — see the Phase 0.6 step
+# accounting. Keeping it out of the run config means:
+#   - num_rounds stays an explicit, readable field in the manifest rather than
+#     an implicit function of another field;
+#   - a single run supports BOTH readings (per-round and per-step) rather than
+#     baking one in;
+#   - the consequence to keep in mind is that total gradient work scales with E
+#     (steps = rounds x E), so raw wall-clock and total compute are NOT matched
+#     across the E-spine, and low-E cells see proportionally fewer steps. When
+#     comparing cells at equal compute, slice on `total_steps`, not on round.
+FL_ROUNDS = 10_000
+FL_EVAL_EVERY = 20          # ~500 curve points per run
+
+# The one-shot (R=1) cell is the sole exception: with a single round there is no
+# round axis, so its local-step count is stated outright.
+ONE_SHOT_LOCAL_STEPS = 50_000
 
 
 def t0_wd_grid():
@@ -99,8 +128,8 @@ def t3_server_lr_calibration():
     """
     cell = {"mode": "federated", "task": "addition", "p": 97, "alpha": 0.3,
             "hidden_width": 256, "num_clients": 10, "local_epochs": 5,
-            "partition": "dirichlet", "dirichlet_alpha": 0.1, "num_rounds": 10000,
-            "lr": 50.0, "eval_every": 20}
+            "partition": "dirichlet", "dirichlet_alpha": 0.1,
+            "num_rounds": FL_ROUNDS, "lr": 50.0, "eval_every": FL_EVAL_EVERY}
     specs = []
     for strat in ("fedadam", "fedyogi"):
         specs += expand_grid(
@@ -119,11 +148,195 @@ def t3_server_lr_calibration():
     return specs
 
 
+# Setup A (the anchor): Gromov quadratic MLP, mod-97, MSE, full-batch GD.
+SETUP_A = {"mode": "federated", "task": "addition", "p": 97, "alpha": 0.3,
+           "model": "groknet", "hidden_width": 256, "loss": "mse",
+           "optimizer": "gd", "lr": 50.0,
+           "num_rounds": FL_ROUNDS, "eval_every": FL_EVAL_EVERY}
+
+
+def t1_probe():
+    """The early breakdown check — runs alongside replication, gates T2/T3.
+
+    If NO cell here reaches ~100% train accuracy while failing to grok, the
+    "FL breaks grokking" framing has no support and the plan says stop and
+    re-frame before spending the big tiers. Cheap: 24 runs.
+    """
+    return expand_grid(
+        {**SETUP_A, "num_clients": 10},
+        {"local_epochs": [1, 5, 50, 250], "partition": ["iid", "operand"],
+         "seed": SEEDS3},
+        tags={"tier": "T1", "group": "probe", "experiment": "probe"},
+    )
+
+
+def t1_replication():
+    """Tier 1: does the effect replicate across setups, tasks and moduli?
+
+    Four blocks (MNIST is centralized-only — federated MNIST has no operand
+    structure, so make_federated_datasets rejects it by design):
+      - transformer @ mod-113 (Nanda config, CE)
+      - S5 composition on both architectures, incl. the coset partition
+      - prime ladder p in {53, 97, 113, 151} (finite-size scaling)
+      - operation set (addition/subtraction/division/x2+y2) at p=97
+    """
+    specs = []
+
+    # Transformer, Nanda config (CE + AdamW), mod-113.
+    specs += expand_grid(
+        {"mode": "federated", "task": "addition", "p": 113, "alpha": 0.3,
+         "model": "transformer", "hidden_width": 128, "loss": "ce",
+         "optimizer": "adamw", "lr": 1e-3, "weight_decay": 1.0,
+         "num_clients": 10,
+         "num_rounds": FL_ROUNDS, "eval_every": FL_EVAL_EVERY},
+        {"local_epochs": [1, 5, 25, 100],
+         "partition": ["iid", "operand", "dirichlet"], "seed": SEEDS3},
+        tags={"tier": "T1", "group": "transformer", "experiment": "replication"},
+    )
+
+    # S5 composition. The coset partition needs exactly 5 clients (5 cosets of
+    # S4), so it is a separate block from the K=10 iid/dirichlet cells.
+    s5_base = {"mode": "federated", "dataset": "s5", "group_n": 5, "alpha": 0.5,
+               "loss": "ce", "optimizer": "adamw", "lr": 1e-3, "weight_decay": 1.0,
+               "num_rounds": FL_ROUNDS, "eval_every": FL_EVAL_EVERY}
+    for model, width in (("groknet", 256), ("transformer", 128)):
+        specs += expand_grid(
+            {**s5_base, "model": model, "hidden_width": width, "num_clients": 10},
+            {"local_epochs": [1, 5, 25, 100], "partition": ["iid", "dirichlet"],
+             "seed": SEEDS3},
+            tags={"tier": "T1", "group": "s5", "experiment": "replication"},
+        )
+        specs += expand_grid(
+            {**s5_base, "model": model, "hidden_width": width,
+             "num_clients": 5, "partition": "coset", "coset_subgroup": "s_nm1"},
+            {"local_epochs": [1, 5, 25, 100], "seed": SEEDS3},
+            tags={"tier": "T1", "group": "s5_coset", "experiment": "replication"},
+        )
+
+    # Prime ladder (finite-size scaling of the breakdown boundary).
+    specs += expand_grid(
+        {**SETUP_A, "num_clients": 10},
+        {"p": [53, 97, 113, 151], "local_epochs": [1, 5, 50],
+         "partition": ["iid", "operand"], "seed": SEEDS3},
+        tags={"tier": "T1", "group": "prime_ladder", "experiment": "replication"},
+    )
+
+    # Operation set at p=97. Multiplication is deliberately excluded (it is
+    # cyclic Z_{p-1} in disguise — see DEGENERATE_TASKS).
+    specs += expand_grid(
+        {**SETUP_A, "num_clients": 10},
+        {"task": ["addition", "subtraction", "division", "x2_plus_y2"],
+         "local_epochs": [1, 5, 50], "partition": ["iid", "operand"],
+         "seed": SEEDS3},
+        tags={"tier": "T1", "group": "operations", "experiment": "replication"},
+    )
+    return specs
+
+
+def t2_phase_diagram():
+    """Tier 2: the phase diagram on setup A — the paper's central grid.
+
+    E-spine (the load-bearing axis), K-sweep in both disentangled forms,
+    participation (the one FL knob with no centralized analogue), and the
+    one-shot E->inf endpoint.
+    """
+    specs = []
+
+    # E-spine: E from the exact centralized identity (E=1) out to near-independent.
+    specs += expand_grid(
+        {**SETUP_A, "num_clients": 10},
+        {"local_epochs": [1, 2, 5, 10, 25, 50, 100, 250],
+         "partition": ["iid", "dirichlet", "operand"], "seed": SEEDS5},
+        tags={"tier": "T2", "group": "e_spine", "experiment": "phase"},
+    )
+
+    # K-sweep, fixed TOTAL data (per-client shards shrink as K grows).
+    specs += expand_grid(
+        {**SETUP_A},
+        {"num_clients": [5, 10, 20, 50], "local_epochs": [5, 50],
+         "partition": ["iid", "dirichlet", "operand"], "seed": SEEDS5},
+        tags={"tier": "T2", "group": "k_fixed_total", "experiment": "phase"},
+    )
+
+    # K-sweep, fixed PER-CLIENT data (alpha scales with K, so shard size is
+    # constant). This disentangles "more clients" from "less data each" — the
+    # confound flagged in the review.
+    for k, alpha in ((5, 0.15), (10, 0.30), (20, 0.60), (50, 0.90)):
+        specs += expand_grid(
+            {**SETUP_A, "num_clients": k, "alpha": alpha},
+            {"local_epochs": [5, 50], "partition": ["iid", "dirichlet", "operand"],
+             "seed": SEEDS5},
+            tags={"tier": "T2", "group": "k_fixed_per_client", "experiment": "phase"},
+        )
+
+    # Partial participation — no centralized analogue.
+    specs += expand_grid(
+        {**SETUP_A, "num_clients": 20},
+        {"fraction_train": [0.2, 0.4, 0.6, 0.8, 1.0], "local_epochs": [5, 50],
+         "partition": ["iid", "operand"], "seed": SEEDS5},
+        tags={"tier": "T2", "group": "participation", "experiment": "phase"},
+    )
+
+    # One-shot FL: E -> infinity, R = 1. Each client trains to convergence
+    # independently, then a single merge. The far endpoint of the E-spine, and
+    # where frequency collision is most likely. This is the ONE cell where a
+    # fixed round count makes no sense (R is 1 by definition), so E carries the
+    # whole budget explicitly.
+    specs += expand_grid(
+        {**SETUP_A, "num_clients": 10, "num_rounds": 1,
+         "local_epochs": ONE_SHOT_LOCAL_STEPS, "eval_every": 1},
+        {"partition": ["iid", "dirichlet", "operand"], "seed": SEEDS5},
+        tags={"tier": "T2", "group": "one_shot", "experiment": "phase"},
+    )
+    return specs
+
+
+def t3_algorithm_comparison():
+    """Tier 3: the FL algorithm comparison on the hard cells.
+
+    Server-LR-tunable methods should be fixed at their calibrated LR (see
+    t3_server_lr_calibration) before this is treated as final; the values here
+    are placeholders that keep the grid runnable end to end.
+    """
+    hard_cells = [
+        {"label": "H1", "alpha": 0.25, "num_clients": 10, "local_epochs": 25,
+         "partition": "iid"},
+        {"label": "H2", "alpha": 0.25, "num_clients": 10, "local_epochs": 25,
+         "partition": "dirichlet", "dirichlet_alpha": 0.1},
+        {"label": "H3", "alpha": 0.30, "num_clients": 10, "local_epochs": 50,
+         "partition": "dirichlet", "dirichlet_alpha": 0.1},
+    ]
+    algos = [
+        ("fedavg", {}),
+        ("fedprox", {"proximal_mu": 0.01}),
+        ("scaffold", {}),
+        ("fedavgm", {"server_lr": 1.0, "server_momentum": 0.9}),
+        ("fedadam", {"server_lr": 0.1}),
+        ("fedyogi", {"server_lr": 0.1}),
+    ]
+    specs = []
+    for cell in hard_cells:
+        label = cell.pop("label")
+        for strategy, kw in algos:
+            specs += expand_grid(
+                {**SETUP_A, **cell, "strategy": strategy, **kw},
+                {"seed": SEEDS5},
+                tags={"tier": "T3", "group": "algorithms", "experiment": "algo",
+                      "setting": label, "algorithm": strategy},
+            )
+        cell["label"] = label
+    return specs
+
+
 BUILDERS = {
     "t0_wd_grid": t0_wd_grid,
     "t0_poly_pilot": t0_poly_pilot,
     "t0_mnist_wd_band": t0_mnist_wd_band,
+    "t1_probe": t1_probe,
+    "t1_replication": t1_replication,
+    "t2_phase_diagram": t2_phase_diagram,
     "t3_server_lr_calibration": t3_server_lr_calibration,
+    "t3_algorithm_comparison": t3_algorithm_comparison,
 }
 
 
