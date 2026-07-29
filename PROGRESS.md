@@ -216,6 +216,53 @@ dirichlet} × 5 seeds, α=0.3, E=5, p=97, 10k rounds. KM median [95% CI]:
 - **Cost datum:** K=50 runs take ~75 min vs ~22 min at low K — Flower's per-round cost scales
   with actor count. Budget ~2–2.5 h/run at K=97; this reprices the 20-seed boundary cells.
 
+## T2 BOUNDARY — COMPLETE (2026-07-29). The question is answered.
+
+20/20, α=0.25, E=5, 20k rounds = 100k steps, 5 seeds, ~4.1 h/run at K=97.
+
+| K | partition | grok | frac | KM median | 95% CI |
+|---|---|---|---|---|---|
+| 20 | iid | 5/5 | 1.00 | 29800 | [27300, 33100] |
+| 50 | iid | 5/5 | 1.00 | 46800 | [40700, 51400] |
+| 97 | iid | **2/5** | **0.40** | inf | [95600, inf] |
+| 97 | **operand** | **5/5** | 1.00 | **76500** | [57800, 77500] |
+
+K=97 per seed — iid: 95600, 98500, and three censored at 100k ending
+**100% train / 53%, 61%, 71% test**. operand: 57800, 71000, 76500, 77200, 77500,
+all reaching 100/100.
+
+**1. The harness sanity check PASSED.** K=20 gives 29800 [27300, 33100] against
+v1 exp2's 27215/29720/33025. The v2 rewrite reproduces exp2, so differences at
+K=97 are attributable to federation and not to the rewrite. K=50 grokking 5/5 at
+46800 confirms the 100k budget was genuinely sufficient — the other way this
+sweep could have been worthless.
+
+**2. v1's "K=97 breaks grokking" was a BUDGET ARTIFACT, as suspected.** Two of
+five seeds grok, at 95600 and 98500. Under exp2's 50k budget every one of those
+censors — which is exactly the 0/3 that was reported. The claim as stated does
+not survive.
+
+**3. But a real partial transition exists at K=97 iid.** 2/5, with the three
+failures at 100% train and 53–71% test: memorised, not generalised.
+**CAVEAT — the budget is still marginal here.** Both successes land within 5% of
+the 100k ceiling, so the three failures may be mid-transition rather than stuck.
+Separating "slower" from "broken" at K=97 needs MORE BUDGET, not more seeds.
+That is the correction to the wave-2 plan: deepening seeds at 100k would sharpen
+a fraction whose denominator is still budget-limited.
+
+**4. THE HEADLINE: structured partitioning rescues K=97 completely.** operand is
+5/5 at 76500 [57800, 77500] vs iid 2/5 at ~97000 — non-overlapping, and the
+difference between reliable grokking and marginal failure. With dirichlet
+tracking iid exactly at every K in `t2_k_breakdown`, the claim is:
+**how you partition matters more than how far you fragment, and coherent shards
+are strictly better than random ones.** This is a stronger and more useful result
+than the breakdown originally being chased, and the per-client W1 checkpoints
+(20/run, on disk) are what tests the frequency-consensus explanation for it.
+
+**Next:** re-run K=97 iid at a larger budget (200k steps / 40k rounds, ~9 h/run)
+to settle whether the 3/5 failures are censored or genuinely stuck. Everything
+downstream should be re-scoped around the partition-structure result.
+
 ## MNIST-1k groks — all four setups now confirmed (2026-07-28)
 
 `t0_mnist_wd_band` complete, 15/15, ~90 s per run (whole sweep under 4 min). Centralized,
@@ -295,7 +342,8 @@ the launcher's stdout — use `-u`, or just watch `ls results/data/runs/*.json |
 | `t2_k_breakdown` | 60 | **done** (2026-07-28, ~3h wall-clock on 12 slots) — 60/60, zero censored. Results + the structured-heterogeneity finding above. 6 cells auto-skipped as already done by the probe (content-hash dedup working across manifests). |
 | `t0_mnist_wd_band` | 15 | **done** (2026-07-28, <4 min) — MNIST groks; results + the threshold fix above |
 | `t1_replication` | 150 | pending |
-| `t2_phase_diagram` | 415 | pending (`t2_k_breakdown` is a subset — those cells will skip) |
+| `t2_boundary` | 20 | **done** (2026-07-29, ~5h) — see the boundary section above |
+| `t2_phase_diagram` | 415 | pending — **re-scope first**: the α=0.3 plane it grids is now known uniformly safe |
 | `t3_server_lr_calibration` | 42 | pending (run before `t3_algorithm_comparison`) |
 | `t3_algorithm_comparison` | 90 | pending — fix each method at its calibrated server LR first |
 
