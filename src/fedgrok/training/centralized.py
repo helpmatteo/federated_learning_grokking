@@ -9,8 +9,9 @@ from fedgrok.data.registry import build_dataset, dataset_dims
 from fedgrok.core.registry import build_model, build_loss
 from fedgrok.metrics.fourier import (
     weight_norms, gradient_norms, compute_ipr, compute_accuracy,
-    fourier_spectrum, fourier_applicable,
+    fourier_spectrum, dft_applicable, weight_norms_applicable, weight_norm_report,
 )
+from fedgrok.metrics.probes import mechanistic_probe
 from fedgrok.core.utils import get_device, make_optimizer
 
 
@@ -93,18 +94,27 @@ def train(cfg: Config):
                 train_acc = compute_accuracy(out_train, y_train)
                 test_acc = compute_accuracy(out_test, y_test)
 
-            # weight_norms / gradient_norms / IPR are GrokNet-specific (read W1/W2).
-            # On other architectures they don't apply — log NaN rather than crash.
+            # Two INDEPENDENT capabilities, deliberately not one gate:
+            #   weight_norms_applicable -- the model has named W1/W2. Frobenius
+            #     norms are basis-free, so they are valid on S5 too.
+            #   dft_applicable -- W1/P *and* a cyclic group. IPR only.
+            # These used to share the `fourier_applicable` gate, which silently
+            # discarded real weight-norm data on every non-modular run.
             nan = float("nan")
-            if fourier_applicable(model, cfg):
+            if weight_norms_applicable(model):
                 wn = weight_norms(model)
                 gn = gradient_norms(model)
-                ipr_val = compute_ipr(model)["ipr"]
                 wn1, wn2 = wn["weight_norm_layer1"], wn["weight_norm_layer2"]
                 gn1 = gn.get("grad_norm_layer1", 0.0)
                 gn2 = gn.get("grad_norm_layer2", 0.0)
             else:
-                wn1 = wn2 = gn1 = gn2 = ipr_val = nan
+                wn1 = wn2 = gn1 = gn2 = nan
+            ipr_val = compute_ipr(model)["ipr"] if dft_applicable(model, cfg) else nan
+
+            # Architecture-agnostic norms: the Omnigrok order parameter, and the
+            # only weight signal available on the transformer / MNIST MLP.
+            report = weight_norm_report(model)
+            probe = mechanistic_probe(cfg)(model, x_test, y_test, cfg)
 
             history["epoch"].append(epoch)
             history["train_loss"].append(train_loss_value)
@@ -116,6 +126,11 @@ def train(cfg: Config):
             history["grad_norm_layer1"].append(gn1)
             history["grad_norm_layer2"].append(gn2)
             history["ipr"].append(ipr_val)
+            # Additive keys. setdefault keeps them in lockstep with the fixed
+            # series above: epoch 0 is always logged, so every key is created on
+            # the first pass and appended to on every pass thereafter.
+            for key, value in {**report, **probe}.items():
+                history.setdefault(key, []).append(value)
 
             if epoch % (cfg.log_every * 10) == 0:
                 elapsed = time.time() - start
@@ -133,7 +148,7 @@ def train(cfg: Config):
             os.makedirs(ckpt_dir, exist_ok=True)
             ckpt_path = os.path.join(ckpt_dir, f"ckpt_epoch{epoch}.pt")
             torch.save(model.state_dict(), ckpt_path)
-            if fourier_applicable(model, cfg):
+            if dft_applicable(model, cfg):
                 spec = fourier_spectrum(model)
                 spec_path = os.path.join(ckpt_dir, f"spectrum_epoch{epoch}.pt")
                 torch.save(spec["spectrum"], spec_path)
@@ -145,7 +160,13 @@ def train(cfg: Config):
 
     # Save results
     os.makedirs(cfg.output_dir, exist_ok=True)
-    tag = f"{cfg.task}_{cfg.optimizer}_p{cfg.p}_N{cfg.hidden_width}_a{cfg.alpha}_s{cfg.seed}"
+    # Setup goes in the name — see the note on the federated tag. An MNIST or S5
+    # run would otherwise inherit Config's task/p defaults and be written as
+    # "addition_..._p97_...".
+    task_part = f"{cfg.task}_p{cfg.p}" if cfg.dataset == "modular" else (
+        f"n{cfg.group_n}" if cfg.dataset == "s5" else f"n{cfg.n_train}")
+    tag = (f"{cfg.dataset}_{cfg.model}_{cfg.loss}_{task_part}_{cfg.optimizer}"
+           f"_N{cfg.hidden_width}_a{cfg.alpha}_s{cfg.seed}")
     history_path = os.path.join(cfg.output_dir, f"history_{tag}.json")
     with open(history_path, "w") as f:
         json.dump(history, f)

@@ -14,7 +14,7 @@ import torch
 import numpy as np
 
 
-def fourier_applicable(model, cfg=None) -> bool:
+def dft_applicable(model, cfg=None) -> bool:
     """True iff the DFT-based Fourier metrics are meaningful for this run.
 
     Two conditions:
@@ -33,11 +33,45 @@ def fourier_applicable(model, cfg=None) -> bool:
     return True
 
 
+# Historical name. `dft_applicable` says what it actually gates; this alias keeps
+# existing call sites working.
+fourier_applicable = dft_applicable
+
+
+def weight_norms_applicable(model) -> bool:
+    """True iff this model exposes GrokNet's named W1/W2 layers.
+
+    Deliberately NOT the same test as `dft_applicable`. A Frobenius norm is
+    basis-free: it is well defined on S_n, where the DFT is meaningless. Gating
+    the two together meant every S5+GrokNet run recorded weight_norm_layer1/2 as
+    NaN despite the code being present and correct — a measurement reported as
+    "not applicable" when it applied.
+    """
+    return hasattr(model, "W1") and hasattr(model, "W2")
+
+
 def weight_norms(model):
     """Frobenius norm of W1 and W2."""
     return {
         "weight_norm_layer1": model.W1.data.norm().item(),
         "weight_norm_layer2": model.W2.data.norm().item(),
+    }
+
+
+def weight_norm_report(model):
+    """Architecture-agnostic weight norms, for models with no W1/W2 interface.
+
+    Total parameter norm is the Omnigrok order parameter — the quantity whose
+    drift into the "Goldilocks zone" produces delayed generalisation — so it
+    must be logged on the MNIST MLP and the transformer, neither of which has a
+    W1. Restricted to matrices (dim >= 2) so biases do not dominate the ends.
+    """
+    mats = [(n, p) for n, p in model.named_parameters() if p.dim() >= 2]
+    total = float(sum(float(p.data.norm()) ** 2 for _, p in mats) ** 0.5)
+    return {
+        "weight_norm_total": total,
+        "weight_norm_first": float(mats[0][1].data.norm()) if mats else float("nan"),
+        "weight_norm_last": float(mats[-1][1].data.norm()) if mats else float("nan"),
     }
 
 
@@ -49,6 +83,22 @@ def gradient_norms(model):
     if model.W2.grad is not None:
         norms["grad_norm_layer2"] = model.W2.grad.norm().item()
     return norms
+
+
+def spectral_ipr(mat, r=2):
+    """Inverse Participation Ratio of a (rows, period) matrix's row-wise DFT.
+
+    Factored out of `compute_ipr` so the same measure can be applied to any
+    matrix whose rows are indexed by a cyclic variable — GrokNet's W1[:, :p]
+    (neurons x operand) and the transformer's W_E.T (d_model x token) are the
+    same object in this sense. Operation order is unchanged from the original,
+    so GrokNet IPR values are bit-identical.
+    """
+    fft = torch.fft.fft(mat, dim=1)                      # (rows, period) complex
+    magnitudes = fft.abs()
+    norms = magnitudes.norm(dim=1, keepdim=True).clamp(min=1e-10)
+    w_tilde = magnitudes / norms
+    return (w_tilde ** (2 * r)).sum(dim=1).mean().item()
 
 
 def compute_ipr(model, r=2):
@@ -63,25 +113,9 @@ def compute_ipr(model, r=2):
     """
     W1 = model.W1.data  # (N, 2p)
     p = model.P
-    N = model.N
 
     # Take the first p columns (corresponding to the n input)
-    W1_n = W1[:, :p]  # (N, p)
-
-    # DFT along the p dimension (Fourier transform w.r.t. input index)
-    W1_fft = torch.fft.fft(W1_n, dim=1)  # (N, p) complex
-
-    # Normalize per neuron (Eq 20)
-    magnitudes = W1_fft.abs()  # (N, p)
-    norms = magnitudes.norm(dim=1, keepdim=True)  # (N, 1)
-    norms = norms.clamp(min=1e-10)
-    w_tilde = magnitudes / norms  # (N, p) — normalized
-
-    # IPR_r(k) per neuron, then average (Eq 21)
-    ipr_per_neuron = (w_tilde ** (2 * r)).sum(dim=1)  # (N,)
-    ipr_avg = ipr_per_neuron.mean().item()
-
-    return {"ipr": ipr_avg}
+    return {"ipr": spectral_ipr(W1[:, :p], r=r)}
 
 
 def compute_accuracy(logits, targets):

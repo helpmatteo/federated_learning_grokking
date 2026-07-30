@@ -24,8 +24,12 @@ class Config:
     # --- Architecture ---
     model: str = "groknet"               # architecture family (see fedgrok.core.registry)
     hidden_width: int = 100              # N: width of the single hidden layer
+                                         #   (= d_model for the transformer)
     n_layers: int = 3                    # hidden layers for the generic "mlp" model (Omnigrok)
     init_scale: float = 1.0              # init multiplier; >1 is the Omnigrok large-init trick
+    n_heads: int = 4                     # transformer attention heads; hidden_width must
+                                         #   be divisible by it (Nanda default 4)
+    d_mlp: int = 512                     # transformer MLP width (Nanda default 512)
     activation: Literal[
         "quadratic", "relu", "gelu",
         "abs", "quartic"

@@ -76,10 +76,18 @@ def _build_transformer(cfg):
     |G| for S_n), and d_model maps to cfg.hidden_width. Pair with loss="ce".
     """
     _, output_dim = dataset_dims(cfg)
+    n_heads = getattr(cfg, "n_heads", 4)
+    if cfg.hidden_width % n_heads != 0:
+        raise ValueError(
+            f"transformer needs hidden_width divisible by n_heads: got "
+            f"hidden_width={cfg.hidden_width}, n_heads={n_heads}. "
+            f"(hidden_width is d_model for this architecture; the Nanda "
+            f"configuration is 128 with 4 heads.)"
+        )
     return GrokFormer(
         p=output_dim,
         d_model=cfg.hidden_width,
-        n_heads=getattr(cfg, "n_heads", 4),
+        n_heads=n_heads,
         d_mlp=getattr(cfg, "d_mlp", 512),
     )
 

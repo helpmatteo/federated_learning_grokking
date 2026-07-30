@@ -13,7 +13,7 @@ class FedConfig(Config):
     local_epochs: int = 5                 # local SGD steps per client per round
     fraction_train: float = 1.0           # fraction of clients selected per round
     partition: Literal[
-        "iid", "operand", "target", "dirichlet", "coset"
+        "iid", "operand", "target", "dirichlet", "label_block", "coset"
     ] = "iid"
     dirichlet_alpha: float = 0.5          # concentration param for Dirichlet partition
                                           # (α→∞: IID, α→0: one class per client)
@@ -27,6 +27,16 @@ class FedConfig(Config):
     tau: float = 1e-3                     # adaptivity parameter (FedAdam/FedYogi)
     feddyn_alpha: float = 0.01           # FedDyn dynamic-regularisation strength
     track_client_drift: bool = True       # enable per-round drift logging
+    persist_local_opt_state: bool = False # keep each client's optimizer state across
+                                          #   rounds instead of rebuilding it.
+                                          #   False = standard FedAvg semantics and
+                                          #   the historical behaviour. For GD at
+                                          #   momentum=0 the two are identical; for
+                                          #   AdamW they are NOT — a fresh optimizer
+                                          #   makes every round E bias-corrected
+                                          #   cold-start Adam steps, so the E axis
+                                          #   measures optimizer restart mixed with
+                                          #   client drift. Set True to separate them.
     eval_every: int = 1                   # run global evaluation every N rounds
                                           # (1 = every round; higher = fewer curve
                                           #  points, proportionally faster). Round 0,

@@ -77,11 +77,76 @@ def identify_key_frequencies(model, top_k: int = 5) -> list:
     return sorted(top_indices.tolist())
 
 
-def analyze_config(config_dir: str, p: int = 97, hidden_width: int = 256,
+def load_run_config(config_dir: str):
+    """Rebuild the exact Config a run used, from the spec.json it wrote.
+
+    Returns None when the directory predates spec.json (see `analyze_config`).
+    """
+    spec_path = os.path.join(config_dir, "spec.json")
+    if not os.path.exists(spec_path):
+        return None
+    from fedgrok.manifest import build_config
+    with open(spec_path) as handle:
+        return build_config(json.load(handle))
+
+
+def analyze_setup_agnostic(config_dir: str) -> dict:
+    """Mechanistic time-series that apply to ANY architecture.
+
+    The Fourier path below needs GrokNet on a cyclic group. This one needs only a
+    checkpointed state_dict, so it is the analysis available for the transformer,
+    the MNIST MLP, and S_5 — which between them had none. Everything here is
+    basis-free: total and per-matrix weight norms (the Omnigrok order parameter)
+    and effective rank (Roy & Bhattacharyya) of each weight matrix.
+    """
+    ckpt_dir = os.path.join(config_dir, "checkpoints")
+    checkpoints = load_checkpoints(ckpt_dir) if os.path.exists(ckpt_dir) else []
+    if not checkpoints:
+        return {}
+
+    results = {"steps": [], "weight_norm_total": [], "per_matrix_rank": [],
+               "per_matrix_norm": [], "gini_spectrum": []}
+    for step, state in checkpoints:
+        # Norms are defined for any tensor; the SVD-based measures need a matrix.
+        # The transformer stores its attention projections per head (W_Q is
+        # (n_heads, d_model, d_head)), and torch.linalg.svdvals would treat that
+        # as a BATCH of SVDs and return a 2-D result -- so restrict rank and
+        # spectral Gini to genuinely 2-D parameters rather than reporting a
+        # batched quantity as if it were one spectrum. Those tensors still
+        # contribute their norms.
+        tensors = {k: v for k, v in state.items()
+                   if hasattr(v, "dim") and v.dim() >= 2}
+        mats = {k: v for k, v in tensors.items() if v.dim() == 2}
+        results["steps"].append(step)
+        results["weight_norm_total"].append(
+            float(sum(float(v.norm()) ** 2 for v in tensors.values()) ** 0.5))
+        results["per_matrix_norm"].append(
+            {k: float(v.norm()) for k, v in tensors.items()})
+        results["per_matrix_rank"].append(
+            {k: effective_rank(v) for k, v in mats.items()})
+        results["gini_spectrum"].append(
+            {k: gini_coefficient(torch.linalg.svdvals(v.float()))
+             for k, v in mats.items()})
+    return results
+
+
+def analyze_config(config_dir: str, p: int = None, hidden_width: int = None,
                    is_centralized: bool = False) -> dict:
     """Run full mechanistic analysis on a single config's checkpoints.
 
-    Returns dict with time-series of all mechanistic metrics.
+    The run's own config is read from the `spec.json` that `fedgrok.run` writes
+    next to the history. This used to be hardcoded as
+    `Config(p=p, alpha=0.5, seed=42)` with `task` defaulting to "addition", and a
+    fresh `GrokNet(...)` — which meant (a) a transformer or MNIST checkpoint
+    could not be loaded at all, and (b) for any run at a different alpha, seed or
+    task, restricted/excluded loss was silently evaluated against the WRONG train
+    split. Every v2 sweep runs alpha=0.3 or 0.25, so that second failure was live.
+
+    `p` and `hidden_width` remain as overrides for directories that predate
+    spec.json.
+
+    Returns a dict of time-series. Non-GrokNet or non-cyclic runs get the
+    setup-agnostic measures only; the Fourier block requires both.
     """
     ckpt_dir = os.path.join(config_dir, "checkpoints")
     if not os.path.exists(ckpt_dir):
@@ -93,11 +158,39 @@ def analyze_config(config_dir: str, p: int = 97, hidden_width: int = 256,
         print(f"No checkpoint files found in {ckpt_dir}")
         return {}
 
-    model = GrokNet(input_dim=2 * p, hidden_width=hidden_width, output_dim=p)
+    cfg = load_run_config(config_dir)
+    if cfg is None:
+        if p is None:
+            raise ValueError(
+                f"{config_dir} has no spec.json (it predates run-config "
+                f"provenance) and no explicit p= was given, so the architecture "
+                f"and data split are unknown. Pass p=/hidden_width= to analyse "
+                f"it as a GrokNet run."
+            )
+        cfg = Config(p=p, alpha=0.5, seed=42,
+                     hidden_width=hidden_width or 256)
+        print(f"WARNING: {config_dir} has no spec.json; assuming GrokNet "
+              f"p={p}, alpha=0.5, seed=42, task=addition. Any restricted/"
+              f"excluded loss is only valid if the run actually used those.")
 
-    # Prepare training data for restricted/excluded loss
-    cfg = Config(p=p, alpha=0.5, seed=42, hidden_width=hidden_width)
-    x_train, y_train, x_test, y_test = make_dataset(cfg)
+    base = analyze_setup_agnostic(config_dir)
+
+    from fedgrok.core.registry import build_model
+    from fedgrok.data.registry import build_dataset
+    from fedgrok.metrics.fourier import dft_applicable
+
+    model = build_model(cfg)
+    if not dft_applicable(model, cfg):
+        # Transformer / MNIST MLP / S_5: the Z_p DFT is meaningless. Return what
+        # is defined rather than fabricating a spectrum.
+        base["setup"] = {"dataset": cfg.dataset, "model": cfg.model,
+                         "loss": cfg.loss}
+        base["fourier_applicable"] = False
+        return base
+
+    p = cfg.p
+    hidden_width = cfg.hidden_width
+    x_train, y_train, x_test, y_test = build_dataset(cfg)
     y_train_oh = make_targets_onehot(y_train, p)
 
     # Identify key frequencies from the final checkpoint
@@ -107,6 +200,9 @@ def analyze_config(config_dir: str, p: int = 97, hidden_width: int = 256,
     print(f"Key frequencies (from final checkpoint): {key_freqs}")
 
     results = {
+        **base,
+        "setup": {"dataset": cfg.dataset, "model": cfg.model, "loss": cfg.loss},
+        "fourier_applicable": True,
         "steps": [],
         "ipr": [],
         "gini_w1_fourier": [],
