@@ -452,7 +452,230 @@ def t2_boundary():
     return specs
 
 
+# ── The four new setups ──────────────────────────────────────────────────────
+# Every federated result so far is SETUP_A. These are the setups built during the
+# v2 rewrite and verified to grok centrally, but never run federated. Each is
+# defined once here and referenced by every s5_* builder, so a setup's identity
+# lives in exactly one place.
+#
+# `setup` is a TAG, not a config field, so adding it costs no run ids.
+
+SETUP_B = {"dataset": "modular", "task": "addition", "p": 113,
+           "model": "transformer", "hidden_width": 128, "n_heads": 4,
+           "d_mlp": 512, "loss": "ce", "optimizer": "adamw", "lr": 1e-3,
+           "weight_decay": 1.0}
+
+SETUP_C = {"dataset": "s5", "group_n": 5, "model": "transformer",
+           "hidden_width": 128, "n_heads": 4, "d_mlp": 512, "loss": "ce",
+           "optimizer": "adamw", "lr": 1e-3, "weight_decay": 1.0}
+
+SETUP_D = {"dataset": "s5", "group_n": 5, "model": "groknet",
+           "hidden_width": 256, "loss": "ce", "optimizer": "adamw",
+           "lr": 1e-3, "weight_decay": 1.0}
+
+# MNIST: lr*wd = 1e-4 is the measured best band (t0_mnist_wd_band -- highest test
+# accuracy, clean 3300-epoch delay). alpha is IGNORED for MNIST; its data-fraction
+# axis is n_train.
+SETUP_E = {"dataset": "mnist", "model": "mlp", "hidden_width": 200,
+           "n_layers": 3, "init_scale": 9.0, "loss": "mse", "optimizer": "adamw",
+           "lr": 1e-3, "weight_decay": 0.1, "batch_size": 200}
+
+NEW_SETUPS = {"B": SETUP_B, "C": SETUP_C, "D": SETUP_D, "E": SETUP_E}
+
+
+def s5_central_anchor():
+    """STAGE 1: locate each new setup's own data cliff, centrally. Gate A.
+
+    This is the cheapest and highest-value stage in the campaign, and it is a
+    prerequisite rather than a formality, for two reasons.
+
+    FIRST, THERE IS NO ANCHOR. No manifest has ever produced a centralized
+    transformer or S5 run: the published grok times (transformer 6200, S5 ~14000)
+    came from ad-hoc runs with no result JSON, and `results/data/runs/` contains
+    zero of either. Federated delay is a RATIO, so without a pipeline-produced
+    centralized T_grok there is no denominator.
+
+    SECOND, alpha=0.25/0.3 IS SETUP-A'S BOUNDARY, NOT EVERYONE'S. Setup A's cliff
+    is at alpha_c ~= 0.198 and its FL cells sit just above it. Where the cliff is
+    for a transformer, for S5, or for MNIST is unknown. Placing FL cells before
+    measuring it is how this project has twice produced a censored cell that meant
+    nothing -- the E=1 probe cells and v1's K=97 breakdown claim, both budget
+    artifacts (see the E RANGE note above and t2_boundary's docstring).
+
+    Budgets are generous on purpose: a censored cell here must mean "past the
+    cliff", not "past the clock".
+    """
+    specs = []
+
+    # Setups B/C/D: the alpha ladder. Spans setup A's known boundary region so
+    # the cliffs are directly comparable.
+    for label, setup, epochs in (("B", SETUP_B, 30_000),
+                                 ("C", SETUP_C, 40_000),
+                                 ("D", SETUP_D, 40_000)):
+        specs += expand_grid(
+            {"mode": "centralized", **setup, "epochs": epochs, "log_every": 100},
+            {"alpha": [0.15, 0.20, 0.25, 0.30, 0.40, 0.50], "seed": SEEDS5},
+            tags={"tier": "S1", "group": "central_anchor",
+                  "experiment": "anchor", "setup": label},
+        )
+
+    # Setup A on the same ladder, for a like-for-like reference measured by the
+    # same harness rather than quoted from v1.
+    specs += expand_grid(
+        {"mode": "centralized", "task": "addition", "p": 97, "model": "groknet",
+         "hidden_width": 256, "loss": "mse", "optimizer": "gd", "lr": 50.0,
+         "epochs": 30_000, "log_every": 100},
+        {"alpha": [0.15, 0.20, 0.25, 0.30, 0.40, 0.50], "seed": SEEDS5},
+        tags={"tier": "S1", "group": "central_anchor", "experiment": "anchor",
+              "setup": "A"},
+    )
+
+    # Setup E: alpha does not apply, so the data axis is n_train. The batch-size
+    # block is NOT optional -- see s5_mnist_working_point below.
+    specs += expand_grid(
+        {"mode": "centralized", **SETUP_E, "n_test": 5000, "epochs": 20_000,
+         "log_every": 100},
+        {"n_train": [500, 1000, 2000, 4000], "seed": SEEDS5},
+        tags={"tier": "S1", "group": "central_anchor", "experiment": "anchor",
+              "setup": "E"},
+    )
+    return specs
+
+
+def s5_mnist_working_point():
+    """STAGE 1b: find an (n_train, batch_size) for MNIST that supports a K-sweep.
+
+    At the Omnigrok grok point (n_train=1000) federated MNIST is degenerate. Every
+    shard is n_train/K samples, so at batch_size=200:
+
+        n_train  K    per client   batches per local epoch
+           1000  10          100   1   <- batch_size is inert
+           1000  50           20   1
+           4000  10          400   2
+           4000   5          800   4
+
+    With one batch per local epoch, `local_epochs` stops meaning what it means on
+    every other setup and the E axis is not comparable. So MNIST needs a working
+    point that still groks centrally AND leaves >= 2 batches per local epoch at
+    the campaign's largest K. That is what this measures.
+    """
+    return expand_grid(
+        {"mode": "centralized", **{k: v for k, v in SETUP_E.items()
+                                   if k != "batch_size"},
+         "n_test": 5000, "epochs": 20_000, "log_every": 100},
+        {"n_train": [1000, 2000, 4000], "batch_size": [25, 50, 100, 200],
+         "seed": SEEDS3},
+        tags={"tier": "S1", "group": "mnist_working_point",
+              "experiment": "anchor", "setup": "E"},
+    )
+
+
+def s5_fl_probe():
+    """STAGE 2: does FL run at all on each new setup, and what does it cost? Gate B.
+
+    The cost model (9.8 + 1.291*K + 0.418*E) min/10k rounds is fitted on GrokNet
+    alone. Wall-clock here is ~99% Flower/Ray orchestration, and orchestration is
+    weight-shipping, so what matters is payload per client per round:
+
+        GrokNet + modular   74,496 params    291 KB
+        Transformer        225,792 params    882 KB   <- 3x
+        GrokNet + S5        92,160 params    360 KB
+        MLP + MNIST        199,210 params    778 KB
+
+    Compute is ~6x for the transformer but is only ~1% of wall-clock, so the
+    payload is the term to worry about. Rather than extrapolate, measure: this
+    stage refits the coefficients per setup before anything expensive is planned.
+
+    Also the first FL run of each new setup at a realistic K -- worth knowing
+    before committing to a 200-run stage.
+    """
+    specs = []
+    for label, setup in NEW_SETUPS.items():
+        cell = {"mode": "federated", **setup, "num_rounds": 2_000,
+                "local_epochs": 5, "eval_every": FL_EVAL_EVERY}
+        if label == "E":
+            # MNIST: no alpha, and operand/coset do not apply.
+            cell.update({"n_train": 4000, "n_test": 5000})
+            partitions = ["iid", "label_block"]
+        elif label in ("C", "D"):
+            cell["alpha"] = 0.5
+            partitions = ["iid", "operand"]
+        else:
+            cell["alpha"] = 0.3
+            partitions = ["iid", "operand"]
+        specs += expand_grid(
+            cell,
+            {"num_clients": [10, 50], "partition": partitions, "seed": SEEDS3},
+            tags={"tier": "S2", "group": "fl_probe", "experiment": "probe",
+                  "setup": label},
+        )
+
+    # The AdamW confound, quantified. Rebuilding the optimizer every round is a
+    # genuine no-op for GD at momentum=0 -- which is why setup A's E axis is clean
+    # -- but under AdamW it makes every round E bias-corrected COLD-START Adam
+    # steps. All four new setups use AdamW, so without this the new E results and
+    # setup A's are not measuring the same quantity. 12 runs to find out.
+    specs += expand_grid(
+        {"mode": "federated", **SETUP_B, "alpha": 0.3, "num_clients": 10,
+         "partition": "iid", "num_rounds": 2_000, "eval_every": FL_EVAL_EVERY},
+        {"persist_local_opt_state": [False, True], "local_epochs": [5, 50],
+         "seed": SEEDS3},
+        tags={"tier": "S2", "group": "adam_restart", "experiment": "probe",
+              "setup": "B"},
+    )
+    return specs
+
+
+def estimate_minutes(spec):
+    """Rough wall-clock for one spec, used only to order a manifest.
+
+    `launch_sweep.py` fills slots strictly FIFO in manifest order, so a long run
+    that happens to sit last starts last and tails the whole sweep behind it.
+    Emitting longest-first fills the short runs in behind the long ones instead;
+    on t2_boundary that was worth ~18% (7.2h -> 5.9h).
+
+    These constants are deliberately crude -- ordering only needs the ranking to
+    be right, not the magnitude. Measured on an L4, 2026-07-29. Stage 2 replaces
+    them with a per-setup fit; until then a transformer is charged ~3x a GrokNet
+    because wall-clock here is ~99% weight-shipping and it ships ~3x the payload.
+    """
+    # The two modes are bottlenecked by DIFFERENT things, so they need different
+    # model multipliers. Federated wall-clock is ~99% Flower/Ray weight-shipping,
+    # which scales with parameter count: the transformer's 226k params against
+    # GrokNet's 74k is the ~3x. Centralized wall-clock is per-step compute, where
+    # the transformer's attention and MLP make it ~9x GrokNet -- measured 8.4
+    # ms/step at p=113 against 1.3 ms/step. Using one multiplier for both
+    # under-costs the centralized transformer threefold.
+    if spec.get("mode") == "federated":
+        payload_cost = {"transformer": 3.0, "mlp": 2.7}.get(spec.get("model"), 1.0)
+        K = spec.get("num_clients", 5)
+        E = spec.get("local_epochs", 5)
+        rounds = spec.get("num_rounds", 10_000)
+        return (9.8 + 1.291 * K + 0.418 * E) * rounds / 10_000 * payload_cost
+    model_cost = {"transformer": 9.0, "mlp": 1.0}.get(spec.get("model"), 1.4)
+
+    # Centralized cost tracks GRADIENT STEPS, not epochs. Under minibatching an
+    # epoch is n_train/batch_size steps, so a batch-size sweep spans an order of
+    # magnitude at a fixed epoch budget: MNIST at (n_train 4000, batch 25) is
+    # 3.2M steps against 100k at (1000, 200) -- 32x. Costing by epochs alone
+    # scored all of those equal and put the most expensive cell two-thirds of the
+    # way down the file, which is precisely the tail-blocking this ordering
+    # exists to avoid.
+    epochs = spec.get("epochs", 10_000)
+    batch = spec.get("batch_size", 0)
+    n_train = spec.get("n_train", 1000)
+    steps = epochs * max(1, -(-n_train // batch)) if batch else epochs
+    return steps * 0.0009 / 60 * model_cost      # ~0.9 ms/step on an L4
+
+
+def _longest_first(specs):
+    return sorted(specs, key=estimate_minutes, reverse=True)
+
+
 BUILDERS = {
+    "s5_central_anchor": s5_central_anchor,
+    "s5_mnist_working_point": s5_mnist_working_point,
+    "s5_fl_probe": s5_fl_probe,
     "t0_wd_grid": t0_wd_grid,
     "t0_poly_pilot": t0_poly_pilot,
     "t0_mnist_wd_band": t0_mnist_wd_band,
@@ -473,9 +696,16 @@ def main():
         if name not in BUILDERS:
             raise SystemExit(f"Unknown manifest {name}; options: {list(BUILDERS)}")
         specs = BUILDERS[name]()
+        # Only the new staged manifests are reordered. The completed ones are
+        # left byte-for-byte as they ran, so their record stays exactly as
+        # executed -- and write_manifest would refuse to orphan their ids anyway.
+        if name.startswith("s5_"):
+            specs = _longest_first(specs)
         path = os.path.join(MANIFEST_DIR, name + ".jsonl")
         write_manifest(specs, path)
-        print(f"{name}: {len(specs)} runs -> {os.path.relpath(path)}")
+        est = sum(estimate_minutes(s) for s in specs)
+        print(f"{name}: {len(specs)} runs -> {os.path.relpath(path)} "
+              f"(~{est / 60:.1f} slot-hours)")
 
 
 if __name__ == "__main__":
