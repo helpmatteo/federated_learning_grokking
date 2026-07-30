@@ -626,6 +626,173 @@ def s5_fl_probe():
     return specs
 
 
+def s5_setup_c_capacity():
+    """GATE A follow-up: does setup C fail because of alpha, or because of capacity?
+
+    C (transformer on S5) never groks reliably: 4/5 at alpha=0.5, 3/5 at 0.4, 0/5
+    below. Two explanations, and they lead to opposite decisions.
+
+    (a) THE CLIFF IS SIMPLY HIGHER. S5 is a harder function than modular addition
+        -- 120 classes, non-abelian -- so it may just need more data. Tested by
+        extending the ladder to alpha 0.6/0.7.
+
+    (b) THE MODEL IS TOO SMALL. d_model=128 against 120 output classes is thin,
+        and the suspicious part is that the *quadratic MLP* at width 256 handles
+        the same task cleanly (setup D: 5/5 down to alpha=0.25). A transformer
+        losing to a 2-layer MLP on the canonical grokking benchmark is more
+        likely a capacity or tuning artifact than a fact about transformers.
+        Tested by sweeping n_heads / d_mlp / hidden_width -- newly possible, since
+        those only became Config fields in this session; a manifest setting them
+        used to raise in build_config.
+
+    100k epochs throughout: C's slowest observed grok is 33,100, so a censored
+    cell here means "past the cliff", not "past the clock".
+
+    Decision rule: C stays in the campaign if some configuration reaches 5/5 at a
+    workable alpha with T_grok below a third of budget. Otherwise it is dropped
+    and the campaign runs A/B/D/E -- which still separates architecture (B vs A)
+    from task (D vs A); C is the interpolation cell, not a load-bearing one.
+    """
+    specs = expand_grid(
+        {"mode": "centralized", **SETUP_C, "epochs": 100_000, "log_every": 200},
+        {"alpha": [0.6, 0.7], "seed": SEEDS5},
+        tags={"tier": "S1b", "group": "c_alpha", "experiment": "gate_a", "setup": "C"},
+    )
+    for width in (128, 256):
+        specs += expand_grid(
+            {"mode": "centralized", **SETUP_C, "hidden_width": width,
+             "alpha": 0.5, "epochs": 100_000, "log_every": 200},
+            {"n_heads": [4, 8], "d_mlp": [512, 1024], "seed": SEEDS3},
+            tags={"tier": "S1b", "group": "c_capacity", "experiment": "gate_a",
+                  "setup": "C"},
+        )
+    return specs
+
+
+def s5_mnist_fl():
+    """GATE A follow-up: federated MNIST at a config that actually groks.
+
+    The first probe ran MNIST at (n_train=4000, batch=200) -- which the
+    working-point sweep then showed has NO DELAY at all centrally: T_grok 500
+    against memorisation at 500. So the probe measured federation on a setup that
+    was not grokking to begin with, and its censoring says nothing about
+    federation.
+
+    The working-point sweep's finding is that delay and shardability oppose each
+    other. A large memorise->generalise gap needs a large batch; a large batch on
+    a shard of n_train/K samples degenerates to a single full-batch step, at which
+    point `local_epochs` stops meaning what it means on every other setup. The
+    two cells that have both a real delay and >= 2 batches per local epoch:
+
+        (2000, 50)   delay 200,  8/4/2 batches at K = 5/10/20
+        (2000, 100)  delay 500,  4/2/1 batches at K = 5/10/20
+
+    Both are swept. batch_size is held FIXED across the K sweep within each arm --
+    varying it with K to keep shards viable would confound the K axis with a
+    change in the optimiser's effective batch, which is the very thing the delay
+    depends on. The (100, K=20) cell is therefore degenerate by construction and
+    is kept deliberately, as the control that shows what degeneracy looks like.
+
+    4,000 rounds x E=5 = 20,000 steps, ~25x the centralized requirement.
+    """
+    return expand_grid(
+        {"mode": "federated", **{k: v for k, v in SETUP_E.items() if k != "batch_size"},
+         "n_train": 2000, "n_test": 5000, "num_rounds": 4_000, "local_epochs": 5,
+         "eval_every": FL_EVAL_EVERY},
+        {"batch_size": [50, 100], "num_clients": [5, 10, 20],
+         "partition": ["iid", "label_block"], "seed": SEEDS3},
+        tags={"tier": "S2b", "group": "mnist_fl", "experiment": "gate_a", "setup": "E"},
+    )
+
+
+def s5_probe_rerun():
+    """GATE A follow-up: the probe cells that genuinely ran out of budget.
+
+    Deliberately narrow. Of the probe's censored cells, only these three had
+    MEMORISED and were waiting to generalise -- the rest sit at 1-5% train
+    accuracy, which no amount of extra budget fixes (see s5_k50_diagnosis).
+
+        D quad/S5  K=50 iid      99% train, 77-82% test against an 85 bar
+        D quad/S5  K=10 operand  95% train, 13% test
+        B tfmr/mod K=10 operand  50-96% train, 8-91% test -- one seed nearly made it
+
+    10,000 rounds x E=5 = 50,000 steps, 5x the original probe and >2x each
+    setup's centralized T_grok, so a cell that still censors here is reporting
+    federation rather than the clock.
+    """
+    specs = expand_grid(
+        {"mode": "federated", **SETUP_D, "alpha": 0.5, "num_clients": 50,
+         "partition": "iid", "num_rounds": 10_000, "local_epochs": 5,
+         "eval_every": FL_EVAL_EVERY},
+        {"seed": SEEDS3},
+        tags={"tier": "S2b", "group": "probe_rerun", "experiment": "gate_a", "setup": "D"},
+    )
+    specs += expand_grid(
+        {"mode": "federated", **SETUP_D, "alpha": 0.5, "num_clients": 10,
+         "partition": "operand", "num_rounds": 10_000, "local_epochs": 5,
+         "eval_every": FL_EVAL_EVERY},
+        {"seed": SEEDS3},
+        tags={"tier": "S2b", "group": "probe_rerun", "experiment": "gate_a", "setup": "D"},
+    )
+    specs += expand_grid(
+        {"mode": "federated", **SETUP_B, "alpha": 0.3, "num_clients": 10,
+         "partition": "operand", "num_rounds": 10_000, "local_epochs": 5,
+         "eval_every": FL_EVAL_EVERY},
+        {"seed": SEEDS3},
+        tags={"tier": "S2b", "group": "probe_rerun", "experiment": "gate_a", "setup": "B"},
+    )
+    return specs
+
+
+def s5_k50_diagnosis():
+    """GATE A follow-up: why does every AdamW setup fail to TRAIN at K=50?
+
+    B, C and D all sit at 1-5% train accuracy at K=50 -- not memorised-but-not-
+    generalising, but barely learning -- while setup A under plain GD groks 5/5 at
+    the same K. So it is not client count by itself, and it is not budget: a model
+    at 4% train after 10,000 steps, whose centralized twin reaches 100% train by
+    epoch 200, is not short of steps.
+
+    Two mechanisms already ruled out from the logged history:
+      * weight-norm collapse (AdamW's decay is data-independent, so it survives
+        averaging intact while gradient terms partially cancel) -- norms are flat
+        or GROWING; D K=50 operand reaches a norm comparable to the grokking K=10
+        run while sitting at 2% train;
+      * client drift -- elevated but not decisive, and the failing D K=50 operand
+        drifts LESS than the working D K=50 iid.
+
+    So this sweep asks the two cheap remaining questions:
+
+      LOCAL STEP SIZE. lr and wd are tuned for full-batch centralized training. A
+      K=50 client holds ~76 samples and takes 5 full-batch steps on them; the same
+      lr may simply be far too large at that shard size, so 50 clients overfit in
+      opposite directions and the average is noise.
+
+      WHERE IT BREAKS. K=10 works and K=50 does not. A ladder between them says
+      whether this is a sharp transition (interesting) or a smooth degradation
+      (a tuning gradient).
+
+    Decision rule: if a lower local lr recovers training, this is a
+    hyperparameter mismatch and Stage 3 must tune per-K or move adaptivity
+    server-side (FedAdam/FedYogi are already implemented). If nothing recovers it,
+    it is a candidate breakdown mechanism and becomes a headline rather than a
+    nuisance -- with the per-client signature checkpoints as the evidence base.
+    """
+    cell = {"mode": "federated", **SETUP_B, "alpha": 0.3, "partition": "iid",
+            "num_rounds": 2_000, "local_epochs": 5, "eval_every": FL_EVAL_EVERY}
+    specs = expand_grid(
+        {**cell, "num_clients": 50},
+        {"lr": [1e-4, 3e-4, 1e-3], "weight_decay": [0.1, 1.0], "seed": [42]},
+        tags={"tier": "S2b", "group": "k50_hparam", "experiment": "gate_a", "setup": "B"},
+    )
+    specs += expand_grid(
+        cell,
+        {"num_clients": [20, 30, 40], "seed": [42]},
+        tags={"tier": "S2b", "group": "k50_ladder", "experiment": "gate_a", "setup": "B"},
+    )
+    return specs
+
+
 def estimate_minutes(spec):
     """Rough wall-clock for one spec, used only to order a manifest.
 
@@ -673,6 +840,10 @@ def _longest_first(specs):
 
 
 BUILDERS = {
+    "s5_setup_c_capacity": s5_setup_c_capacity,
+    "s5_mnist_fl": s5_mnist_fl,
+    "s5_probe_rerun": s5_probe_rerun,
+    "s5_k50_diagnosis": s5_k50_diagnosis,
     "s5_central_anchor": s5_central_anchor,
     "s5_mnist_working_point": s5_mnist_working_point,
     "s5_fl_probe": s5_fl_probe,
