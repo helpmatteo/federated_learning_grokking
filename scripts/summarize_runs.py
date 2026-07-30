@@ -29,10 +29,13 @@ from fedgrok.analysis.survival import summarize_survival
 # at different accuracy bars are not measuring the same event. Pooling either
 # silently mixes incomparable observations into one survival curve.
 DEFAULT_CELL_KEYS = [
-    "experiment", "setting", "algorithm", "mode", "dataset", "model", "loss",
-    "task", "p", "alpha", "num_clients", "local_epochs", "num_rounds",
+    "experiment", "setting", "algorithm", "setup",
+    "mode", "dataset", "model", "loss",
+    "task", "p", "group_n", "coset_subgroup", "alpha", "n_train",
+    "hidden_width", "n_layers", "init_scale", "batch_size", "activation",
+    "num_clients", "local_epochs", "num_rounds",
     "fraction_train", "partition", "dirichlet_alpha", "strategy",
-    "weight_decay", "grok_threshold",
+    "server_lr", "server_momentum", "weight_decay", "grok_threshold",
 ]
 
 
@@ -47,9 +50,27 @@ def _to_float(x):
         return None
 
 
-def summarize_csv(path, cell_keys, budget=None):
+def summarize_csv(path, cell_keys, budget=None, strict=False):
+    """Group rows into config cells and summarise each cell's survival.
+
+    A cell key naming a column the CSV does not have is not a no-op: it means
+    two runs that differ on that key are POOLED into one survival curve. With
+    `model` missing, S5-groknet and S5-transformer merge; with `grok_threshold`
+    missing, t_grok values measured at the 85%, 90% and 95% bars are averaged
+    together. Both used to happen silently. Now they warn, and `strict` turns
+    them into an error.
+    """
     rows = list(csv.DictReader(open(path)))
     present = [k for k in cell_keys if rows and k in rows[0]]
+
+    absent = [k for k in cell_keys if rows and k not in rows[0]]
+    if absent:
+        msg = (f"{os.path.basename(path)} has no column for cell key(s) "
+               f"{absent} -- runs differing only in those are POOLED into one "
+               f"cell. Re-run scripts/collect_runs.py if the CSV predates them.")
+        if strict:
+            raise ValueError(msg)
+        print(f"WARNING: {msg}\n", file=sys.stderr)
 
     cells = collections.defaultdict(list)
     for r in rows:
@@ -92,10 +113,14 @@ def main():
     parser.add_argument("--budget", type=float, default=None,
                         help="censoring time for non-grokked seeds lacking steps_run")
     parser.add_argument("--out", default=None, help="write the table to a CSV")
+    parser.add_argument("--strict", action="store_true",
+                        help="Error instead of warning when a named cell key is "
+                             "missing from the CSV (i.e. cells would be pooled).")
     args = parser.parse_args()
 
     cell_keys = args.group.split(",") if args.group else DEFAULT_CELL_KEYS
-    present, summaries = summarize_csv(args.csv, cell_keys, budget=args.budget)
+    present, summaries = summarize_csv(args.csv, cell_keys, budget=args.budget,
+                                       strict=args.strict)
 
     def fmt(x):
         return "inf" if x == float("inf") else (f"{x:.0f}" if x == x else "-")

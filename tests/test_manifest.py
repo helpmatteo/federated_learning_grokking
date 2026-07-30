@@ -1,5 +1,7 @@
 """Tests for the manifest / spec machinery (pure, no training)."""
 
+import os
+
 import pytest
 
 from fedgrok.core.config import Config
@@ -112,3 +114,55 @@ class TestManifestIO:
         )
         loaded = load_manifest(str(path))
         assert len(loaded) == 1 and loaded[0]["p"] == 97
+
+
+MANIFEST_DIR = os.path.join(os.path.dirname(__file__), "..", "manifests")
+
+
+class TestBankedIdsAreStable:
+    """The tripwire protecting completed runs from a schema change.
+
+    Result JSONs are keyed by run id, and run_id hashes the spec *as written* —
+    so adding a field to a spec changes its id even at that field's default
+    value, orphaning every banked result under the old id. These two tests fail
+    loudly the moment that happens.
+    """
+
+    @pytest.mark.parametrize("name", sorted(
+        f for f in os.listdir(MANIFEST_DIR) if f.endswith(".jsonl")
+    ))
+    def test_every_manifest_id_rehashes_to_itself(self, name):
+        specs = load_manifest(os.path.join(MANIFEST_DIR, name))
+        assert specs, f"{name} is empty"
+        for spec in specs:
+            recorded = spec["id"]
+            core = {k: v for k, v in spec.items() if k != "id"}
+            assert run_id(core) == recorded, (
+                f"{name}: spec id {recorded} does not re-hash to itself "
+                f"(got {run_id(core)}). A config field was added or changed; "
+                f"any banked result under {recorded} is now orphaned."
+            )
+
+    def test_write_manifest_refuses_to_orphan_ids(self, tmp_path):
+        path = str(tmp_path / "m.jsonl")
+        original = expand_grid({"mode": "centralized", "p": 97}, {"seed": [42, 123]})
+        write_manifest(original, path)
+
+        # Simulate a schema change: the same cells, now carrying one extra field.
+        changed = [dict(s, weight_decay=0.0) for s in original]
+        for s in changed:
+            s.pop("id")
+        with pytest.raises(ValueError, match="orphan"):
+            write_manifest(changed, path)
+
+        write_manifest(changed, path, force=True)   # escape hatch still works
+        assert len(load_manifest(path)) == 2
+
+    def test_write_manifest_allows_pure_additions(self, tmp_path):
+        path = str(tmp_path / "m.jsonl")
+        original = expand_grid({"mode": "centralized", "p": 97}, {"seed": [42]})
+        write_manifest(original, path)
+        grown = original + expand_grid({"mode": "centralized", "p": 97},
+                                       {"seed": [123]})
+        write_manifest(grown, path)          # superset — must not raise
+        assert len(load_manifest(path)) == 2

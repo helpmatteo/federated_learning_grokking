@@ -14,14 +14,19 @@ import dataclasses
 import hashlib
 import itertools
 import json
+import os
 
 from fedgrok.core.config import Config
 from fedgrok.core.fed_config import FedConfig
 
 
-# Keys that tag/group a run for analysis but are not config fields.
+# Keys that tag/group a run for analysis but are not config fields. Tags are
+# excluded from the content hash, so adding one to an existing spec is free --
+# which is why `setup` (the setup's short name, e.g. "B" for transformer+modular)
+# is a tag rather than a config field: it carries identity into the results table
+# without re-hashing any banked run.
 TAG_KEYS = {"id", "mode", "tier", "group", "experiment", "setting", "algorithm",
-            "label", "manifest"}
+            "label", "manifest", "setup"}
 
 
 def config_class(mode: str):
@@ -114,8 +119,39 @@ def load_manifest(path: str) -> list:
     return specs
 
 
-def write_manifest(specs: list, path: str):
-    """Write specs as JSONL, filling in ids."""
+def orphaned_ids(specs: list, path: str) -> list:
+    """Ids present in the manifest at `path` that `specs` would no longer produce.
+
+    A run id is a content hash of the spec *as written* (see run_id), so adding a
+    field to a spec changes its id even at the field's default value. Any banked
+    result JSON keyed by an old id is then orphaned: the launcher no longer
+    recognises it as done and re-runs completed work.
+
+    Returns the ids that would disappear. Empty list means the rewrite is safe.
+    """
+    if not os.path.exists(path):
+        return []
+    existing = {s["id"] for s in load_manifest(path)}
+    new = {s.get("id") or run_id(s) for s in specs}
+    return sorted(existing - new)
+
+
+def write_manifest(specs: list, path: str, force: bool = False):
+    """Write specs as JSONL, filling in ids.
+
+    Refuses to drop ids an existing manifest already claims unless `force`, so a
+    schema change cannot silently orphan banked runs. See `orphaned_ids`.
+    """
+    if not force:
+        lost = orphaned_ids(specs, path)
+        if lost:
+            raise ValueError(
+                f"Rewriting {path} would orphan {len(lost)} run id(s) that the "
+                f"existing manifest claims, e.g. {lost[:3]}. Any banked result "
+                f"JSON under those ids would stop counting as done and be re-run. "
+                f"Add new cells in a NEW manifest, or pass force=True if the "
+                f"orphaned runs are genuinely unwanted."
+            )
     with open(path, "w") as handle:
         for spec in specs:
             spec = dict(spec)

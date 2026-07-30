@@ -54,6 +54,14 @@ def run_spec(spec: dict, results_root: str = DEFAULT_RESULTS_DIR,
     spec.setdefault("output_dir", os.path.join(histories_root, spec["id"]))
     cfg = build_config(spec)
 
+    # Drop the spec next to the history BEFORE training. Checkpoints are bare
+    # state_dicts, so without this there is no way to know which architecture or
+    # data split a .pt file belongs to -- which is why the post-hoc analyzer used
+    # to hardcode GrokNet and alpha=0.5, and was silently wrong on every run that
+    # did not match. Written up front so it exists even if the run then crashes.
+    os.makedirs(spec["output_dir"], exist_ok=True)
+    _write_json_atomic(os.path.join(spec["output_dir"], "spec.json"), spec)
+
     t0 = time.time()
     if mode == "centralized":
         from fedgrok.training.centralized import train
@@ -77,7 +85,7 @@ def run_spec(spec: dict, results_root: str = DEFAULT_RESULTS_DIR,
         "mode": mode,
         # grouping tags (may be absent)
         **{k: spec[k] for k in ("tier", "group", "experiment", "setting",
-                                "algorithm", "manifest") if k in spec},
+                                "algorithm", "manifest", "setup") if k in spec},
         # config — setup identity first. Without dataset/model/loss a t1
         # replication row cannot say whether it is the groknet or the
         # transformer on S5; they were separable only by hidden_width, and
@@ -88,6 +96,13 @@ def run_spec(spec: dict, results_root: str = DEFAULT_RESULTS_DIR,
         "task": cfg.task, "optimizer": cfg.optimizer, "p": cfg.p,
         "hidden_width": cfg.hidden_width, "alpha": cfg.alpha, "seed": cfg.seed,
         "lr": cfg.lr, "weight_decay": cfg.weight_decay,
+        # `alpha` is the data-fraction axis for the grid datasets only; MNIST's
+        # is n_train (alpha is ignored there), and `epochs` is the centralized
+        # censoring time. Without these a centralized row cannot say how much
+        # data it saw or how long it had to grok.
+        "activation": cfg.activation, "momentum": cfg.momentum,
+        "n_train": cfg.n_train, "n_test": cfg.n_test,
+        "epochs": cfg.epochs, "log_every": cfg.log_every,
         "num_clients": cfg_dict.get("num_clients"),
         "local_epochs": cfg_dict.get("local_epochs"),
         "num_rounds": cfg_dict.get("num_rounds"),
@@ -102,6 +117,12 @@ def run_spec(spec: dict, results_root: str = DEFAULT_RESULTS_DIR,
         "tau": cfg_dict.get("tau"),
         "eval_every": cfg_dict.get("eval_every"),
         "checkpoint_every": cfg_dict.get("checkpoint_every"),
+        # The A/B arm for the AdamW optimizer-restart confound. Without it the two
+        # arms are indistinguishable in the results table -- the same defect that
+        # dropping dataset/model/loss caused, one axis over.
+        "persist_local_opt_state": cfg_dict.get("persist_local_opt_state"),
+        "feddyn_alpha": cfg_dict.get("feddyn_alpha"),
+        "checkpoint_client_weights": cfg_dict.get("checkpoint_client_weights"),
         # outcomes — grok_threshold is recorded because it varies by dataset,
         # so a t_grok is only interpretable next to the bar it was measured at.
         "grok_threshold": threshold,
