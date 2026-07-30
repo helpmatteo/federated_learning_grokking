@@ -14,6 +14,7 @@ import dataclasses
 import json
 import os
 import time
+import warnings
 from collections import OrderedDict
 
 import numpy as np
@@ -32,8 +33,10 @@ from fedgrok.core.registry import build_model, build_loss
 from fedgrok.data.registry import dataset_dims
 from fedgrok.core.utils import make_optimizer, get_device
 from fedgrok.metrics.fourier import (
-    weight_norms, compute_ipr, compute_accuracy, fourier_spectrum, fourier_applicable,
+    weight_norms, compute_ipr, compute_accuracy, fourier_spectrum,
+    dft_applicable, weight_norms_applicable, weight_norm_report,
 )
+from fedgrok.metrics.probes import client_signature, mechanistic_probe, probe_keys
 
 
 # ── Dataset cache ────────────────────────────────────────────────────────────
@@ -43,14 +46,36 @@ from fedgrok.metrics.fourier import (
 _dataset_cache = {}
 
 
-def _dataset_cache_key(cfg):
-    return (cfg.p, cfg.task, cfg.alpha, cfg.seed, cfg.num_clients, cfg.partition,
-            getattr(cfg, 'dirichlet_alpha', None))
+def _data_key(cfg):
+    """Everything that determines the DATA a client sees.
+
+    The key used to be (p, task, alpha, seed, num_clients, partition,
+    dirichlet_alpha), which is only sufficient in a single-dataset study. Across
+    setups it collides outright: a modular config and an S5 config produce the
+    identical tuple (S5 leaves p/task at their defaults), as do two MNIST configs
+    differing only in n_train. Whichever ran first then serves its data to the
+    second. That is loud when the dims differ and silent when they do not.
+    """
+    return (cfg.dataset, cfg.p, cfg.task, cfg.alpha, cfg.seed,
+            cfg.num_clients, cfg.partition, getattr(cfg, "dirichlet_alpha", None),
+            cfg.group_n, cfg.coset_subgroup, cfg.n_train, cfg.n_test)
+
+
+def _client_key(cfg, partition_id):
+    """Data identity plus everything determining the cached MODEL and TARGET.
+
+    `_client_cache` stores a built model and a loss-specific target tensor, so it
+    needs more than `_data_key`. Loss especially: an MSE entry served to a CE run
+    hands one-hot floats to CrossEntropyLoss, which accepts them as soft labels
+    and trains without error on the wrong objective.
+    """
+    return (_data_key(cfg), cfg.model, cfg.loss, cfg.hidden_width, cfg.n_layers,
+            cfg.activation, cfg.init_scale, cfg.n_heads, cfg.d_mlp, partition_id)
 
 
 def _get_cached_datasets(cfg):
     """Return federated datasets, caching by config to avoid redundant work."""
-    cache_key = _dataset_cache_key(cfg)
+    cache_key = _data_key(cfg)
     if cache_key not in _dataset_cache:
         _dataset_cache[cache_key] = make_federated_datasets(cfg)
     return _dataset_cache[cache_key]
@@ -76,7 +101,7 @@ def _get_warm_client(cfg, partition_id, device):
     parameter values are overwritten with the round's global weights by the
     caller, so its initialisation is irrelevant after the first round.
     """
-    key = (_dataset_cache_key(cfg), partition_id)
+    key = _client_key(cfg, partition_id)
     entry = _client_cache.get(key)
     if entry is None:
         client_data, _, _, _, _ = _get_cached_datasets(cfg)
@@ -90,6 +115,22 @@ def _get_warm_client(cfg, partition_id, device):
         entry = (model, x_local, y_local_target, y_local)
         _client_cache[key] = entry
     return entry
+
+
+_optimizer_cache = {}
+
+
+def _get_warm_optimizer(cfg, model, partition_id):
+    """This client's optimizer, persisted across rounds (see persist_local_opt_state).
+
+    Keyed exactly like _client_cache, and lives in the same Ray actor, so the
+    Adam moment estimates survive between this client's rounds instead of being
+    re-initialised every round.
+    """
+    key = _client_key(cfg, partition_id)
+    if key not in _optimizer_cache:
+        _optimizer_cache[key] = make_optimizer(model, cfg)
+    return _optimizer_cache[key]
 
 
 def _load_ndarrays_into(model, ndarrays):
@@ -164,7 +205,6 @@ class GrokClient(NumPyClient):
     def fit(self, parameters, config):
         cfg = _fit_config_to_cfg(config)
         device = get_device()
-        p = cfg.p
 
         # Warm model + on-device data (built once per client, reused each round).
         # y_local_target is one-hot (MSE) or class indices (CE) per the loss.
@@ -173,11 +213,18 @@ class GrokClient(NumPyClient):
         # Overwrite the model with this round's global weights, in place.
         _load_ndarrays_into(model, parameters)
 
-        # NOTE: Optimizer state (momentum, Adam moments) is intentionally NOT
-        # preserved across rounds — a fresh optimizer restarts it, which is the
-        # standard FedAvg/FedProx semantics. For SGD momentum=0 it is a no-op;
-        # for AdamW the adaptive estimates restart each round.
-        optimizer = make_optimizer(model, cfg)
+        # Optimizer state (momentum, Adam moments) is by default NOT preserved
+        # across rounds — a fresh optimizer restarts it, which is the standard
+        # FedAvg/FedProx semantics. For SGD at momentum=0 that is a genuine no-op,
+        # which is why the anchor setup's E axis is clean. For AdamW it is not:
+        # every round becomes E bias-corrected cold-start Adam steps, so an E
+        # sweep confounds "more local drift" with "more optimizer restarts". Set
+        # persist_local_opt_state=True to hold the state across rounds and
+        # measure the difference. Default False keeps every existing run exact.
+        if cfg.persist_local_opt_state:
+            optimizer = _get_warm_optimizer(cfg, model, self.partition_id)
+        else:
+            optimizer = make_optimizer(model, cfg)
         loss_fn = build_loss(cfg).loss_fn
 
         # FedProx: snapshot the global weights for the proximal term.
@@ -193,7 +240,7 @@ class GrokClient(NumPyClient):
             from fedgrok.training import scaffold as _sc
             shapes = [w.shape for w in parameters]
             server_cv = _sc._cv_from_bytes(scaffold_cv_bytes, shapes)
-            cv_key = (_dataset_cache_key(cfg), self.partition_id)
+            cv_key = _client_key(cfg, self.partition_id)
             client_cv = _sc.get_client_cv(cv_key, parameters)
 
         def _step(xb, yb):
@@ -240,26 +287,39 @@ class GrokClient(NumPyClient):
         drift = compute_drift(parameters, updated_weights)
         weight_norm = float(sum(np.sum(w**2) for w in updated_weights) ** 0.5)
         # IPR is GrokNet-specific; NaN on other architectures.
-        local_ipr = compute_ipr(model)["ipr"] if fourier_applicable(model, cfg) else float("nan")
+        local_ipr = compute_ipr(model)["ipr"] if dft_applicable(model, cfg) else float("nan")
+        _client_probe = mechanistic_probe(cfg)
 
-        # Extract W1 for per-client Fourier analysis (only at checkpoint rounds)
-        # Serialize as bytes since Flower metrics only support Scalar types
+        # Extract this client's signature matrix for per-client mechanistic
+        # analysis (only at checkpoint rounds). Serialized as bytes since Flower
+        # metrics only support Scalar types. The matrix is architecture-specific
+        # (see metrics.probes.client_signature) — it used to be W1[:, :cfg.p]
+        # behind a GrokNet gate, so no non-modular run captured anything.
         server_round = int(config.get("server_round", 0))
         ckpt_every = int(config.get("checkpoint_every", 0))
         is_checkpoint_round = (ckpt_every > 0 and server_round > 0
                                and server_round % ckpt_every == 0)
-        if (config.get("checkpoint_client_weights", False) and is_checkpoint_round
-                and fourier_applicable(model, cfg)):
-            client_w1_bytes = model.W1.data[:, :cfg.p].cpu().numpy().tobytes()
-        else:
-            client_w1_bytes = None
 
         metrics_dict = {"loss": local_loss, "accuracy": local_acc, "drift": drift,
              "weight_norm": weight_norm, "ipr": local_ipr}
-        if client_w1_bytes is not None:
-            metrics_dict["w1_first_p"] = client_w1_bytes
-            metrics_dict["w1_shape_0"] = model.W1.data.shape[0]
-            metrics_dict["w1_shape_1"] = cfg.p
+        if config.get("checkpoint_client_weights", False) and is_checkpoint_round:
+            sig_name, sig = client_signature(model, cfg)
+            if sig is None:
+                warnings.warn(
+                    f"checkpoint_client_weights is on but model {cfg.model!r} "
+                    f"exposes no signature matrix; per-client weights will not "
+                    f"be saved for this run.", RuntimeWarning, stacklevel=2)
+            else:
+                metrics_dict["w1_first_p"] = sig.astype(np.float32).tobytes()
+                metrics_dict["w1_shape_0"] = sig.shape[0]
+                metrics_dict["w1_shape_1"] = sig.shape[1]
+                metrics_dict["w1_name"] = sig_name
+
+        # Per-client mechanistic probe, every round rather than only at
+        # checkpoints — cheap, and it makes the per-client story available even
+        # on runs that never enable checkpointing.
+        for key, value in _client_probe(model, x_local, y_local, cfg).items():
+            metrics_dict[f"client_{key}"] = value
 
         # SCAFFOLD: update this client's control variate and report Δc_i so the
         # server can update c. lr is the local learning rate; n_steps the number
@@ -310,6 +370,21 @@ def _build_strategy(cfg, init_params, evaluate_fn, fit_metrics_aggregation_fn=No
         common_kwargs["fit_metrics_aggregation_fn"] = fit_metrics_aggregation_fn
 
     if cfg.strategy == "scaffold":
+        # SCAFFOLD's Option-II control variate is c_i+ = c_i - c + (x - y_i)/(eta*K),
+        # which inverts x - y_i = eta * sum(g). That identity holds for SGD. Under
+        # AdamW the update is eta * sum(m_hat / (sqrt(v_hat) + eps)) plus decoupled
+        # decay, so dividing by eta*K recovers a per-coordinate PRECONDITIONED sum,
+        # not the gradient sum -- the resulting c_i is wrong by a factor that varies
+        # per coordinate. It would still produce plausible numbers, and SCAFFOLD is
+        # the load-bearing "is drift the mechanism?" arm, so fail loudly instead.
+        if cfg.optimizer == "adamw":
+            raise ValueError(
+                "SCAFFOLD is not valid with optimizer='adamw': its control-variate "
+                "estimator (x - y_i)/(lr * n_steps) assumes SGD, so under Adam's "
+                "per-coordinate preconditioning c_i is systematically wrong. Use "
+                "optimizer='gd', or compare drift correction with FedProx, whose "
+                "proximal term makes no such assumption."
+            )
         from fedgrok.training.scaffold import ScaffoldStrategy
         return ScaffoldStrategy(
             **common_kwargs,
@@ -346,10 +421,16 @@ def fed_train(cfg: FedConfig):
     device = get_device()
     print(f"Using device: {device}")
 
-    # Drop warm client state from any previous run in this process. The cache is
-    # keyed so stale entries can't be mis-served, but clearing frees their GPU
-    # memory when many runs share one process (e.g. the test suite).
+    # Drop cached state from any previous run in this process. Both caches are
+    # keyed on the full data/model identity, so a stale entry cannot be
+    # mis-served -- but clearing frees their GPU memory when many runs share one
+    # process (the test suite, and experiments/exp_mechanistic_checkpoints.py,
+    # which calls fed_train five times). _dataset_cache used to be left alone
+    # here, so it persisted across runs under a key that could not tell two
+    # setups apart.
     _client_cache.clear()
+    _dataset_cache.clear()
+    _optimizer_cache.clear()
 
     # Precompute global data (single call, also populates cache for clients)
     client_data, x_train_full, y_train_full, x_test, y_test = _get_cached_datasets(cfg)
@@ -390,13 +471,27 @@ def fed_train(cfg: FedConfig):
     # Mutable container for inter-callback communication (closure-shared).
     # Flower calls aggregate_fit (hence _aggregate_fit_metrics) before
     # evaluate_fn within a round, so evaluate_fn reads this round's values.
+    # "client_probes" must be initialised here, not only in _aggregate_fit_metrics:
+    # evaluate_fn runs at round 0, before any client has fit. Seeding it with the
+    # probe's declared key names at NaN keeps every history series the same
+    # length -- otherwise the client-probe series would start at round 1 and be
+    # one entry shorter than `round`, which silently misaligns any x/y plot of
+    # the two.
+    _client_probe_seed = {
+        f"client_{name}_{stat}": float("nan")
+        for name in probe_keys(cfg) for stat in ("mean", "std")
+    }
     _round_metrics = {"mean_drift": 0.0, "weight_divergence": 0.0,
-                      "n_participating": 0, "samples_this_round": 0}
+                      "n_participating": 0, "samples_this_round": 0,
+                      "client_probes": dict(_client_probe_seed)}
     _client_w1_cache = {"data": None}
 
     # Running count of centralized-equivalent gradient steps (see evaluate_fn).
     _step_accum = {"total": 0.0}
     n_train_total = len(y_train_full)
+
+    # Setup-appropriate mechanistic probe, resolved once (see metrics/probes.py).
+    _probe_fn = mechanistic_probe(cfg)
 
     def _aggregate_fit_metrics(metrics_list):
         """Aggregate per-client fit metrics from GrokClient.fit()."""
@@ -405,6 +500,17 @@ def fed_train(cfg: FedConfig):
 
         _round_metrics["mean_drift"] = float(np.mean(drifts)) if drifts else 0.0
         _round_metrics["weight_divergence"] = float(np.std(w_norms)) if len(w_norms) > 1 else 0.0
+
+        # Per-client probe values -> mean and spread across clients. The spread
+        # is the interesting one: it says whether clients are converging on the
+        # same circuit or diverging, which is the structured-vs-random question.
+        _round_metrics["client_probes"] = dict(_client_probe_seed)
+        probe_names = {k for _, m in metrics_list for k in m if k.startswith("client_")}
+        for name in sorted(probe_names):
+            vals = [float(m[name]) for _, m in metrics_list if name in m]
+            if vals:
+                _round_metrics["client_probes"][f"{name}_mean"] = float(np.mean(vals))
+                _round_metrics["client_probes"][f"{name}_std"] = float(np.std(vals))
 
         # Actual work done this round, taken from what clients reported rather
         # than from fraction_train. This is exact under partial participation
@@ -474,13 +580,17 @@ def fed_train(cfg: FedConfig):
             train_loss = loss_fn(out_train, y_train_full_target).item()
             train_acc = compute_accuracy(out_train, y_train_full)
 
-        # weight_norms / IPR are GrokNet-specific; NaN on other architectures.
-        if fourier_applicable(model, cfg):
+        # Two independent capabilities — see the note in training/centralized.py.
+        # Frobenius norms are basis-free and so are valid on S5; only the DFT
+        # needs a cyclic group.
+        if weight_norms_applicable(model):
             wn = weight_norms(model)
             wn1, wn2 = wn["weight_norm_layer1"], wn["weight_norm_layer2"]
-            ipr_val = compute_ipr(model)["ipr"]
         else:
-            wn1 = wn2 = ipr_val = float("nan")
+            wn1 = wn2 = float("nan")
+        ipr_val = compute_ipr(model)["ipr"] if dft_applicable(model, cfg) else float("nan")
+        report = weight_norm_report(model)
+        probe = _probe_fn(model, x_test, y_test, cfg)
 
         history["round"].append(server_round)
         # sequential_steps = rounds * E is the depth of the update chain,
@@ -498,6 +608,11 @@ def fed_train(cfg: FedConfig):
         history["ipr"].append(ipr_val)
         history["mean_client_drift"].append(_round_metrics["mean_drift"])
         history["client_weight_divergence"].append(_round_metrics["weight_divergence"])
+        # Additive keys, kept in lockstep by setdefault: round 0 is always an
+        # eval round, so every key is created on the first pass.
+        for key, value in {**report, **probe,
+                           **_round_metrics["client_probes"]}.items():
+            history.setdefault(key, []).append(value)
 
         # Save checkpoint if requested
         if is_checkpoint_round:
@@ -509,7 +624,7 @@ def fed_train(cfg: FedConfig):
             torch.save(model.state_dict(), ckpt_path)
 
             # Global Fourier spectrum (GrokNet-specific; skipped otherwise)
-            if fourier_applicable(model, cfg):
+            if dft_applicable(model, cfg):
                 spec = fourier_spectrum(model)
                 spec_path = os.path.join(ckpt_dir, f"spectrum_round{server_round}.pt")
                 torch.save(spec["spectrum"], spec_path)
@@ -621,7 +736,16 @@ def fed_train(cfg: FedConfig):
     adam_suffix = f"_adam_tau{cfg.tau}" if cfg.strategy == "fedadam" else ""
     slr_suffix = f"_slr{cfg.server_lr}" if cfg.strategy == "fedadam" else ""
     wd_suffix = f"_wd{cfg.weight_decay}" if cfg.weight_decay > 0 else ""
-    tag = (f"fed_{cfg.task}_{cfg.optimizer}_p{cfg.p}_N{cfg.hidden_width}"
+    # The setup must be in the name. Without it an S5 or MNIST run inherits the
+    # Config defaults for task/p and is written as "..._addition_p97_...", which
+    # is not just confusing but collides with a genuine mod-97 addition run when
+    # both share an output_dir. (The v2 sweep path gives every run its own
+    # directory keyed by run id, so this is a naming fix, not a data-loss one --
+    # but the legacy experiments/ scripts do share directories.)
+    setup_prefix = f"{cfg.dataset}_{cfg.model}_{cfg.loss}"
+    task_part = f"{cfg.task}_p{cfg.p}" if cfg.dataset == "modular" else (
+        f"n{cfg.group_n}" if cfg.dataset == "s5" else f"n{cfg.n_train}")
+    tag = (f"fed_{setup_prefix}_{task_part}_{cfg.optimizer}_N{cfg.hidden_width}"
            f"_a{cfg.alpha}_K{cfg.num_clients}_le{cfg.local_epochs}"
            f"_ft{cfg.fraction_train}_{cfg.partition}{dirichlet_suffix}"
            f"{prox_suffix}{adam_suffix}{slr_suffix}{wd_suffix}_s{cfg.seed}")

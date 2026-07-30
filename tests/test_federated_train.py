@@ -302,15 +302,29 @@ class TestFedTrain:
             output_dir="/tmp/test_fed_results",
         )
         history, _ = fed_train(cfg)
-        expected_keys = {
+        # The core series every federated run must produce. Asserted as a SUBSET,
+        # not equality: setup-dependent series (architecture-agnostic weight
+        # norms, and the per-setup mechanistic probe) are added on top, and which
+        # ones appear depends on the dataset/model. Equality here would mean any
+        # new measurement breaks a test about the old ones.
+        required_keys = {
             "round", "total_steps", "sequential_steps", "n_participating",
             "train_loss", "test_loss",
             "train_acc", "test_acc",
             "weight_norm_layer1", "weight_norm_layer2",
             "ipr",
             "mean_client_drift", "client_weight_divergence",
+            # architecture-agnostic, so present on every setup
+            "weight_norm_total", "weight_norm_first", "weight_norm_last",
         }
-        assert set(history.keys()) == expected_keys
+        assert required_keys <= set(history.keys()), (
+            f"missing: {sorted(required_keys - set(history))}"
+        )
+        # Every series must stay in lockstep with `round`, or plots misalign.
+        n = len(history["round"])
+        ragged = {k: len(v) for k, v in history.items()
+                  if isinstance(v, list) and len(v) != n}
+        assert not ragged, f"ragged history series: {ragged}"
 
     def test_history_length_matches_rounds(self):
         cfg = FedConfig(

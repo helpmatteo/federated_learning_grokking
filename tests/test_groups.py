@@ -134,12 +134,45 @@ class TestCosetPartition:
         with pytest.raises(ValueError, match="cosets"):
             make_federated_datasets(cfg)
 
-    def test_mnist_federated_not_wired(self):
-        """Non-grid datasets have no operand structure -> clear FL error."""
+    @pytest.mark.parametrize("partition", ["operand", "coset"])
+    def test_mnist_rejects_structure_dependent_partitions(self, partition):
+        """MNIST has no first operand and no subgroup, so these cannot apply.
+
+        The rest of the modes do — MNIST federated training used to be refused
+        outright, which cost the study its only non-algebraic setup.
+        """
         from fedgrok.core.fed_config import FedConfig
         from fedgrok.data.partition import make_federated_datasets
-        with pytest.raises(NotImplementedError, match="not wired"):
-            make_federated_datasets(FedConfig(dataset="mnist", num_clients=5))
+        cfg = FedConfig(dataset="mnist", model="mlp", n_train=500,
+                        num_clients=5, partition=partition)
+        with pytest.raises(ValueError, match="algebraic structure"):
+            make_federated_datasets(cfg)
+
+    @pytest.mark.parametrize("partition", ["iid", "dirichlet", "label_block", "target"])
+    def test_mnist_federated_partitions_cover_the_training_set(self, partition):
+        """Federated MNIST must shard exactly the centralized training set.
+
+        MNIST's split comes from n_train/n_test under a torch.Generator, not from
+        cfg.alpha, so the FL path must take build_dataset's tensors rather than
+        re-splitting -- otherwise federated and centralized MNIST train on
+        different examples under the same config.
+        """
+        import torch
+        from fedgrok.core.fed_config import FedConfig
+        from fedgrok.data.partition import make_federated_datasets
+        from fedgrok.data.registry import build_dataset
+
+        cfg = FedConfig(dataset="mnist", model="mlp", n_train=500, n_test=200,
+                        seed=42, num_clients=5, partition=partition,
+                        dirichlet_alpha=0.5)
+        client_data, x_train_full, y_train_full, _, _ = make_federated_datasets(cfg)
+        x_cent, y_cent, _, _ = build_dataset(cfg)
+
+        assert sum(len(y) for _, y in client_data) == len(y_train_full)
+        assert all(len(y) > 0 for _, y in client_data)
+        assert torch.equal(torch.sort(y_train_full).values,
+                           torch.sort(y_cent).values)
+        assert len(x_train_full) == len(x_cent)
 
 
 class TestCosetAttribution:

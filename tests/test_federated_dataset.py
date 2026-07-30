@@ -52,21 +52,21 @@ class TestPartitionIID:
 class TestPartitionByOperand:
     def test_covers_all_indices(self):
         nn_train = np.array([0, 1, 2, 3, 4, 5, 6] * 3)  # 21 samples
-        shards = _partition_by_operand(nn_train, 7, 3)
+        shards = _partition_by_operand(nn_train, 3)
         all_idx = np.sort(np.concatenate(shards))
         np.testing.assert_array_equal(all_idx, np.arange(21))
 
     def test_correct_assignment(self):
         """Client i should get samples where n % K == i."""
         nn_train = np.arange(20)  # n values 0..19
-        shards = _partition_by_operand(nn_train, 20, 4)
+        shards = _partition_by_operand(nn_train, 4)
         for i, shard in enumerate(shards):
             for idx in shard:
                 assert nn_train[idx] % 4 == i
 
     def test_no_overlap(self):
         nn_train = np.arange(49)
-        shards = _partition_by_operand(nn_train, 49, 7)
+        shards = _partition_by_operand(nn_train, 7)
         all_idx = np.concatenate(shards)
         assert len(all_idx) == len(set(all_idx))
 
@@ -74,21 +74,21 @@ class TestPartitionByOperand:
 class TestPartitionByTarget:
     def test_covers_all_indices(self):
         y_train = np.array([0, 1, 2, 3, 4, 0, 1, 2, 3, 4])
-        shards = _partition_by_target(y_train, 5, 3)
+        shards = _partition_by_target(y_train, 3)
         all_idx = np.sort(np.concatenate(shards))
         np.testing.assert_array_equal(all_idx, np.arange(10))
 
     def test_correct_assignment(self):
         """Client i should get samples where target % K == i."""
         y_train = np.array([0, 1, 2, 3, 4, 5, 6])
-        shards = _partition_by_target(y_train, 7, 3)
+        shards = _partition_by_target(y_train, 3)
         for i, shard in enumerate(shards):
             for idx in shard:
                 assert y_train[idx] % 3 == i
 
     def test_no_overlap(self):
         y_train = np.arange(20) % 7
-        shards = _partition_by_target(y_train, 7, 5)
+        shards = _partition_by_target(y_train, 5)
         all_idx = np.concatenate(shards)
         assert len(all_idx) == len(set(all_idx))
 
@@ -277,7 +277,7 @@ class TestEmptyShardGuard:
         """Empty shards must be int arrays, or they cannot index x_train."""
         rng = np.random.RandomState(0)
         y = np.array([0, 0, 1, 1, 2, 2])
-        shards = _partition_dirichlet(y, p=3, num_clients=8,
+        shards = _partition_dirichlet(y, n_classes=3, num_clients=8,
                                       dirichlet_alpha=0.01, rng=rng)
         for shard in shards:
             assert shard.dtype == np.dtype(int)
