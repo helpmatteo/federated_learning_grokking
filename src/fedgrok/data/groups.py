@@ -12,6 +12,7 @@ composed element. Group elements are enumerated in a fixed canonical order
 (itertools.permutations), so element index ↔ permutation is stable.
 """
 
+import functools
 import itertools
 
 import numpy as np
@@ -90,7 +91,17 @@ def coset_labels(n: int, subgroup: str):
     share a label, labels are 0..(index-1). For S5, "s_nm1" gives 5 cosets (of
     S4, 24 each) and "a_n" gives 2 cosets (of A5, 60 each). This is the algebraic
     structure the coset FL partition splits clients along.
+
+    Memoised, because `coset_attribution` calls this once per eval round and the
+    body is ~2,900 Python-level permutation compositions — 3.6 ms, which was the
+    bulk of the S_5 probe's cost. A fresh copy is returned each call so callers
+    keep a mutable array and the cache cannot be poisoned.
     """
+    return _coset_labels_cached(n, subgroup).copy()
+
+
+@functools.lru_cache(maxsize=8)
+def _coset_labels_cached(n: int, subgroup: str):
     elements = _elements(n)
     index = {perm: i for i, perm in enumerate(elements)}
     H = [i for i, perm in enumerate(elements) if _in_subgroup(perm, subgroup, n)]

@@ -32,6 +32,7 @@ change trajectories.
 import torch
 
 from fedgrok.data.registry import dataset_dims
+from fedgrok.metrics import irreps, quadratic_circuits
 from fedgrok.metrics.fourier import spectral_ipr
 from fedgrok.metrics.nonabelian import coset_attribution, nonabelian_applicable
 
@@ -42,6 +43,41 @@ def _no_probe(model, x, y, cfg):
 
 def _coset_probe(model, x, y, cfg):
     return coset_attribution(model, x, y, cfg)
+
+
+def _s5_quadratic_probe(model, x, y, cfg):
+    """Coset attribution PLUS the exact internals available on setup D only.
+
+    The coset measure reads the model's output; these read its weights, and on a
+    quadratic GrokNet both are exact rather than fitted:
+
+      circ_*     the algebraic split of the logit into single-operand marginals
+                 and the cross term, which is the whole compositional circuit
+      irrep_*    the isotypic energy profile of the first-operand block, the S_5
+                 analogue of the modular study's Fourier power spectrum
+      irrep_structure_u/v   one scalar each for "how far from random", so a run
+                 has a single mechanistic series to plot when seven are too many
+
+    Falls back to coset-only if the model is not a quadratic two-operand MLP, so
+    an S_5 transformer keeps working unchanged.
+    """
+    out = coset_attribution(model, x, y, cfg)
+    if not quadratic_circuits.applicable(model, cfg):
+        return out
+
+    n = getattr(cfg, "group_n", 5)
+    with torch.no_grad():
+        # The circuit split needs only the quadratic activation and a two-block
+        # one-hot input, so it holds for any S_n. The irrep profile needs a
+        # character table, which exists here for S_5 alone.
+        out.update(quadratic_circuits.circuit_report(model, x, y))
+        if irreps.applicable(n):
+            u_block, v_block = quadratic_circuits.operand_blocks(model)
+            for name, value in irreps.fractions(u_block, n).items():
+                out[f"irrep_u_{name}"] = value
+            out["irrep_structure_u"] = irreps.structure_score(u_block, n)
+            out["irrep_structure_v"] = irreps.structure_score(v_block, n)
+    return out
 
 
 def _embed_ipr_probe(model, x, y, cfg):
@@ -62,7 +98,9 @@ def mechanistic_probe(cfg):
     model_name = getattr(cfg, "model", "groknet")
 
     if nonabelian_applicable(cfg):
-        return _coset_probe
+        # The quadratic probe is a strict superset of the coset one and degrades
+        # to it for any model the exact decomposition does not cover.
+        return _s5_quadratic_probe
     if model_name == "transformer" and dataset == "modular":
         # The DFT presumes a cyclic group, so this is modular-only; on S_5 the
         # coset probe above takes over.
@@ -100,8 +138,24 @@ def client_signature(model, cfg):
 
 
 def probe_keys(cfg):
-    """Names the probe for `cfg` will emit — for schema checks without a model."""
+    """Names the probe for `cfg` will emit — for schema checks without a model.
+
+    Mirrors `mechanistic_probe`'s dispatch, and additionally the model-level
+    branch inside `_s5_quadratic_probe`: on S_5 the extra circuit/irrep series
+    exist only for a quadratic GrokNet, so the key set has to read `cfg.model`
+    and `cfg.activation` rather than the dataset alone. A test asserts these
+    names match what a real probe call emits, for every setup.
+    """
     probe = mechanistic_probe(cfg)
+    if probe is _s5_quadratic_probe:
+        keys = ["coset_accuracy", "coset_purity"]
+        if (getattr(cfg, "model", "groknet") == "groknet"
+                and getattr(cfg, "activation", "quadratic") == "quadratic"):
+            keys += list(quadratic_circuits.CIRCUIT_KEYS)
+            if irreps.applicable(getattr(cfg, "group_n", 5)):
+                keys += [f"irrep_u_{name}" for name in irreps.IRREP_NAMES]
+                keys += ["irrep_structure_u", "irrep_structure_v"]
+        return tuple(keys)
     if probe is _coset_probe:
         return ("coset_accuracy", "coset_purity")
     if probe is _embed_ipr_probe:

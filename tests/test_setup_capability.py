@@ -197,10 +197,37 @@ class TestMechanisticProbes:
             assert torch.equal(before, after)
 
     def test_s5_gets_coset_measures_on_both_architectures(self):
+        """Every S_n run keeps the coset measures, whatever else it gains.
+
+        A quadratic GrokNet now also gets the exact circuit split (see
+        metrics/quadratic_circuits.py), so this asserts the coset measures are
+        PRESENT rather than that they are all there is. The transformer, which
+        the decomposition does not cover, must still be coset-only -- that is the
+        graceful-degradation half of the claim.
+        """
         for model_name, width in (("groknet", 64), ("transformer", 32)):
             cfg = Config(dataset="s5", group_n=4, model=model_name,
                          hidden_width=width, loss="ce")
-            assert probe_keys(cfg) == ("coset_accuracy", "coset_purity")
+            keys = probe_keys(cfg)
+            assert {"coset_accuracy", "coset_purity"} <= set(keys)
+            if model_name == "transformer":
+                assert keys == ("coset_accuracy", "coset_purity")
+
+    def test_s4_gets_circuits_but_not_irreps(self):
+        """The two new instruments have different domains and must gate apart.
+
+        The circuit split is algebra on the quadratic activation, so it holds for
+        any S_n. The irrep profile needs a character table, which exists for S_5
+        only. Gating them together would crash every S_4 run -- which is what the
+        rest of this suite runs, for speed.
+        """
+        s4 = probe_keys(Config(dataset="s5", group_n=4, model="groknet",
+                               hidden_width=64, loss="ce"))
+        s5 = probe_keys(Config(dataset="s5", group_n=5, model="groknet",
+                               hidden_width=64, loss="ce"))
+        assert "circ_share_interaction" in s4
+        assert not any(k.startswith("irrep_") for k in s4)
+        assert any(k.startswith("irrep_") for k in s5)
 
     def test_transformer_on_modular_gets_embedding_ipr(self):
         cfg = Config(dataset="modular", p=53, model="transformer",
