@@ -1,6 +1,7 @@
 import pytest
 from fedgrok.analysis.grokking_metrics import (
-    compute_t_grok, compute_t_50, summarize_seeds, extract_grokking_results,
+    compute_t_grok, compute_t_50, compute_t_memo, summarize_seeds,
+    extract_grokking_results,
 )
 
 
@@ -120,3 +121,85 @@ class TestDatasetAwareThreshold:
                    "train_acc": [50.0, 100.0, 100.0]}
         assert extract_grokking_results(history)["t_grok"] == float("inf")
         assert extract_grokking_results(history, threshold=90.0)["t_grok"] == 100
+
+
+class TestTMemoAndDelay:
+    """Memorisation time, and the delay that is the actual phenomenon.
+
+    `t_grok` alone cannot distinguish a model that memorised and never
+    generalised from one that never trained at all -- both read `inf`. That
+    ambiguity is not academic: the K>=30 AdamW cells sit at 1-5% TRAIN accuracy,
+    which in a table of t_grok values is indistinguishable from a grokking
+    failure, and the two have different causes and different fixes.
+    """
+
+    def test_memorisation_detected_at_first_crossing(self):
+        steps = list(range(0, 1000, 100))
+        train = [1.0, 40.0, 99.5, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0]
+        assert compute_t_memo(steps, train) == 200
+
+    def test_never_memorised(self):
+        steps = list(range(0, 500, 100))
+        assert compute_t_memo(steps, [1.0, 3.0, 5.0, 4.0, 3.6]) == float("inf")
+
+    def test_first_crossing_not_sustained_unlike_t_grok(self):
+        """T_memo is deliberately a FIRST crossing, where T_grok is sustained.
+
+        The memorise-then-collapse trajectory -- decay outrunning learning -- is
+        exactly the one worth identifying, and a sustained-crossing rule would
+        discard it by recording `inf`, i.e. "never memorised", for a run that
+        plainly did.
+        """
+        steps = list(range(0, 500, 100))
+        train = [1.0, 99.5, 60.0, 20.0, 1.0]
+        assert compute_t_memo(steps, train) == 100
+        assert compute_t_grok(steps, train, threshold=95.0) == float("inf")
+
+    def test_delay_is_the_gap_between_the_two(self):
+        steps = list(range(0, 1000, 100))
+        train = [1.0, 100.0] + [100.0] * 8
+        test = [1.0, 1.0, 1.0, 1.0, 1.0, 96.0, 97.0, 98.0, 99.0, 99.5]
+        out = extract_grokking_results({"epoch": steps, "train_acc": train,
+                                        "test_acc": test}, threshold=95.0)
+        assert out["t_memo"] == 100
+        assert out["t_grok"] == 500
+        assert out["delay"] == 400
+
+    def test_delay_is_inf_when_either_end_is_missing(self):
+        steps = list(range(0, 400, 100))
+        # memorised, never generalised
+        memo_only = extract_grokking_results(
+            {"epoch": steps, "train_acc": [1.0, 100.0, 100.0, 100.0],
+             "test_acc": [1.0] * 4}, threshold=95.0)
+        assert memo_only["t_memo"] == 100
+        assert memo_only["delay"] == float("inf")
+        # never trained at all -- the K>=40 case
+        neither = extract_grokking_results(
+            {"epoch": steps, "train_acc": [1.0, 4.0, 5.0, 3.0],
+             "test_acc": [1.0] * 4}, threshold=95.0)
+        assert neither["t_memo"] == float("inf")
+        assert neither["delay"] == float("inf")
+
+
+class TestPeakTrainAcc:
+    def test_peak_separates_collapse_from_never_learning(self):
+        """`final_train_acc` alone cannot order the two failure modes."""
+        steps = list(range(0, 400, 100))
+        collapsed = extract_grokking_results(
+            {"epoch": steps, "train_acc": [1.0, 42.0, 20.0, 4.0],
+             "test_acc": [1.0] * 4}, threshold=95.0)
+        never = extract_grokking_results(
+            {"epoch": steps, "train_acc": [1.0, 3.0, 4.0, 4.0],
+             "test_acc": [1.0] * 4}, threshold=95.0)
+        # indistinguishable on the recorded final value ...
+        assert collapsed["final_train_acc"] == never["final_train_acc"] == 4.0
+        # ... and on t_memo, which is inf for both at a 99% bar
+        assert collapsed["t_memo"] == never["t_memo"] == float("inf")
+        # ... but ordered by peak
+        assert collapsed["peak_train_acc"] == 42.0
+        assert never["peak_train_acc"] == 4.0
+
+    def test_empty_history_is_zero_not_an_error(self):
+        out = extract_grokking_results({"epoch": [], "train_acc": [],
+                                        "test_acc": []}, threshold=95.0)
+        assert out["peak_train_acc"] == 0.0

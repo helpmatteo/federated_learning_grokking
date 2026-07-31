@@ -43,6 +43,30 @@ def compute_t_50(steps: list, test_accs: list, threshold: float = 50.0) -> float
     return float("inf")
 
 
+def compute_t_memo(steps: list, train_accs: list, threshold: float = 99.0) -> float:
+    """Memorisation step T_memo — first step where TRAIN accuracy >= threshold.
+
+    The partner of `compute_t_grok`, and the reason grokking has two timescales
+    rather than one: the delay that defines the phenomenon is
+    `t_grok - t_memo`, not `t_grok` alone. A cell that never memorises has not
+    failed to grok — it has failed to train, which is a different diagnosis with
+    a different fix, and the two are indistinguishable from `t_grok` on its own.
+
+    Unlike T_grok this is a FIRST crossing, not a sustained one. Train accuracy
+    is monotone in practice here, and requiring it to hold to the end of the run
+    would discard the memorise-then-collapse trajectories (decay outrunning
+    learning) that are exactly the ones worth telling apart.
+
+    99% rather than the test-side bar because memorisation is near-total when it
+    happens, and because it must not move with `grok_threshold`: T_memo has to
+    mean the same thing across datasets for the delay to be comparable.
+    """
+    for step, acc in zip(steps, train_accs):
+        if acc >= threshold:
+            return step
+    return float("inf")
+
+
 def extract_grokking_results(history: dict, threshold: float = 95.0) -> dict:
     """Extract grokking metrics from a training history dict.
 
@@ -59,6 +83,7 @@ def extract_grokking_results(history: dict, threshold: float = 95.0) -> dict:
 
     t_grok = compute_t_grok(steps, test_accs, threshold=threshold)
     t_50 = compute_t_50(steps, test_accs)
+    t_memo = compute_t_memo(steps, train_accs)
     final_test_acc = test_accs[-1] if test_accs else 0.0
     final_train_acc = train_accs[-1] if train_accs else 0.0
     final_ipr = history.get("ipr", [0.0])[-1] if history.get("ipr") else 0.0
@@ -66,8 +91,21 @@ def extract_grokking_results(history: dict, threshold: float = 95.0) -> dict:
     return {
         "t_grok": t_grok,
         "t_50": t_50,
+        "t_memo": t_memo,
+        # The delay IS the phenomenon. inf if either end is missing: a run that
+        # never memorised has no delay, and neither does one still censored.
+        "delay": (t_grok - t_memo
+                  if math.isfinite(t_grok) and math.isfinite(t_memo)
+                  else float("inf")),
         "final_test_acc": final_test_acc,
         "final_train_acc": final_train_acc,
+        # Peak train accuracy, because `final` hides the memorise-then-collapse
+        # trajectory. When decay outruns learning the curve rises and falls, so a
+        # run that reached 40% and decayed to 1% is recorded identically to one
+        # that never left 1% -- and those are different failures. `t_memo` cannot
+        # cover this either: at a 99% bar both are inf, as is a cell sitting at
+        # 98.2%. Peak is the cheap scalar that orders them.
+        "peak_train_acc": max(train_accs) if train_accs else 0.0,
         "final_ipr": final_ipr,
     }
 

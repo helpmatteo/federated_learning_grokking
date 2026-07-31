@@ -142,6 +142,13 @@ def run_spec(spec: dict, results_root: str = DEFAULT_RESULTS_DIR,
         "grok_threshold": threshold,
         "t_grok": t_grok,
         "t_50": metrics["t_50"],
+        # Memorisation time and the delay between it and grokking. Recorded
+        # because t_grok alone cannot distinguish "did not generalise" from "did
+        # not train" -- the K>=30 AdamW cells sit at 1-5% TRAIN accuracy, which
+        # reads identically to a grokking failure in a table of t_grok values.
+        "t_memo": metrics["t_memo"],
+        "delay": metrics["delay"],
+        "peak_train_acc": metrics["peak_train_acc"],
         "final_acc": metrics["final_test_acc"],
         "final_train_acc": metrics["final_train_acc"],
         "final_ipr": metrics["final_ipr"],
