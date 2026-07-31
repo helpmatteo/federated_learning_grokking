@@ -80,7 +80,21 @@ def run_spec(spec: dict, results_root: str = DEFAULT_RESULTS_DIR,
     # One row, schema-compatible with results/data/runs.csv. Config fields are
     # taken from the resolved dataclass so defaults are explicit; tags from spec.
     cfg_dict = dataclasses.asdict(cfg)
+
+    # Start from the WHOLE resolved config, then name the important fields
+    # explicitly below for column ordering. Hand-listing the fields was a
+    # recurring bug: every time the dataclass gained an axis, the results table
+    # silently lost it -- dataset/model/loss went missing for 123 runs,
+    # persist_local_opt_state for the A/B that was meant to settle a confound,
+    # and n_heads/d_mlp for a capacity sweep whose entire point was those two
+    # numbers. Deriving the row from the dataclass makes that structurally
+    # impossible; a new field is recorded the moment it exists.
+    _skip = {"output_dir", "save_weights"}
+    auto = {k: v for k, v in cfg_dict.items()
+            if not k.startswith("_") and k not in _skip}
+
     row = {
+        **auto,
         "id": spec["id"],
         "mode": mode,
         # grouping tags (may be absent)
