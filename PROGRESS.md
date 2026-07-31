@@ -13,7 +13,7 @@ setups, which is gated on **Phase 1** below.
 |---|---|
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
-| Tests | **497/497 pass** (`venv/bin/python -m pytest tests/ -q`, ~9.5 min incl. FL integration) |
+| Tests | **522/522 pass** (`venv/bin/python -m pytest tests/ -q`, ~10.5 min incl. FL integration) |
 | Runs banked | **720** in `results/data/runs_v2.csv` (511 grokked, 209 censored) + 870 v1 runs in `runs.csv` |
 | Setups | A quad-MLP/mod-97 · A′ quad-MLP/mod-97/AdamW (new, unrun) · B transformer/mod-113 · C transformer/S₅ · D quad-MLP/S₅ · E MLP/MNIST-1k |
 | FL algorithms | FedAvg, FedProx, FedAvgM, FedYogi, FedAdam (native) + SCAFFOLD (adapted, **raises under AdamW by design**) |
@@ -503,7 +503,7 @@ if a big-K sweep is slow, lower `--per-gpu` or make `num_cpus` fractional in
 ```bash
 cd /home/jse44/modules/ToDL/federated_learning_grokking
 git checkout v2-multisetup
-venv/bin/python -m pytest tests/ -q          # expect 497 passed, ~9.5 min
+venv/bin/python -m pytest tests/ -q          # expect 522 passed, ~10.5 min
 nvidia-smi                                   # SHARED box -- check what is free first
 ```
 
