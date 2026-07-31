@@ -18,7 +18,9 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from fedgrok.manifest import expand_grid, run_id, write_manifest
+from fedgrok.manifest import (
+    TAG_KEYS, expand_grid, load_manifest, run_id, write_manifest,
+)
 
 MANIFEST_DIR = os.path.join(os.path.dirname(__file__), "..", "manifests")
 SEEDS5 = [42, 123, 456, 789, 1011]
@@ -483,6 +485,56 @@ SETUP_E = {"dataset": "mnist", "model": "mlp", "hidden_width": 200,
 NEW_SETUPS = {"B": SETUP_B, "C": SETUP_C, "D": SETUP_D, "E": SETUP_E}
 
 
+# ── The optimiser as a control variable ──────────────────────────────────────
+#
+# The campaign is a 2x2 -- architecture (quad-MLP / transformer) x task (modular
+# / S_5) -- and a factorial only reads if everything OFF the axis is held fixed.
+# It is not. A is GD+MSE (Gromov's config, inherited from v1); B, C and D are
+# AdamW+CE. So:
+#
+#     B vs C   task, on the transformer      AdamW+CE both      CLEAN
+#     C vs D   architecture, on S_5          AdamW+CE both      CLEAN
+#     A vs B   architecture, on modular      GD+MSE vs AdamW+CE confounded
+#     A vs D   task, on the quad-MLP         GD+MSE vs AdamW+CE confounded
+#
+# B, C and D are internally consistent; the odd one out is A, and A cannot move
+# -- it is Gromov's published config, the anchor to 870 v1 runs, and every banked
+# federated result in the project. Changing it orphans all of that.
+#
+# So the fix is the missing cell, not a change to an existing one.
+
+# A' -- A's architecture and task under B/C/D's optimiser. Closes the factorial.
+#
+# MSE and not CE, deliberately: A vs A' is then a SINGLE-variable optimiser
+# contrast, which is worth having on its own terms because RESULTS.md 6.4 already
+# claims the optimiser (AdamW's decoupled decay vs GD's coupled decay) is what
+# flips weight decay's sign -- and that claim currently rests on comparing two
+# different datasets. The cost is that A' vs B still differs in loss as well as
+# architecture, which is stated rather than hidden.
+#
+# weight_decay is left at the measured band rather than inherited: t0_wd_grid's
+# AdamW arm covers exactly this cell (quad-MLP, mod-97, AdamW, MSE) and lr*wd
+# 1e-4 is the strongest setting that still groks under GD. It needs confirming at
+# a working alpha, which is what x_aprime_alpha does -- the banked arm is all
+# alpha=0.5, where this setup reaches 100/100 by epoch 200 and has no delay at
+# all to measure.
+SETUP_A_PRIME = {"dataset": "modular", "task": "addition", "p": 97,
+                 "model": "groknet", "hidden_width": 256,
+                 "activation": "quadratic", "loss": "mse",
+                 "optimizer": "adamw", "lr": 1e-3, "weight_decay": 0.1}
+
+# C and D at a decay chosen FOR them rather than inherited from Nanda's mod-113
+# transformer. wd is left unset here on purpose: x_cd_decay_band measures it, and
+# these constants are filled in once that lands. Until then they are unused.
+#
+# NOTE these are new constants rather than edits to SETUP_C / SETUP_D. Run ids
+# are content hashes and `s5_central_anchor` references those constants directly,
+# so editing them in place would change 60 banked ids and `write_manifest` would
+# (correctly) refuse to rewrite the anchor manifest. Keeping both means the
+# wd=1.0 ladders stay valid and become a deliberate decay comparison instead of
+# discarded work.
+
+
 def s5_central_anchor():
     """STAGE 1: locate each new setup's own data cliff, centrally. Gate A.
 
@@ -874,6 +926,283 @@ def x_d_lr_control():
     return specs
 
 
+# ── exp2's floor arm ─────────────────────────────────────────────────────────
+
+# Fields that only mean something federated. A centralized spec carrying them
+# would raise in build_config, since Config has no such attributes.
+_FED_ONLY = {"num_clients", "num_rounds", "local_epochs", "fraction_train",
+             "partition", "dirichlet_alpha", "proximal_mu", "strategy",
+             "server_lr", "server_momentum", "tau", "feddyn_alpha",
+             "eval_every", "track_client_drift", "persist_local_opt_state",
+             "checkpoint_client_weights", "coset_subgroup"}
+
+
+def reduced_arm(fed_specs, budget_multiple=2.0):
+    """v1 exp2's centralized-REDUCED condition: one model on one client's shard.
+
+    exp2 ran three arms per (alpha, K) -- centralized-full as the ceiling, this
+    as the floor, and FL as the test -- and its headline was that FL groks in 23
+    of 30 cells where the floor groks in 1. Read carefully that gap is mostly
+    "FL sees K times more data than the floor", not evidence about aggregation,
+    which is why the going-forward framing measures FL against the CEILING on the
+    compute-matched step axis. The floor is kept anyway, because it is the arm
+    that says whether a client could have done this alone, and that is the
+    question a federated result is actually answering.
+
+    HOW THE DATA IS REDUCED IS DATASET-DEPENDENT, which is why this is not a
+    one-liner. `alpha` is the data-fraction axis for the grid datasets, but MNIST
+    IGNORES alpha entirely -- its axis is n_train -- so reducing MNIST by scaling
+    alpha would produce a spec identical to the full arm and a floor that
+    silently equals the ceiling.
+
+    BUDGET. The floor gets `budget_multiple` times the FL arm's total gradient
+    steps (rounds x E), not the same. A floor arm is only informative if its
+    failure is attributable to having less data, and matching the budget exactly
+    leaves "it ran out of time" open -- which is how v1 read K=97 as a breakdown
+    when two of five seeds simply needed more than the 50k they were given. The
+    floor is cheap (one model, 1/K of the data), so headroom is nearly free.
+
+    Ids are content hashes, so a floor cell shared by two FL cells -- e.g. the
+    same (alpha, K) at different E -- resolves to one run and executes once.
+    """
+    out, seen = [], set()
+    for spec in fed_specs:
+        if spec.get("mode") != "federated":
+            raise ValueError("reduced_arm expects federated specs")
+        k = spec["num_clients"]
+        reduced = {key: value for key, value in spec.items()
+                   if key not in _FED_ONLY and key not in TAG_KEYS}
+        reduced["mode"] = "centralized"
+
+        if spec.get("dataset") == "mnist":
+            n_train = spec.get("n_train", 1000)
+            reduced["n_train"] = max(1, n_train // k)
+            if reduced["n_train"] < spec.get("batch_size", 0):
+                # One partial batch per epoch: the optimiser's effective batch
+                # changes with K, so the floor would differ from the ceiling by
+                # more than data volume. Shrink the batch with the shard.
+                reduced["batch_size"] = reduced["n_train"]
+        else:
+            reduced["alpha"] = spec["alpha"] / k
+
+        steps = spec.get("num_rounds", 10_000) * spec.get("local_epochs", 5)
+        reduced["epochs"] = int(steps * budget_multiple)
+        reduced["log_every"] = max(10, reduced["epochs"] // 500)
+
+        reduced["id"] = run_id(reduced)
+        if reduced["id"] in seen:
+            continue
+        seen.add(reduced["id"])
+        # `arm` rides along as a tag so the three conditions are separable in the
+        # results table without reconstructing which alpha was a reduction.
+        out.append({**reduced, "arm": "cent_reduced", "reduced_from_k": k})
+    return out
+
+
+def p1_d_gd_probe():
+    """PHASE 1: does the quadratic MLP grok S_5 under GD + MSE at all?
+
+    Setup D is Gromov's architecture -- the SAME model as setup A -- but running
+    AdamW + CE where A runs GD + MSE. Nothing recorded says why; it appears to
+    have inherited the optimiser from the S_5 side (setup C) rather than from the
+    architecture side. The consequence is that A vs D, which is meant to isolate
+    the TASK holding architecture fixed, moves task, optimiser and loss together.
+
+    And it has never been checked: of 370 banked S_5 runs, ZERO use GD.
+
+    alpha=0.5 is D's easiest working point (T_grok 7,200 under AdamW), so if GD
+    works anywhere it works here. lr is swept because Gromov's 50 was tuned for a
+    194-dim input and 97 classes; S_5 is 240-dim with 120, and a quadratic
+    activation at too large a step diverges rather than degrading. Divergence in
+    the low-lr arm would be informative, not a wasted cell.
+
+    50,000 epochs is ~7x A's alpha=0.5 requirement, so nothing here censors on
+    the clock.
+
+    > DECISION RULE. If any lr reaches 5/5, D is redefined as GD + MSE: A vs D
+    > becomes a clean single-variable task comparison, D inherits A's immunity to
+    > the K>=30 collapse (no decay clock at wd=0), and setup C keeps AdamW with
+    > C vs D then differing in architecture AND optimiser -- stated, not hidden.
+    > If none groks, "S_5 requires adaptivity on this architecture" is itself a
+    > result, it retroactively justifies D's config, and the confound is recorded
+    > as a limitation instead of a mistake.
+    """
+    return expand_grid(
+        {"mode": "centralized", "dataset": "s5", "group_n": 5,
+         "model": "groknet", "hidden_width": 256, "activation": "quadratic",
+         "loss": "mse", "optimizer": "gd", "weight_decay": 0.0,
+         "epochs": 50_000, "log_every": 100},
+        {"lr": [5.0, 10.0, 50.0], "seed": SEEDS3},
+        tags={"tier": "P1", "group": "d_gd_probe", "experiment": "optimiser",
+              "setup": "D"},
+    )
+
+
+def p1_cd_decay_band():
+    """PHASE 1: measure C's and D's weight decay instead of inheriting Nanda's.
+
+    wd=1.0 is Nanda's published value for a 1-layer transformer on mod-113. B has
+    a reason to carry it -- B IS that replication. C and D carry it because they
+    were written next to B, and for D nothing about the architecture, the task or
+    the class count was consulted.
+
+    That matters twice over. It is the likeliest cause of the K>=30 collapse: at
+    K=50 on setup B, wd=1.0 gives ~3.6% train accuracy and wd=0.1 gives 70.2% --
+    the only knob tried that moves the failure at all, and lr moves it the WRONG
+    way. And setup E, the one AdamW setup whose decay WAS measured for its own
+    setup (t0_mnist_wd_band), is the one that does not collapse.
+
+    The sweep is on lr*wd, log-spaced, exactly as t0_wd_grid and
+    t0_mnist_wd_band are -- weights shrink by (1 - lr*wd) per step, so that
+    product is the comparable quantity and 1/(lr*wd) is the decay timescale:
+
+        wd     0.01    0.03    0.1     0.3     1.0
+        lr*wd  1e-5    3e-5    1e-4    3e-4    1e-3  (the inherited value)
+
+    C runs at hidden_width 256, not the 128 of its Gate A ladder: the capacity
+    sweep halved its T_grok at 256 (21,600 vs 51,200 at 12/12 each), so 256 is
+    the capacity C will actually use and the band should be measured there.
+
+    Budgets are ~4.5x each setup's measured T_grok at the inherited decay
+    (D 21,300 at alpha=0.30; C 21,600 at alpha=0.50, width 256).
+
+    > DECISION RULE. Take the band with the highest fraction-grokked, breaking
+    > ties on the shortest T_grok. If the best band is NOT 1e-3, C and D are
+    > redefined at it and their alpha ladders must be re-measured there -- the
+    > ladder is what sets the working point and every downstream budget, so it
+    > does not survive a change of decay. That re-ladder is the real cost of this
+    > sweep and is Phase 2, not an afterthought.
+    """
+    specs = []
+    # D: quad-MLP on S_5, at its working alpha.
+    specs += expand_grid(
+        {"mode": "centralized", **SETUP_D, "alpha": 0.30,
+         "epochs": 100_000, "log_every": 50},
+        {"weight_decay": [0.01, 0.03, 0.1, 0.3, 1.0], "seed": SEEDS3},
+        tags={"tier": "P1", "group": "cd_decay_band", "experiment": "decay",
+              "setup": "D"},
+    )
+    # C: transformer on S_5, at the capacity the capacity sweep selected.
+    specs += expand_grid(
+        {"mode": "centralized", **SETUP_C, "hidden_width": 256, "alpha": 0.50,
+         "epochs": 100_000, "log_every": 50},
+        {"weight_decay": [0.01, 0.03, 0.1, 0.3, 1.0], "seed": SEEDS3},
+        tags={"tier": "P1", "group": "cd_decay_band", "experiment": "decay",
+              "setup": "C"},
+    )
+    return specs
+
+
+def p1_aprime_alpha():
+    """PHASE 1: setup A' -- A's architecture and task under AdamW. The alpha ladder.
+
+    A' is the cell that closes the 2x2 (see SETUP_A_PRIME). It needs the same
+    thing every other setup needed before it could be run federated: its own
+    cliff and its own working point.
+
+    THE GRID SITS LOW, AND THE RESOLUTION SCALES, because a pilot showed A' is a
+    different animal from A at the same alpha. At alpha=0.30, one seed:
+
+        A  (GD)     memorise ~2,000    grok 13,100    delay ~11,000
+        A' (AdamW)  memorise    100    grok    300    delay      200
+
+    ~40x faster with a ~55x smaller delay -- the phenomenon is barely present at
+    the alpha where A shows it most cleanly. Gridding A' on A's rungs would spend
+    most of the ladder in a regime with nothing to measure, and at log_every=50 a
+    200-epoch delay is four points wide. So the rungs move down and each block
+    gets a resolution matched to its own expected T_grok.
+
+    THE BUDGET IS SPLIT for the opposite reason at the other end. T_grok diverges
+    as (alpha - alpha_c)^-gamma, so A jumps 25,300 -> 805,000 across a single rung
+    near alpha_c ~ 0.198. A flat budget is therefore guaranteed to censor the low
+    rungs and report a cliff that is really the clock -- the mistake that has now
+    cost this project its v1 headline claim, the E=1 probe cells, the first FL
+    probe, and setup C's Gate A verdict. The low block gets 300,000 epochs.
+
+    alpha goes down to 0.125, below A's cliff: if AdamW is this much more
+    data-efficient, A' may have a LOWER alpha_c, and a ladder that stops at A's
+    cliff could not see it. If 0.125 censors at 300k that is a bound, not a
+    boundary, and gets reported as one.
+
+    > DECISION RULE. A' is ready when it has a fitted T(alpha) and a working alpha
+    > whose T_grok leaves >=3x headroom in an affordable FL budget AND whose delay
+    > is large enough to measure a federated effect against -- a setup with a
+    > 200-epoch delay cannot show a 10% federated slowdown. Its cliff is then
+    > compared to A's alpha_c ~ 0.198: if they coincide, the data threshold is a
+    > property of the TASK and the optimiser only sets the clock, which is the
+    > cleanest possible statement of what alpha does. If they differ, the
+    > threshold is optimiser-dependent and every cross-setup alpha comparison in
+    > the study needs that caveat.
+    """
+    # Three blocks, each with log_every ~ 1/30th of its expected T_grok so the
+    # memorise->generalise gap is resolved rather than smeared.
+    blocks = [
+        # alpha,                        epochs,  log_every
+        ([0.30, 0.40, 0.50],             5_000,   10),
+        ([0.225, 0.25],                 50_000,   25),
+        ([0.125, 0.15, 0.175, 0.20],   300_000,  100),
+    ]
+    specs = []
+    for alphas, epochs, log_every in blocks:
+        specs += expand_grid(
+            {"mode": "centralized", **SETUP_A_PRIME, "epochs": epochs,
+             "log_every": log_every},
+            {"alpha": alphas, "seed": SEEDS5},
+            tags={"tier": "P1", "group": "aprime_alpha", "experiment": "ladder",
+                  "setup": "A'"},
+        )
+    return specs
+
+
+def p1_k_collapse_wd():
+    """PHASE 1: is the K>=30 collapse a decay artifact? The federated test.
+
+    THE OBSERVATION. Setup B, one seed per cell, default hyperparameters -- peak
+    train accuracy against client count:
+
+        K        10     20     30     40     50
+        peak    100.0   98.2   42.8    5.9    5.0
+
+    A smooth degradation, not a cliff, and it is a TRAINING failure: these models
+    never memorise, so no budget fixes them. Setup A under plain GD at wd=0 groks
+    5/5 at K=50 and is the only setup with no decay clock at all.
+
+    WHY DECAY. Ruled out already: weight-norm collapse, client drift, and local
+    step size (lower lr is WORSE -- 4.6% train at lr=1e-4). The one knob that
+    moves it is weight decay, at one seed: at K=50, wd=1.0 gives ~3.6% train and
+    wd=0.1 gives 70.2%. The mechanism is plausible -- decoupled decay is applied
+    per local step and is independent of shard size, while the learning signal
+    from a 77-sample shard is not, so the balance between them shifts with K even
+    though tau = 1/(lr*wd) does not.
+
+    WHY THIS AND NOT THE CENTRALIZED BAND SWEEP. p1_cd_decay_band measures decay
+    with ONE client. It cannot show that a better band restores training at K=50,
+    because the quantity that breaks is the ratio between decay and a per-shard
+    gradient, and that ratio has no centralized analogue. This has to be measured
+    federated.
+
+    Setup B carries it: it is the setup with the existing K ladder, so the new
+    cells drop straight onto measured points. The wd=1.0 arm re-uses banked ids
+    where the seeds coincide -- run ids are content hashes, so the launcher skips
+    them and the control arm is nearly free.
+
+    > DECISION RULE. If wd=0.1 restores training at K=50 (t_memo finite, 3/3),
+    > this is an inherited-hyperparameter defect: C and D adopt their measured
+    > bands, the K axis reopens to K=97, and the campaign proceeds as designed.
+    > If it does not, the collapse is a genuine federated breakdown mechanism on
+    > adaptive optimisers -- which is a headline rather than a nuisance, and the
+    > per-client checkpoints become the evidence base for explaining it.
+    """
+    return expand_grid(
+        {**SETUP_B, "mode": "federated", "alpha": 0.30, "local_epochs": 5,
+         "partition": "iid", "num_rounds": 2_000, "eval_every": FL_EVAL_EVERY},
+        {"num_clients": [20, 30, 50], "weight_decay": [0.1, 1.0],
+         "seed": SEEDS3},
+        tags={"tier": "P1", "group": "k_collapse_wd", "experiment": "diagnosis",
+              "setup": "B"},
+    )
+
+
 def s5_setup_c_capacity():
     """GATE A follow-up: does setup C fail because of alpha, or because of capacity?
 
@@ -1088,6 +1417,10 @@ def _longest_first(specs):
 
 
 BUILDERS = {
+    "p1_d_gd_probe": p1_d_gd_probe,
+    "p1_cd_decay_band": p1_cd_decay_band,
+    "p1_aprime_alpha": p1_aprime_alpha,
+    "p1_k_collapse_wd": p1_k_collapse_wd,
     "x_d_alpha_fine": x_d_alpha_fine,
     "x_d_alpha_cliff": x_d_alpha_cliff,
     "x_d_alpha_high": x_d_alpha_high,
@@ -1124,13 +1457,26 @@ def main():
         # Only the new staged manifests are reordered. The completed ones are
         # left byte-for-byte as they ran, so their record stays exactly as
         # executed -- and write_manifest would refuse to orphan their ids anyway.
-        if name.startswith(("s5_", "x_")):
+        if name.startswith(("s5_", "x_", "p1_")):
             specs = _longest_first(specs)
         path = os.path.join(MANIFEST_DIR, name + ".jsonl")
-        write_manifest(specs, path)
+
+        # Idempotence: if the file already claims exactly this set of run ids,
+        # leave it alone. Builders have been edited over the campaign's life, so
+        # regenerating can emit the same cells in a different ORDER -- which
+        # rewrites a completed sweep's record for no reason and shows up as a
+        # spurious diff (t2_boundary, 20 lines reordered, ids untouched). Order
+        # only ever mattered for scheduling, and a manifest that has already run
+        # has nothing left to schedule. A genuine change still writes, because
+        # any edit to a spec changes its content hash and therefore the id set.
+        unchanged = (os.path.exists(path)
+                     and {s["id"] for s in load_manifest(path)}
+                     == {s.get("id") or run_id(s) for s in specs})
+        if not unchanged:
+            write_manifest(specs, path)
         est = sum(estimate_minutes(s) for s in specs)
         print(f"{name}: {len(specs)} runs -> {os.path.relpath(path)} "
-              f"(~{est / 60:.1f} slot-hours)")
+              f"(~{est / 60:.1f} slot-hours){'  [unchanged]' if unchanged else ''}")
 
 
 if __name__ == "__main__":

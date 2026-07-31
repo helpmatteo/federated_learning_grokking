@@ -26,7 +26,14 @@ from fedgrok.core.fed_config import FedConfig
 # is a tag rather than a config field: it carries identity into the results table
 # without re-hashing any banked run.
 TAG_KEYS = {"id", "mode", "tier", "group", "experiment", "setting", "algorithm",
-            "label", "manifest", "setup"}
+            "label", "manifest", "setup",
+            # exp2's three-arm structure. `arm` names the condition
+            # (cent_full / cent_reduced / fl) and `reduced_from_k` records which
+            # K a reduced cell was derived from -- without it a floor run at
+            # alpha=0.0026 is just an odd alpha with no trace of the comparison
+            # it belongs to. Both are tags, so they cost no run ids: a floor cell
+            # shared by two FL cells hashes once and executes once.
+            "arm", "reduced_from_k"}
 
 
 def config_class(mode: str):

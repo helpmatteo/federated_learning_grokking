@@ -99,7 +99,8 @@ def run_spec(spec: dict, results_root: str = DEFAULT_RESULTS_DIR,
         "mode": mode,
         # grouping tags (may be absent)
         **{k: spec[k] for k in ("tier", "group", "experiment", "setting",
-                                "algorithm", "manifest", "setup") if k in spec},
+                                "algorithm", "manifest", "setup",
+                                "arm", "reduced_from_k") if k in spec},
         # config — setup identity first. Without dataset/model/loss a t1
         # replication row cannot say whether it is the groknet or the
         # transformer on S5; they were separable only by hidden_width, and

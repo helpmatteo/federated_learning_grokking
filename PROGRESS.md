@@ -3,7 +3,9 @@
 Working branch for the multi-setup rewrite. Full plan lives at
 `~/.claude/plans/plan-all-that-needs-nested-seal.md`.
 
-**Paused:** 2026-07-21. **v2 code complete across all plan phases (0–5).** What remains is EXECUTION (run the manifests) + the figures that depend on it, plus deferred follow-ups.
+**Current as of 2026-07-31.** v2 code complete across all plan phases (0–5); Gate A
+run and closed out. The work in front is porting v1's exp0–exp7 chain onto the new
+setups, which is gated on **Phase 1** below.
 
 ## State
 
@@ -11,13 +13,84 @@ Working branch for the multi-setup rewrite. Full plan lives at
 |---|---|
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
-| Tests | **364/364 pass** (`venv/bin/python -m pytest tests/ -q`, ~10.5 min incl. FL integration) |
-| Groks verified | quad-MLP+modular (original); transformer+modular (T_grok 6200); transformer+S5 (T_grok ~20000, non-abelian) |
-| FL algorithms | FedAvg, FedProx, FedAvgM, FedYogi, FedAdam (native) + SCAFFOLD (adapted); server-LR calibration manifest queued |
+| Tests | **497/497 pass** (`venv/bin/python -m pytest tests/ -q`, ~9.5 min incl. FL integration) |
+| Runs banked | **720** in `results/data/runs_v2.csv` (511 grokked, 209 censored) + 870 v1 runs in `runs.csv` |
+| Setups | A quad-MLP/mod-97 · A′ quad-MLP/mod-97/AdamW (new, unrun) · B transformer/mod-113 · C transformer/S₅ · D quad-MLP/S₅ · E MLP/MNIST-1k |
+| FL algorithms | FedAvg, FedProx, FedAvgM, FedYogi, FedAdam (native) + SCAFFOLD (adapted, **raises under AdamW by design**) |
 | Statistics | censored survival (KM median + fraction-grokked + bootstrap CI); `scripts/summarize_runs.py` |
 | deps | torch 2.10 + torchvision 0.25 (pinned pair); flwr 1.27 |
 | Env | `venv/` (py3.10, torch 2.10, flwr 1.27); package installed via `pip install -e . --no-deps` |
-| Hardware | 8× L4; **use 6, ~2 runs/GPU = 12 slots**. Indices 1 and 3 had other work on them — the launcher auto-skips busy GPUs. |
+| Hardware | 8× L4, **shared with other users** — check `nvidia-smi` before sizing; the launcher auto-skips busy GPUs |
+
+## THE BLOCKER: FL collapses at K≈30 on every AdamW setup
+
+This is what stands between here and running exp2/exp3/exp4/exp5 on the new
+setups, because K is exp2's primary axis (v1 swept K up to 97). Setup B, one seed,
+default hyperparameters — **peak** train accuracy:
+
+| K | 10 | 20 | 30 | 40 | 50 |
+|---|---|---|---|---|---|
+| peak train | 100.0 | 98.2 | 42.8 | 5.9 | 5.0 |
+
+A smooth degradation, not a cliff. It is a **training** failure — these models
+never memorise, so no budget fixes them (`peak ≈ final` throughout: nothing
+memorises then collapses, it never learns). Setup A under plain GD at wd=0 groks
+5/5 at K=50 and is the only setup with no decay clock.
+
+**Ruled out:** weight-norm collapse, client drift, local step size (lower lr is
+*worse* — 4.6% train at lr=1e-4). **The one knob that moves it is weight decay**:
+at K=50, wd=1.0 → ~3.6% train, wd=0.1 → 70.2%. One seed, so a lead not a result.
+`manifests/p1_k_collapse_wd.jsonl` settles it.
+
+Careful with the number: lr·λ=1e-3 is *also* where the anchor's WD sweep found
+decay outrunning learning, but that sweep was **GD** (coupled decay) and
+RESULTS.md §6.4 makes the point that the optimiser is exactly what discriminates.
+The numerical coincidence is not the argument; the federated wd evidence is.
+
+## The optimiser is a control variable, and it is not currently controlled
+
+The campaign is a 2×2 (architecture × task). A is GD+MSE (Gromov, inherited from
+v1); B, C, D are AdamW+CE. So:
+
+| comparison | isolates | verdict |
+|---|---|---|
+| B vs C | task, on the transformer | **clean** |
+| C vs D | architecture, on S₅ | **clean** |
+| A vs B | architecture, on modular | confounded (optimiser + loss) |
+| A vs D | task, on the quad-MLP | confounded (optimiser + loss) |
+
+B/C/D are internally consistent; A is the odd one out and **cannot move** — it is
+Gromov's config, the anchor to 870 v1 runs, and every banked federated result. So
+the fix is the missing cell, **A′** (`SETUP_A_PRIME`): A's architecture and task
+under AdamW, MSE not CE so that A vs A′ is a single-variable optimiser contrast.
+
+Provenance of the AdamW choices, since only two are inherited:
+
+- **B** — Nanda's published config verbatim (lr=1e-3, wd=1.0, CE). Its value is
+  fidelity; do not tune it or it stops being a replication.
+- **E** — Omnigrok's family, but wd=0.1 was **measured here** (`t0_mnist_wd_band`).
+  The only AdamW setup whose decay was chosen for the setup it runs in — and the
+  only one that does not collapse at K≥20.
+- **C** — inherited from B. No independent justification.
+- **D** — **inherited from nothing.** Gromov's architecture running Nanda's
+  optimiser. Never checked: of 370 banked S₅ runs, **zero** use GD.
+
+## Phase 1 — the pilots that define the setups (96 runs, ~12 slot-h, ~1.5 h on 8 slots)
+
+Must finish before any FL manifest can be written, because manifests need a
+working α and a budget. Each manifest's docstring carries its decision rule.
+
+| manifest | runs | question |
+|---|---|---|
+| `p1_d_gd_probe` | 9 | Does the quad-MLP grok S₅ under GD+MSE? Decides whether D's config changes at all |
+| `p1_cd_decay_band` | 30 | C's and D's decay, measured instead of inherited |
+| `p1_aprime_alpha` | 45 | A′'s cliff and working point |
+| `p1_k_collapse_wd` | 18 (12 new) | Does wd=0.1 reopen the K axis? |
+
+**Phase 2 is the hidden cost.** If the decay band moves for C or D, their Gate A
+α ladders no longer describe the setup — the ladder is what sets the working point
+and every downstream budget, so it must be re-measured at the chosen decay
+(~60 runs). C additionally needs ≥100k epochs; its Gate A verdict was censoring.
 
 ## How to run a sweep now
 
@@ -341,11 +414,22 @@ the launcher's stdout — use `-u`, or just watch `ls results/data/runs/*.json |
 | `t1_probe` | 24 | **done** (18 ok, 6 E=250 cancelled) — gate verdict above; do not relaunch |
 | `t2_k_breakdown` | 60 | **done** (2026-07-28, ~3h wall-clock on 12 slots) — 60/60, zero censored. Results + the structured-heterogeneity finding above. 6 cells auto-skipped as already done by the probe (content-hash dedup working across manifests). |
 | `t0_mnist_wd_band` | 15 | **done** (2026-07-28, <4 min) — MNIST groks; results + the threshold fix above |
-| `t1_replication` | 150 | pending |
 | `t2_boundary` | 20 | **done** (2026-07-29, ~5h) — see the boundary section above |
+| `s5_central_anchor` | 140 | **done** — Gate A ladders, RESULTS §11 |
+| `s5_mnist_working_point` | 36 | **done** — delay vs shardability; (n_train=2000, batch=100) |
+| `s5_fl_probe` | 60 | **done** — first FL run of each setup. **Under-budgeted by construction** (10,000 total steps, below C's centralized requirement outright); its censored cells are not federated effects |
+| `s5_setup_c_capacity` | 34 | **done** — C's failure was censoring, not capacity (RESULTS §11) |
+| `s5_mnist_fl` | 36 | **done** — E groks iid at K=10/20 (batch=100); `label_block` 0/12 |
+| `s5_probe_rerun` | 9 | **done** — B K=10 operand and D K=50 iid recover at 5× budget; **D K=10 operand does not** |
+| `s5_k50_diagnosis` | 9 | **done** — lr does not rescue; wd does (RESULTS §12) |
+| **`p1_d_gd_probe`** | **9** | **PHASE 1 — ready to launch** |
+| **`p1_cd_decay_band`** | **30** | **PHASE 1 — ready to launch** |
+| **`p1_aprime_alpha`** | **45** | **PHASE 1 — ready to launch** |
+| **`p1_k_collapse_wd`** | **18** | **PHASE 1 — ready to launch** (12 new; 6 dedup to banked cells) |
+| `t1_replication` | 150 | pending — **blocked on Phase 1**; its setup definitions predate Gate A |
 | `t2_phase_diagram` | 415 | pending — **re-scope first**: the α=0.3 plane it grids is now known uniformly safe |
 | `t3_server_lr_calibration` | 42 | pending (run before `t3_algorithm_comparison`) |
-| `t3_algorithm_comparison` | 90 | pending — fix each method at its calibrated server LR first |
+| `t3_algorithm_comparison` | 90 | pending — fix each method at its calibrated server LR first. Note **SCAFFOLD is unavailable on B/C/D/E** (raises under AdamW by design), so drift correction is FedProx-only there |
 
 **The `t1_probe` gate:** if no cell reaches ~100% train accuracy while failing to grok, the
 "FL breaks grokking" framing has no support, and the plan says stop and re-frame *before*
@@ -419,6 +503,34 @@ if a big-K sweep is slow, lower `--per-gpu` or make `num_cpus` fractional in
 ```bash
 cd /home/jse44/modules/ToDL/federated_learning_grokking
 git checkout v2-multisetup
-venv/bin/python -m pytest tests/ -q          # expect 364 passed
+venv/bin/python -m pytest tests/ -q          # expect 497 passed, ~9.5 min
+nvidia-smi                                   # SHARED box -- check what is free first
 ```
-Then continue at **writing the Tier-1/2 sweep manifests** + running them, above.
+
+Then **launch Phase 1** (96 runs, ~12 slot-h, ~1.5 h on 8 slots). Independent of
+each other, so they can go in any order or concurrently:
+
+```bash
+for m in p1_d_gd_probe p1_cd_decay_band p1_aprime_alpha p1_k_collapse_wd; do
+  venv/bin/python scripts/validate_manifest.py manifests/$m.jsonl
+done
+venv/bin/python -u scripts/launch_sweep.py manifests/p1_k_collapse_wd.jsonl \
+    --gpus <free> --per-gpu 2          # highest value: decides if the K axis exists
+venv/bin/python scripts/collect_runs.py --backfill-legacy
+venv/bin/python scripts/summarize_runs.py results/data/runs_v2.csv --group group,setup,num_clients,weight_decay
+```
+
+Each Phase 1 manifest's docstring in `scripts/build_manifests.py` states its
+decision rule — read it before reading the results, not after.
+
+**Still to write before exp2 can run**, beyond Phase 1:
+
+- Per-setup FL manifests, with budgets as a multiple of each setup's *measured*
+  centralized T_grok (Phase 2 re-measures these for C and D if their decay moves).
+- `checkpoint_every` + `checkpoint_client_weights` on the cells feeding the
+  circuit analysis — **no B/C/D/E run has per-client weights**, so exp7 has no
+  data on any new setup. The 20 anchor runs that do are now findable by query
+  (`checkpoint_client_weights == True`).
+- The three-arm wiring for exp2: `reduced_arm()` builds the floor condition
+  (dataset-aware — α/K for grid datasets, `n_train`/K for MNIST), but no manifest
+  calls it yet.

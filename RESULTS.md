@@ -1,12 +1,12 @@
 # Results — federated grokking
 
-Everything measured, as of 2026-07-29. Branch `v2-multisetup`.
+Everything measured, as of 2026-07-31. Branch `v2-multisetup`.
 
 Companion documents: `PROGRESS.md` (what is built and what remains),
 `~/.claude/plans/plan-all-that-needs-nested-seal.md` (the campaign design).
 
 **Data behind every number here:**
-`results/data/runs_v2.csv` (158 v2 runs) and `results/data/runs.csv` (870 v1 runs,
+`results/data/runs_v2.csv` (720 v2 runs) and `results/data/runs.csv` (870 v1 runs,
 recovered from logs). Both are committed. Regenerate any table with:
 
 ```bash
@@ -34,8 +34,114 @@ partially censored.
 5. **Weight decay's effect depends on the optimizer, not the loss** — AdamW's
    decoupled decay accelerates grokking, plain GD's coupled decay does not.
 
+6. **Every setup has its own cliff, and they nearly coincide** — A, B and D all
+   sit at α≈0.20 (§11). The data threshold looks like a property of the task
+   family, not of the architecture.
+7. **Federation breaks the new setups at K≈30, and it is not a grokking
+   failure** — those models never memorise (§12). Every affected setup uses
+   AdamW; the anchor, under plain GD, is fine at K=97.
+
 Open: whether K=97 IID *fails* or is merely *slow* — both successes landed within
-5% of the budget ceiling, so that cell is not yet resolved.
+5% of the budget ceiling, so that cell is not yet resolved. And whether the K≈30
+collapse is an inherited-hyperparameter defect or a real breakdown mechanism.
+
+---
+
+## 11. Gate A — each setup's own cliff
+
+α=0.25 is the *anchor's* working point; nothing said the other setups shared it.
+Centralized α ladders, 5 seeds, KM median:
+
+| setup | 0.5 | 0.4 | 0.3 | 0.25 | 0.2 | 0.15 |
+|---|---|---|---|---|---|---|
+| **A** quad-MLP mod-97 | 7,600 | 8,800 | 13,100 | 25,300 | 0/5 | 0/5 |
+| **B** transformer mod-113 | 800 | 1,400 | 6,600 | 12,400 | 2/5 | 0/5 |
+| **D** quad-MLP S₅ | 7,200 | 12,600 | 21,300 | 36,200 | 0/5 | 0/5 |
+| **C** transformer S₅ | 4/5 | 3/5 | 0/5 | 0/5 | 0/5 | 0/5 |
+
+A reproduces v1's α=0.25 value (25,300 vs 25,133) — independent harness
+agreement. B and D cliff at ~0.20 with clean monotone divergence; working point
+α=0.30.
+
+**Setup C's failure was censoring, not capacity.** The ladder gave C 40,000
+epochs. The capacity sweep gave it 100,000 and got **12/12 even at the baseline
+width 128**, KM median 51,200 — above the budget the ladder allowed. Width 256
+then halves it to 21,600, so capacity is a real accelerant, but C should not have
+been written off. At α=0.6 → 20,200 and α=0.7 → 4,800, both 5/5. C stays, at
+α≥0.5 with ≥100k epochs, with the caveat that its working point sits far above
+the others' 0.30 so matched-α comparison is unavailable.
+
+That is the fourth time a fixed budget has manufactured a boundary in this
+project — after v1's headline claim, the E=1 probe cells, and the first FL probe.
+
+**Setup B's seed variance is intrinsic and bimodal**: 4,400 / 6,100 / 6,600 /
+19,500 / 20,400 at α=0.30, against A's 12,600–13,400. Two clusters ~3× apart, so
+more seeds narrow the interval by ~√2 and do not make it unimodal. B cannot
+resolve effects below ~2–3× at 5 seeds.
+
+**MNIST: delay and shardability are in opposition.** Every config with a large
+memorise→generalise delay needs a large batch, which makes shards degenerate;
+every shardable config has a small delay or none. Best compromise
+(n_train=2000, batch=100): delay 500.
+
+---
+
+## 12. The K≈30 collapse on AdamW setups
+
+Setup B, one seed per cell, default hyperparameters — **peak** train accuracy:
+
+| K | 10 | 20 | 30 | 40 | 50 |
+|---|---|---|---|---|---|
+| peak train | 100.0 | 98.2 | 42.8 | 5.9 | 5.0 |
+| final train | 99.9 | 98.2 | 41.3 | 5.3 | 3.6 |
+
+A smooth degradation, not a cliff — and a **training** failure, not a grokking
+one. `peak ≈ final` throughout, so nothing memorises and then collapses; it never
+learns. No budget fixes a model at 5% train accuracy. Setup A under plain GD at
+wd=0 groks 5/5 at K=50 and is the only setup with no decay clock at all.
+
+Ruled out: weight-norm collapse (norms flat or growing), client drift (the
+failing D K=50 operand drifts *less* than the working D K=50 iid), and local step
+size — lower lr is **worse**, 4.6% train at lr=1e-4.
+
+The one knob that moves it is weight decay. At K=50 on setup B:
+
+| lr | wd | lr·λ | train acc |
+|---|---|---|---|
+| 1e-3 | 1.0 | 1e-3 | ~3.6% ← inherited default |
+| 1e-4 | 1.0 | 1e-4 | 4.6% |
+| 3e-4 | 1.0 | 3e-4 | 3.4% |
+| **1e-3** | **0.1** | **1e-4** | **70.2%** |
+
+One seed per cell, so this is a lead rather than a result;
+`manifests/p1_k_collapse_wd.jsonl` settles it at 3 seeds across K ∈ {20,30,50}.
+
+**Do not lean on the numerical coincidence with §6.2.** lr·λ=1e-3 is also where
+the anchor's corrected WD sweep found decay outrunning learning, but that sweep
+was **GD**, where decay is coupled — and §6.4 is precisely the finding that the
+optimiser is what discriminates. The federated weight-decay evidence stands on
+its own; the matching number does not transfer.
+
+### 12.1 Why this was invisible until now
+
+`t_grok` is one number and grokking has two timescales, so "memorised but never
+generalised" and "never trained" both recorded `inf`. `t_memo`, `delay` and
+`peak_train_acc` are now recorded per run (and backfilled across all 720 banked
+rows by `scripts/backfill_runs.py`), which is what makes the table above readable
+as a training failure rather than a grokking one.
+
+### 12.2 Related: D's operand partition fails, which inverts the headline
+
+At K=10 on setup D, 50,000 steps: 99.8% train, **63% test**, 3/3 censored against
+an 85 bar. Memorised, not generalising — while D at K=50 **iid** groks 3/3 at
+~11,000. That is the opposite of §5.4, where the operand partition *rescues* K=97
+on the anchor. Whether it is slow or stuck is unresolved and needs 5× budget
+before "structure hurts D" is claimable.
+
+Note also that on S₅ the operand partition shards by first-operand *element*,
+which is not algebraically coherent the way a mod-p operand shard is. The
+**coset** partition is S₅'s coherent one, so coset-vs-operand-vs-iid on D is what
+actually separates "coherent shard" from "merely structured shard".
 
 ---
 

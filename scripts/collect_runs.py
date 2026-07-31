@@ -31,6 +31,7 @@ import os
 # is precisely why `grok_threshold` is recorded per row.
 PREFERRED_COLUMNS = [
     "id", "mode", "tier", "group", "experiment", "setting", "algorithm", "setup",
+    "arm", "reduced_from_k",
     # setup identity -- what makes a multi-setup table interpretable
     "dataset", "model", "loss", "group_n", "coset_subgroup",
     "task", "optimizer", "p", "hidden_width", "n_layers", "activation",
@@ -40,7 +41,8 @@ PREFERRED_COLUMNS = [
     "tau", "eval_every", "checkpoint_every", "epochs", "log_every", "momentum",
     "lr", "weight_decay",
     "grok_threshold",
-    "t_grok", "t_50", "final_acc", "final_train_acc", "final_ipr",
+    "t_grok", "t_50", "t_memo", "delay", "final_acc", "final_train_acc",
+    "peak_train_acc", "final_ipr",
     "grokked", "censored", "steps_run", "wall_s",
 ]
 
