@@ -626,6 +626,254 @@ def s5_fl_probe():
     return specs
 
 
+def x_d_alpha_fine():
+    """TANGENT (not part of the staged campaign): a fine alpha ladder on setup D.
+
+    Interstitial points between the Gate A ladder's rungs for the quadratic MLP
+    on S5, which currently reads:
+
+        a=0.5  7,200 | 0.4  12,600 | 0.3  21,300 | 0.25  36,200 | 0.2  0/5
+
+    Adding 0.325/0.35/0.375, 0.425/0.45/0.475 and 0.525/0.55 takes that from 6
+    rungs to 14, which is what a power-law fit of T_grok ~ (alpha - alpha_c)^-gamma
+    needs to be worth quoting -- setup A's exponent (gamma ~ 0.99, alpha_c ~ 0.198,
+    R^2 = 0.978) was fitted on a comparable density.
+
+    Identical to the s5_central_anchor block for setup D in every other respect:
+    same SETUP_D, same 40,000-epoch budget, same 5 seeds. Every new alpha is at or
+    above 0.325, where the ladder already shows T_grok <= 21,300, so 40k leaves
+    at least 2x headroom and nothing here should censor on the clock.
+
+    Tagged tier "X" so it stays out of the Gate A / Stage 3 analysis by default.
+    """
+    return expand_grid(
+        {"mode": "centralized", **SETUP_D, "epochs": 40_000, "log_every": 100},
+        {"alpha": [0.325, 0.35, 0.375, 0.425, 0.45, 0.475, 0.525, 0.55],
+         "seed": SEEDS5},
+        tags={"tier": "X", "group": "d_alpha_fine", "experiment": "tangent",
+              "setup": "D"},
+    )
+
+
+def x_d_alpha_high():
+    """TANGENT: setup D's ladder extended up to alpha = 1.00 in 0.025 steps.
+
+    Same cell as x_d_alpha_fine and the Gate A setup-D block in every respect --
+    same SETUP_D, same 40,000-epoch budget, same 5 seeds -- so all three compose
+    into one ladder. At these alphas T_grok is well under 5,000, so the budget is
+    ample.
+
+    NOTE on alpha = 1.00: alpha is the fraction of the grid used for TRAINING, so
+    1.00 leaves the test set empty. It does not error -- compute_accuracy over
+    zero samples returns NaN -- so the run completes and records t_grok = inf with
+    a NaN test curve. Kept because it was asked for and because the train curve is
+    still meaningful, but its test series is undefined by construction, not a
+    measurement of failure. alpha = 0.975 already leaves only 360 test samples.
+    """
+    return expand_grid(
+        {"mode": "centralized", **SETUP_D, "epochs": 40_000, "log_every": 100},
+        {"alpha": [0.575, 0.6, 0.625, 0.65, 0.675, 0.7, 0.725, 0.75, 0.775,
+                   0.8, 0.825, 0.85, 0.875, 0.9, 0.925, 0.95, 0.975, 1.0],
+         "seed": SEEDS5},
+        tags={"tier": "X", "group": "d_alpha_high", "experiment": "tangent",
+              "setup": "D"},
+    )
+
+
+def x_d_alpha_cliff():
+    """TANGENT: is setup D's cliff real, or is it the 40,000-epoch clock?
+
+    The 14-rung ladder (x_d_alpha_fine + the Gate A block) is fitted far better
+    by an exponential, T_grok ~ 10^(-2.78 alpha), than by the power law setup A
+    follows -- R^2 0.983 on two parameters against 0.971 on three, and the power
+    law's alpha_c runs to the bottom of its search range.
+
+    Extrapolating that exponential to the two censored rungs:
+
+        alpha = 0.20  ->  ~45,000 epochs
+        alpha = 0.15  ->  ~62,000 epochs
+
+    Both are ABOVE the 40,000-epoch budget they were run at. So their 0/5 is
+    exactly what a smooth exponential looks like when it runs past the clock, and
+    the apparent cliff between 0.20 and 0.25 may not exist at all. Reading it as
+    an abrupt failure would repeat the mistake that cost v1 its headline claim.
+
+    150,000 epochs -- 2.4x the exponential's prediction at the hardest rung -- and
+    two intermediate rungs to see whether the curve simply continues.
+    """
+    return expand_grid(
+        {"mode": "centralized", **SETUP_D, "epochs": 150_000, "log_every": 200},
+        {"alpha": [0.15, 0.175, 0.2, 0.225], "seed": SEEDS5},
+        tags={"tier": "X", "group": "d_alpha_cliff", "experiment": "tangent",
+              "setup": "D"},
+    )
+
+
+def x_d_internals():
+    """TANGENT: what is happening inside setup D across the alpha range 0.2-0.6?
+
+    THE QUESTION. Read at fixed step counts rather than threshold crossings, the
+    32-rung alpha ladder is two phases, not a family of different phenomena:
+
+        alpha   0.30  0.375  0.40  0.45  0.50  0.55  0.60
+        @1800    3.1   19.1  32.6  57.1  77.4  88.2  94.0    <- phase-1 plateau
+        @3600    2.4   20.2  32.6  55.9  73.4  84.1  91.5    <- the dip
+        T@95   27067  19400 17200 13960 11380  8920  6700    <- phase-2
+
+    Phase 1 finishes by ~1,800 steps at EVERY alpha and lands on a plateau
+    P(alpha) that is a sigmoid with midpoint ~0.47. The dip bottoms at ~3,600
+    steps at every alpha. Phase 2's rate is smooth, T@95 ~ exp(-n/3190) over
+    alpha in [0.3, 0.6] to 4.7% residual. So alpha's dramatic effect is almost
+    entirely P(alpha); the apparent cliff is where P crosses the 85% grok bar and
+    it moves when the bar moves (T@25 collapses at 0.40, T@50 at 0.45, T@85 at
+    0.55). None of that says WHY.
+
+    WHAT THIS RUN ADDS. The accuracy histories cannot answer it, because nothing
+    logged separates a memorising circuit from a compositional one. Setup D's
+    quadratic activation makes that separation exact rather than fitted -- see
+    metrics/quadratic_circuits.py: logit = A[c,a] + 2T[c,a,b] + B[c,b], where A
+    and B cannot compose by construction, so T IS the compositional circuit. And
+    metrics/irreps.py gives S_5's exact analogue of the modular study's Fourier
+    spectrum via the isotypic decomposition. Both are new, both log per eval, and
+    NO banked run has them -- nor any saved weights, so this cannot be done
+    post-hoc on the 160 ladder runs.
+
+    A single pilot at alpha=0.55 already shows the measures move with the dip:
+    the compositional circuit's participation ratio bottoms at 54 units at step
+    1,800 (the plateau) and rises to 75 at step 3,600 (the trough), exactly
+    anti-correlated with test accuracy. That is one seed at one alpha, which is
+    what this manifest is for.
+
+    BUDGET. Two blocks, because the low rungs are slow and the high ones are not:
+    alpha <= 0.275 gets 150,000 epochs (alpha=0.25's T@85 is 35,140 and 0.225 is
+    censored at 40k), the rest 40,000. log_every=25 throughout -- the dip is
+    ~1,800 steps wide and the ladder's 100-step resolution smears its edges.
+    checkpoint_every=500 so the post-hoc questions the time series cannot answer
+    (CKA to the final representation, cumulative unit ablation) stay open without
+    a re-run; at 369 KB a checkpoint that is ~4 GB, against 32 TB free.
+    """
+    slow = expand_grid(
+        {"mode": "centralized", **SETUP_D, "epochs": 150_000,
+         "log_every": 25, "checkpoint_every": 500},
+        {"alpha": [0.2, 0.225, 0.25, 0.275], "seed": SEEDS5},
+        tags={"tier": "X", "group": "d_internals", "experiment": "tangent",
+              "setup": "D"},
+    )
+    fast = expand_grid(
+        {"mode": "centralized", **SETUP_D, "epochs": 40_000,
+         "log_every": 25, "checkpoint_every": 500},
+        {"alpha": [0.3, 0.325, 0.35, 0.375, 0.4, 0.425, 0.45, 0.475, 0.5,
+                   0.525, 0.55, 0.575, 0.6],
+         "seed": SEEDS5},
+        tags={"tier": "X", "group": "d_internals", "experiment": "tangent",
+              "setup": "D"},
+    )
+    return slow + fast
+
+
+def x_d_wd_ladder():
+    """TANGENT: is setup D's fixed-epoch dip a weight-decay transient?
+
+    THE OBSERVATION. Read at fixed step counts rather than at threshold
+    crossings, every rung of the 32-point alpha ladder has the same shape: a
+    fast rise that plateaus by ~1,800 steps, a dip bottoming at ~3,600, then a
+    slow climb. The dip sits at the SAME step for every alpha, while T_grok over
+    that ladder spans 300 to 35,000 steps -- two orders of magnitude. Whatever
+    sets the dip's clock is therefore not the data.
+
+    Test acc at fixed steps (5-seed means), showing plateau height P(alpha):
+
+        alpha  0.30  0.375  0.40  0.45  0.50  0.55  0.60
+        @1800   3.1   19.1  32.6  57.1  77.4  88.2  94.0
+        @3600   2.4   20.2  32.6  55.9  73.4  84.1  91.5
+
+    P(alpha) is a sigmoid with midpoint ~0.47, and it -- not any transition in
+    the dynamics -- is what makes the ladder's curves look like different
+    phenomena. The apparent alpha cliff moves with the grok threshold (T@25
+    collapses at alpha~0.40, T@50 at ~0.45, T@70 at ~0.50, T@85 at ~0.55),
+    i.e. it is just where P(alpha) crosses the chosen bar.
+
+    THE HYPOTHESIS. The one clock in this setup that ignores alpha is decoupled
+    weight decay: SETUP_D runs lr=1e-3, wd=1.0, so weights shrink by (1 - lr*wd)
+    per step and the decay timescale is tau = 1/(lr*wd) = 1,000 steps. The
+    observed plateau is at ~1.8 tau and the trough at ~3.6 tau.
+
+    THE TEST. Move tau and see whether the dip moves with it.
+
+        wd    lr*wd    tau      predicted trough (3.6 tau)
+        0.0   0        none     no dip at all
+        0.1   1e-4     10,000   ~36,000
+        0.3   3e-4      3,333   ~12,000
+        1.0   1e-3      1,000    ~3,600   (the banked ladder -- the control)
+        3.0   3e-3        333    ~1,200
+
+    Proportional movement confirms decay. No movement falsifies it cheaply and
+    sends the search to the task instead. All five sit under the lr*wd <= 0.1
+    band that check_decay_stability enforces.
+
+    Three alphas spanning the sigmoid -- 0.30 (below the midpoint, dip masked by
+    growth), 0.45 (mid-rise, deepest dip), 0.55 (near ceiling) -- so the same
+    runs also show whether P(alpha) itself depends on decay, and whether phase
+    2's rate constant (T@95 ~ exp(-n/3190) over alpha in [0.3, 0.6]) rescales.
+
+    log_every=25 rather than the ladder's 100: at wd=3.0 the whole event is
+    predicted to be over by step ~1,200, which 100-step resolution would smear.
+    """
+    return expand_grid(
+        {"mode": "centralized", **SETUP_D, "epochs": 40_000, "log_every": 25},
+        {"weight_decay": [0.0, 0.1, 0.3, 1.0, 3.0],
+         "alpha": [0.30, 0.45, 0.55],
+         "seed": SEEDS3},
+        tags={"tier": "X", "group": "d_wd_ladder", "experiment": "tangent",
+              "setup": "D"},
+    )
+
+
+def x_d_lr_control():
+    """TANGENT: the confound control for x_d_wd_ladder -- decay clock or step size?
+
+    x_d_wd_ladder varies wd at fixed lr, so it varies lr*wd. But lr also sets
+    the step size, and a dip that moves with 1/lr would look identical to one
+    that moves with 1/(lr*wd) in that ladder alone. The two are separated by
+    holding lr*wd FIXED and varying lr:
+
+        lr       wd     lr*wd    tau        step size vs control
+        2.5e-4   4.0    1e-3     1,000      0.25x
+        1.0e-3   1.0    1e-3     1,000      1x        (control)
+        4.0e-3   0.25   1e-3     1,000      4x
+
+    Products are exactly 1e-3 in all three, so tau is identical by construction.
+    Predictions:
+      dip at the same STEP in all three  -> the decay timescale sets the clock
+      dip epoch scaling as 1/lr          -> it is the step size, and the wd
+                                            ladder's result is coincidental
+
+    Two alphas (0.45, 0.55) rather than three: this arm only has to localise the
+    dip, which the ladder shows is deepest and cleanest above the P(alpha)
+    midpoint.
+
+    60,000 epochs rather than 40,000. At lr=2.5e-4 every timescale that is
+    gradient-driven stretches 4x, and alpha=0.45's T@95 of ~13,960 at the control
+    lr would land near 55,000. The dip is early either way, but the extra budget
+    keeps phase 2 measurable in the slow arm so the same runs report whether the
+    rate constant follows lr or lr*wd.
+
+    lr=4e-3 is 4x the published grokking band and may be unstable on a quadratic
+    activation. That is a real risk and an informative outcome rather than a
+    failure -- divergence is visible in the loss curve, and the arm is 6 runs.
+    """
+    specs = []
+    for lr, weight_decay in [(2.5e-4, 4.0), (1.0e-3, 1.0), (4.0e-3, 0.25)]:
+        specs += expand_grid(
+            {"mode": "centralized", **SETUP_D, "epochs": 60_000,
+             "log_every": 25, "lr": lr, "weight_decay": weight_decay},
+            {"alpha": [0.45, 0.55], "seed": SEEDS3},
+            tags={"tier": "X", "group": "d_lr_control", "experiment": "tangent",
+                  "setup": "D"},
+        )
+    return specs
+
+
 def s5_setup_c_capacity():
     """GATE A follow-up: does setup C fail because of alpha, or because of capacity?
 
@@ -840,6 +1088,12 @@ def _longest_first(specs):
 
 
 BUILDERS = {
+    "x_d_alpha_fine": x_d_alpha_fine,
+    "x_d_alpha_cliff": x_d_alpha_cliff,
+    "x_d_alpha_high": x_d_alpha_high,
+    "x_d_internals": x_d_internals,
+    "x_d_wd_ladder": x_d_wd_ladder,
+    "x_d_lr_control": x_d_lr_control,
     "s5_setup_c_capacity": s5_setup_c_capacity,
     "s5_mnist_fl": s5_mnist_fl,
     "s5_probe_rerun": s5_probe_rerun,
@@ -870,7 +1124,7 @@ def main():
         # Only the new staged manifests are reordered. The completed ones are
         # left byte-for-byte as they ran, so their record stays exactly as
         # executed -- and write_manifest would refuse to orphan their ids anyway.
-        if name.startswith("s5_"):
+        if name.startswith(("s5_", "x_")):
             specs = _longest_first(specs)
         path = os.path.join(MANIFEST_DIR, name + ".jsonl")
         write_manifest(specs, path)
