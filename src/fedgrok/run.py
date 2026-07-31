@@ -43,6 +43,26 @@ def _steps_run(history):
     return float(steps[-1]) if steps else 0.0
 
 
+class IncompleteRun(RuntimeError):
+    """A run returned normally but did not reach its configured horizon."""
+
+
+def _completion(history, cfg, mode):
+    """(reached, configured) in the run's own natural unit -- rounds or epochs.
+
+    NOT steps. Under partial participation `total_steps` is legitimately below
+    rounds x E, so a step-based check would flag every fraction_train < 1 cell.
+    Rounds and epochs are exact: the centralized loop is `range(epochs + 1)` and
+    logs the final epoch, and `evaluate_fn` forces an eval at
+    `server_round == num_rounds`, so a complete run always records its horizon.
+    """
+    if mode == "federated":
+        seq = history.get("round", [])
+        return (float(seq[-1]) if seq else 0.0), float(cfg.num_rounds)
+    seq = history.get("epoch", [])
+    return (float(seq[-1]) if seq else 0.0), float(cfg.epochs)
+
+
 def run_spec(spec: dict, results_root: str = DEFAULT_RESULTS_DIR,
              histories_root: str = "results/runs") -> dict:
     """Execute one spec, write its result JSON, and return the result row."""
@@ -72,6 +92,36 @@ def run_spec(spec: dict, results_root: str = DEFAULT_RESULTS_DIR,
     else:
         raise ValueError(f"Unknown mode: {mode!r}")
     wall_s = time.time() - t0
+
+    # Did it actually finish? Flower's run_simulation can return NORMALLY after
+    # a Ray actor failure, so a starved simulation exits 0, writes a plausible
+    # result, and is banked as a completed run. Observed: two K=50 cells stopped
+    # at 157 and 234 of 2,000 rounds and were recorded as 2.9% train accuracy --
+    # which reads exactly like the training collapse under investigation, and
+    # would have been quoted as evidence for it.
+    #
+    # The cause is resource oversubscription, not a bug: clients reserve
+    # num_cpus=1 each, so 12 concurrent runs x 50 clients demands 600 CPUs on a
+    # 64-core box. It therefore depends on what else is running, which is why the
+    # same cell completed in an earlier, less crowded sweep. Lower --per-gpu or
+    # make num_cpus fractional for large-K sweeps.
+    #
+    # Raising rather than recording a flag is deliberate: the launcher then
+    # counts it as a failure and, because no result JSON is written, resume
+    # re-runs it. A flag would leave the row in place and rely on every future
+    # analysis remembering to filter on it. The history is still on disk under
+    # output_dir for diagnosis.
+    reached, configured = _completion(history, cfg, mode)
+    if configured > 0 and reached < configured:
+        unit = "rounds" if mode == "federated" else "epochs"
+        raise IncompleteRun(
+            f"{spec['id']}: reached {reached:.0f}/{configured:.0f} {unit} "
+            f"({100 * reached / configured:.1f}%) but returned without error. "
+            f"Nothing is written, so this run is not banked and resume will "
+            f"repeat it. If this is a large-K federated cell, reduce --per-gpu: "
+            f"each client reserves num_cpus=1, so K x concurrent-runs must stay "
+            f"within the core count."
+        )
 
     threshold = grok_threshold(cfg)
     metrics = extract_grokking_results(history, threshold=threshold)

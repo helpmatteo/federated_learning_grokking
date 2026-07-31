@@ -56,3 +56,72 @@ def test_result_path_is_stable_without_explicit_id():
 def test_tags_do_not_change_the_run_id():
     tagged = dict(CHEAP, tier="T0", group="pilot", experiment="exp2")
     assert run_id(tagged) == run_id(CHEAP)
+
+
+class TestIncompleteRunGuard:
+    """A run that stops early must not be banked as a completed one.
+
+    Flower's `run_simulation` can return NORMALLY after a Ray actor failure, so a
+    starved simulation exits 0 and writes a plausible result. This is the worst
+    shape of bug for this project: two K=50 cells stopped at 157 and 234 of 2,000
+    rounds and recorded 2.9% train accuracy, which reads exactly like the
+    large-K training collapse under investigation and would have been quoted as
+    evidence for it.
+    """
+
+    def test_completion_is_measured_in_rounds_not_steps(self):
+        """Steps would false-positive on every partial-participation cell.
+
+        Under fraction_train < 1 the compute-matched `total_steps` axis is
+        legitimately below rounds x E, by design.
+        """
+        from fedgrok.core.fed_config import FedConfig
+        from fedgrok.run import _completion
+        cfg = FedConfig(num_rounds=2_000, local_epochs=5, fraction_train=0.2)
+        history = {"round": [0, 1_000, 2_000],
+                   "total_steps": [0.0, 1_000.0, 2_000.0]}   # 1/5 of rounds x E
+        reached, configured = _completion(history, cfg, "federated")
+        assert (reached, configured) == (2_000.0, 2_000.0)
+
+    def test_centralized_completion_reads_the_final_epoch(self):
+        from fedgrok.core.config import Config
+        from fedgrok.run import _completion
+        cfg = Config(epochs=40_000)
+        assert _completion({"epoch": [0, 20_000, 40_000]}, cfg, "centralized") \
+            == (40_000.0, 40_000.0)
+
+    def test_truncated_federated_run_raises_and_writes_nothing(self, tmp_path,
+                                                               monkeypatch):
+        import fedgrok.training.federated as fed
+        from fedgrok.run import IncompleteRun, run_spec
+
+        def _stops_early(cfg):
+            # 234 of 2,000 rounds -- the observed failure, with a plausible
+            # history attached so nothing else can catch it first.
+            return {"round": [0, 234], "total_steps": [0.0, 1_171.0],
+                    "train_acc": [1.0, 2.9], "test_acc": [1.0, 0.5]}, None
+
+        monkeypatch.setattr(fed, "fed_train", _stops_early)
+        spec = {"mode": "federated", "task": "addition", "p": 97,
+                "num_clients": 50, "num_rounds": 2_000, "local_epochs": 5}
+        with pytest.raises(IncompleteRun, match="234/2000"):
+            run_spec(spec, results_root=str(tmp_path / "runs"),
+                     histories_root=str(tmp_path / "hist"))
+        # Nothing banked, so the launcher's resume repeats the cell.
+        assert not list((tmp_path / "runs").glob("*.json"))
+
+    def test_complete_run_is_unaffected(self, tmp_path, monkeypatch):
+        import fedgrok.training.centralized as cent
+        from fedgrok.run import run_spec
+
+        def _finishes(cfg):
+            return {"epoch": [0, 100], "train_acc": [1.0, 100.0],
+                    "test_acc": [1.0, 100.0]}, None
+
+        monkeypatch.setattr(cent, "train", _finishes)
+        spec = {"mode": "centralized", "task": "addition", "p": 97,
+                "epochs": 100}
+        row = run_spec(spec, results_root=str(tmp_path / "runs"),
+                       histories_root=str(tmp_path / "hist"))
+        assert row["steps_run"] == 100.0
+        assert len(list((tmp_path / "runs").glob("*.json"))) == 1
