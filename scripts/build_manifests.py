@@ -1093,6 +1093,135 @@ def p1_cd_decay_band():
     return specs
 
 
+def t1_setup_k_ladder():
+    """TIER 1: the K ladder on every setup, measuring BOTH timescales.
+
+    THE LIMITATION THIS EXISTS TO CLOSE. Every federated result in the project
+    uses one setup -- the quadratic MLP on modular addition. RESULTS 10 states
+    that as the headline caveat, and nothing measured so far tests whether the
+    delay law or the partition-structure effect is a property of grokking or a
+    property of that one architecture.
+
+    WHY A LADDER AND NOT A REPLICATION. The obvious version of this manifest
+    re-runs the anchor's cells on the new setups and compares T_grok. That would
+    have been the wrong experiment, because the two setups measured so far
+    decompose in OPPOSITE ways, and T_grok alone hides it:
+
+        setup A (GD, wd=0), alpha=0.30, iid, E=5
+            t_memo   3,700  3,700  3,700  3,700     K = 5, 10, 20, 50
+            delay    9,500  9,700 10,000 11,500     <- delay carries the K effect
+
+        setup B (AdamW, wd=0.1), alpha=0.30, iid, E=5
+            t_memo   --     --     3,600  53,300    K = 20, 50
+            delay    --     --    ~90,000    ?      <- memorisation carries it
+
+    A's memorisation is flat in K and its delay grows; B's memorisation explodes
+    and its delay may not move at all. Same axis, same statistic, opposite
+    mechanism -- and a table of T_grok values shows one number for both. The
+    plausible reason is the decay clock: A runs wd=0 and has none, so shard size
+    does not fight memorisation; B's decoupled decay is applied per local step
+    and is independent of shard size, so smaller shards lose the race. That
+    predicts D (AdamW) resembles B and that anything at wd=0 resembles A.
+
+    So the measurement is t_memo AND delay per K per setup, not T_grok per K.
+
+    DESIGN. K in {5, 10, 20, 50} is the anchor's own ladder (t2_k_breakdown), so
+    every cell here has a same-K, same-E, same-partition counterpart on A already
+    banked. iid only: partition structure is a separate axis and mixing it in
+    would leave the K effect and the structure effect confounded in a first look.
+
+    Each setup sits at ITS OWN working point (RESULTS 11 and 13), never a shared
+    alpha -- setup C's cliff is above 0.5 while everyone else's is near 0.20, and
+    a shared alpha would put C past its cliff and call it a federated effect.
+
+    BUDGETS are set as t_memo(K) + delay with headroom ABOVE the estimate rather
+    than at it, per the rule the K-collapse investigation produced. They are not
+    multiples of the centralized T_grok: that is the error that manufactured six
+    boundaries in this project, most recently the wd=0.1 arm censored at 10,000
+    steps against a 45,050 requirement.
+
+    B carries only its missing rungs. Its K = 20, 30, 50 cells at wd=0.1 are
+    already banked at long budget (p1_k_collapse_budget); K = 5 and 10 complete
+    the memo(K) curve at its low end, which is where a blow-up would first be
+    distinguishable from a constant.
+
+    E (MNIST) stops at K=20, and its last rung is degenerate ON PURPOSE.
+    (n_train=2000, batch=100) is the working point with both a real delay and
+    more than one batch per local epoch, but that holds only to K=10: the shards
+    are 400 / 200 / 100 at K = 5 / 10 / 20, so K=20 is exactly one full-batch
+    step per local epoch and `local_epochs` stops meaning what it means on every
+    other setup. validate_manifest flags it, correctly. It is kept as the control
+    that shows what degeneracy looks like -- the same convention s5_mnist_fl
+    uses -- and the ladder cannot extend past it, because shrinking batch_size
+    with K would confound the K axis with a change in the effective batch, which
+    is the very thing MNIST's delay depends on.
+
+    > DECISION RULE. Read t_memo(K) and delay(K) per setup, not T_grok(K).
+    > If the AdamW setups (B, C, D) all show memorisation carrying the K effect
+    > while the wd=0 setups (A) show the delay carrying it, the decay clock is
+    > the mechanism, per-setup budgets follow from which term dominates, and the
+    > campaign's high-K cells are budgeted from the dominant term. If the
+    > decomposition does not sort by decay, the two setups measured so far are
+    > coincidence and the K axis needs a per-setup budget measured empirically
+    > before any comparison across setups is meaningful.
+    """
+    specs = []
+
+    # D -- quad-MLP on S_5, working alpha 0.30 (T_grok 21,300 centralized).
+    # 20,000 rounds = 100,000 steps, ~4.7x centralized. D is AdamW at wd=1.0, so
+    # if it follows B its memorisation is what runs out first at high K; the
+    # headroom is there to see that rather than censor it.
+    specs += expand_grid(
+        {"mode": "federated", **SETUP_D, "alpha": 0.30, "local_epochs": 5,
+         "partition": "iid", "num_rounds": 20_000, "eval_every": FL_EVAL_EVERY,
+         "checkpoint_every": 2_000, "checkpoint_client_weights": True},
+        {"num_clients": [5, 10, 20, 50], "seed": SEEDS3},
+        tags={"tier": "T1", "group": "setup_k_ladder", "experiment": "replication",
+              "setup": "D"},
+    )
+
+    # C -- transformer on S_5. alpha=0.50 and width 256: its cliff sits far above
+    # the others' and the capacity sweep halved its T_grok at 256. 40,000 rounds
+    # = 200,000 steps, double everyone else, because C needed >=100k epochs
+    # CENTRALLY and is the setup whose Gate A verdict was itself censoring.
+    specs += expand_grid(
+        {"mode": "federated", **SETUP_C, "hidden_width": 256, "alpha": 0.50,
+         "local_epochs": 5, "partition": "iid", "num_rounds": 40_000,
+         "eval_every": FL_EVAL_EVERY,
+         "checkpoint_every": 4_000, "checkpoint_client_weights": True},
+        {"num_clients": [5, 10, 20, 50], "seed": SEEDS3},
+        tags={"tier": "T1", "group": "setup_k_ladder", "experiment": "replication",
+              "setup": "C"},
+    )
+
+    # B -- only the rungs the K-collapse work did not already buy, at the decay
+    # that trains at every K (wd=0.1). K=20/30/50 are banked at 100k-200k steps.
+    specs += expand_grid(
+        {"mode": "federated", **SETUP_B, "weight_decay": 0.1, "alpha": 0.30,
+         "local_epochs": 5, "partition": "iid", "num_rounds": 20_000,
+         "eval_every": FL_EVAL_EVERY,
+         "checkpoint_every": 2_000, "checkpoint_client_weights": True},
+        {"num_clients": [5, 10], "seed": SEEDS3},
+        tags={"tier": "T1", "group": "setup_k_ladder", "experiment": "replication",
+              "setup": "B"},
+    )
+
+    # E -- MNIST. batch_size FIXED across the ladder: letting it shrink with K to
+    # keep shards viable would confound the K axis with a change in the
+    # optimiser's effective batch, and the delay depends on exactly that.
+    specs += expand_grid(
+        {"mode": "federated", **{k: v for k, v in SETUP_E.items()
+                                 if k != "batch_size"},
+         "n_train": 2000, "n_test": 5000, "batch_size": 100, "local_epochs": 5,
+         "partition": "iid", "num_rounds": 4_000, "eval_every": FL_EVAL_EVERY,
+         "checkpoint_every": 400, "checkpoint_client_weights": True},
+        {"num_clients": [5, 10, 20], "seed": SEEDS3},
+        tags={"tier": "T1", "group": "setup_k_ladder", "experiment": "replication",
+              "setup": "E"},
+    )
+    return specs
+
+
 def p1_b_decay_band():
     """PHASE 1: B's decay band -- the control the K-collapse diagnosis is missing.
 
@@ -1561,6 +1690,7 @@ BUILDERS = {
     "p1_d_gd_probe": p1_d_gd_probe,
     "p1_cd_decay_band": p1_cd_decay_band,
     "p1_b_decay_band": p1_b_decay_band,
+    "t1_setup_k_ladder": t1_setup_k_ladder,
     "p1_aprime_alpha": p1_aprime_alpha,
     "p1_k_collapse_wd": p1_k_collapse_wd,
     "p1_k_collapse_budget": p1_k_collapse_budget,
