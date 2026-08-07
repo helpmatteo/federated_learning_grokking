@@ -1093,6 +1093,117 @@ def p1_cd_decay_band():
     return specs
 
 
+def p0_c_alpha_width256():
+    """PART 0.2: C's alpha ladder at the capacity it will actually use.
+
+    THE ERROR THIS CORRECTS. "Setup C's working alpha is >= 0.5" has been carried
+    since Gate A and used to argue C cannot be matched to the other setups. It
+    rests on one cell: alpha=0.30, 0/5, at hidden_width 128 with 40,000 epochs.
+
+    But at that SAME width 128, alpha=0.50 has a KM median of 39,800 (12/12 given
+    100,000 epochs, s5_setup_c_capacity). So the ladder was cut off essentially
+    AT THE MEDIAN FOR AN EASIER ALPHA. A harder alpha censoring under that budget
+    is the expected outcome, not evidence of a cliff. It is the same
+    budget-manufactured boundary this project has now produced seven times, and
+    it went into RESULTS as a setup property.
+
+    C has NEVER been run below alpha=0.5 at width 256 -- every width-256 run in
+    the corpus is alpha=0.50. And 256 is the capacity C will use: the capacity
+    sweep halved its T_grok there (22,500 against 39,800 at 12/12 each).
+
+    BUDGET. 100,000 epochs, not the 40,000 of the original ladder. C's
+    first-crossing median at width 256 / alpha=0.50 is ~16,100, so 100k is ~6x
+    the easiest rung's requirement and leaves room for the low rungs to be slow
+    rather than censored. Re-using 40,000 here would reproduce the exact defect
+    this manifest exists to correct.
+
+    log_every=50 because C is the unstable setup -- it dips back below the bar
+    after crossing it, up to 28 times at wd=0.3 -- so t_grok on C is partly a
+    measure of the logging rate (RESULTS 13.4). Read `t_first_cross` here.
+
+    > DECISION RULE. If C reaches 5/5 (or 3/3) at alpha=0.30 with T_grok below a
+    > third of budget, C joins the campaign at the SAME working point as B and D
+    > and the "C cannot be matched" caveat is withdrawn. If its cliff really does
+    > sit above 0.4 even at width 256, C stays an existence proof at its own
+    > alpha and the caveat stands -- but then it is a measured caveat rather than
+    > an inherited one.
+    """
+    return expand_grid(
+        {"mode": "centralized", **SETUP_C, "hidden_width": 256,
+         "epochs": 100_000, "log_every": 50},
+        {"alpha": [0.25, 0.30, 0.40, 0.50, 0.60], "seed": SEEDS3},
+        tags={"tier": "P0", "group": "c_alpha_w256", "experiment": "boundary",
+              "setup": "C"},
+    )
+
+
+def p0_capacity():
+    """PART 0.3: exp0's analogue -- is each setup's width sufficient?
+
+    v1's exp0 asked one question before anything else ran: does the chosen width
+    actually support grokking across the alpha range, or is a null result just an
+    underparameterised model? Only setup C has ever been asked it here
+    (s5_setup_c_capacity), and the answer moved a real number -- width 256 halved
+    C's T_grok against 128, which is why C runs at 256 now.
+
+    Every other setup's width is inherited: A and D at 256 from Gromov, B at 128
+    from Nanda, E at 200 from Omnigrok. Those are published values and probably
+    fine, but "probably fine" is what was said about C's decay and about D's
+    optimiser, and both turned out to be worth measuring.
+
+    Half / default / double per setup, at its own working alpha, centralized:
+
+        A'  128 / 256 / 512      alpha 0.20   (its only alpha with a real delay)
+        B    64 / 128 / 256      alpha 0.30
+        D   128 / 256 / 512      alpha 0.30
+        E   100 / 200 / 400      n_train 2000, batch 100
+
+    Budgets are ~5x each setup's measured centralized T_grok, so a narrow model
+    failing means capacity and not the clock. B carries the widest margin because
+    its seed variance is bimodal (4,400 to 20,400) and a halved width will be
+    slower still.
+
+    > DECISION RULE. If the default width is within noise of double, capacity is
+    > not binding and the campaign proceeds at the inherited value. If double is
+    > materially faster -- as it was for C -- that setup moves to double before
+    > any federated cell is spent on it, because every federated budget is a
+    > multiple of the centralized requirement and would otherwise be set from a
+    > handicapped baseline.
+    """
+    specs = []
+    specs += expand_grid(
+        {"mode": "centralized", **SETUP_A_PRIME, "alpha": 0.20,
+         "epochs": 50_000, "log_every": 50},
+        {"hidden_width": [128, 256, 512], "seed": SEEDS3},
+        tags={"tier": "P0", "group": "capacity", "experiment": "width",
+              "setup": "A'"},
+    )
+    specs += expand_grid(
+        {"mode": "centralized", **SETUP_B, "alpha": 0.30,
+         "epochs": 100_000, "log_every": 50},
+        {"hidden_width": [64, 128, 256], "seed": SEEDS3},
+        tags={"tier": "P0", "group": "capacity", "experiment": "width",
+              "setup": "B"},
+    )
+    specs += expand_grid(
+        {"mode": "centralized", **SETUP_D, "alpha": 0.30,
+         "epochs": 100_000, "log_every": 50},
+        {"hidden_width": [128, 256, 512], "seed": SEEDS3},
+        tags={"tier": "P0", "group": "capacity", "experiment": "width",
+              "setup": "D"},
+    )
+    specs += expand_grid(
+        {"mode": "centralized", **{k: v for k, v in SETUP_E.items()
+                                   if k != "hidden_width"},
+         "n_train": 2000, "n_test": 5000, "batch_size": 100,
+         "epochs": 20_000, "log_every": 25},
+        {"hidden_width": [100, 200, 400], "seed": SEEDS3},
+        tags={"tier": "P0", "group": "capacity", "experiment": "width",
+              "setup": "E"},
+    )
+    return specs
+
+
 def t1_setup_k_ladder():
     """TIER 1: the K ladder on every setup, measuring BOTH timescales.
 
@@ -1690,6 +1801,8 @@ BUILDERS = {
     "p1_d_gd_probe": p1_d_gd_probe,
     "p1_cd_decay_band": p1_cd_decay_band,
     "p1_b_decay_band": p1_b_decay_band,
+    "p0_c_alpha_width256": p0_c_alpha_width256,
+    "p0_capacity": p0_capacity,
     "t1_setup_k_ladder": t1_setup_k_ladder,
     "p1_aprime_alpha": p1_aprime_alpha,
     "p1_k_collapse_wd": p1_k_collapse_wd,

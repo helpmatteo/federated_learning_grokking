@@ -86,8 +86,16 @@ def train(cfg: Config):
             train_loss_t.backward()
             train_loss_value = train_loss_t.item()
 
-        # Log before step (so gradient norms are available in the full-batch path)
-        if epoch % cfg.log_every == 0:
+        # Log before step (so gradient norms are available in the full-batch path).
+        # The FINAL epoch is always logged, even when it is not a multiple of
+        # log_every: run._completion treats the last logged epoch as the horizon
+        # the run reached, and its docstring already promises this loop records
+        # it. Without the `or`, any config where epochs % log_every != 0 ends one
+        # sample short and is raised as an IncompleteRun -- a correct run thrown
+        # away and re-queued. No banked run trips it (all 610 centralized rows
+        # divide evenly), but reduced_arm derives the floor arm's budget from the
+        # FL arm's step count, which is under no obligation to be round.
+        if epoch % cfg.log_every == 0 or epoch == cfg.epochs:
             with torch.no_grad():
                 out_test = model(x_test)
                 test_loss = loss_fn(out_test, y_test_target).item()

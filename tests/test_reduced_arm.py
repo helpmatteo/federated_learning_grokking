@@ -134,3 +134,51 @@ class TestGuards:
         bare = {k: v for k, v in red.items()
                 if k not in ("id", "arm", "reduced_from_k")}
         assert run_id(bare) == red["id"]
+
+
+class TestFloorArmReachesTheResultsTable:
+    """The floor arm is only real if it survives the whole pipeline.
+
+    Every other test here inspects the spec dict `reduced_arm` returns. That is
+    necessary and not sufficient: exp2's floor condition is only usable if the
+    spec trains, writes a result JSON, and lands in the CSV still labelled as the
+    floor -- otherwise the three arms are indistinguishable once collected, which
+    is the failure mode that would only surface after the sweep.
+
+    `arm` and `reduced_from_k` are already in manifest.TAG_KEYS and in
+    collect_runs.PREFERRED_COLUMNS; this pins that they stay wired together.
+    """
+
+    def _cheap_fed(self):
+        return {"mode": "federated", "task": "addition", "p": 7,
+                "model": "groknet", "hidden_width": 8, "loss": "mse",
+                "optimizer": "gd", "lr": 0.05, "alpha": 0.9,
+                "num_clients": 3, "num_rounds": 2, "local_epochs": 1,
+                "partition": "iid", "seed": 0}
+
+    def test_floor_spec_runs_and_keeps_its_arm_tag(self, tmp_path):
+        from fedgrok.run import run_spec
+
+        [floor] = reduced_arm([self._cheap_fed()])
+        assert floor["arm"] == "cent_reduced"
+        assert floor["reduced_from_k"] == 3
+
+        row = run_spec(floor, results_root=str(tmp_path / "runs"),
+                       histories_root=str(tmp_path / "hist"))
+        # the tag has to be on the RESULT row, not just the spec -- collect_runs
+        # reads result JSONs, so a tag dropped here is a tag lost for good
+        assert row["arm"] == "cent_reduced"
+        assert row["reduced_from_k"] == 3
+        assert row["mode"] == "centralized"
+
+    def test_arm_column_is_emitted_by_the_collector(self, tmp_path):
+        """resolve_columns must surface `arm`, or the three arms pool silently."""
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        from collect_runs import resolve_columns
+
+        cols = resolve_columns([{"id": "x", "mode": "centralized",
+                                 "arm": "cent_reduced", "reduced_from_k": 3}])
+        assert "arm" in cols and "reduced_from_k" in cols
+        # and ordered before the outcome columns, so a reader sees the arm first
+        assert cols.index("arm") < cols.index("mode") + 3
