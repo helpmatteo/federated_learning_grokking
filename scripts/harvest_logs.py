@@ -1,5 +1,11 @@
 """Harvest run results from logs/*.log into a single tidy CSV.
 
+NOTE the glob is `logs/*.log` and is deliberately NOT recursive. Those files are
+v1 experiment logs and are the only provenance behind `results/data/runs.csv`,
+which is committed evidence. v2 sweep output has an unrelated format and belongs
+in `logs/sweeps/`, where this cannot reach it -- a launcher log sitting in
+`logs/` would be scanned here and could inject a junk row into that CSV.
+
 The per-run history JSONs under results/ are gitignored and no longer present on
 disk, so these logs are the only surviving record of the ~276 runs behind the
 committed figures.  This script reconstructs one row per (run, config, seed).

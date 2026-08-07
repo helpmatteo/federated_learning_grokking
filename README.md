@@ -53,8 +53,11 @@ should be detached, or it dies with its shell:
 
 ```bash
 setsid nohup venv/bin/python -u scripts/launch_sweep.py manifests/<name>.jsonl \
-    --gpus 0,1,2,3,4,5,6,7 --per-gpu 1 > logs/<name>.log 2>&1 < /dev/null &
+    --gpus 0,1,2,3,4,5,6,7 --per-gpu 1 > logs/sweeps/<name>.log 2>&1 < /dev/null &
 ```
+
+Sweep logs go in `logs/sweeps/`, not `logs/` — the latter holds v1 experiment logs and
+is harvested non-recursively into `results/data/runs.csv`.
 
 **Every manifest builder in `scripts/build_manifests.py` carries its decision rule in
 its docstring.** Read it before reading that sweep's results, not after.
