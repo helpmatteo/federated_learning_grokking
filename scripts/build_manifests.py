@@ -1093,6 +1093,64 @@ def p1_cd_decay_band():
     return specs
 
 
+def p1_b_decay_band():
+    """PHASE 1: B's decay band -- the control the K-collapse diagnosis is missing.
+
+    THE GAP. p1_cd_decay_band measured C and D. It did not measure B, and B is
+    the setup carrying the K>=30 collapse diagnosis: p1_k_collapse_wd runs B at
+    wd=0.1 against a wd=1.0 control, and EVERY centralized B run in the corpus
+    is wd=1.0. So the arm that is supposed to reopen the K axis is being read
+    against a reference that does not exist.
+
+    WHY THAT MATTERS RIGHT NOW. At K=20 and K=30 the wd=0.1 cells memorise
+    cleanly -- 100% train by epoch 3,500-3,900, 3/3 -- and then sit at 0.2-0.5%
+    TEST for the rest of the run. Against chance (1/113 = 0.88%) that is not
+    "generalising slowly", it is not generalising at all. Read next to the
+    wd=1.0 control, where one K=20 seed groks at 7,500, it looks like a
+    federated effect and it would be the headline of the whole campaign.
+
+    But the runs got 2,000 rounds x E=5 = 10,000 steps, and the only centralized
+    number available to size that against is B at wd=1.0 (T_grok 6,600 at
+    alpha=0.30, worst seed 20,400). Lower decay means a LONGER delay in this
+    regime -- t0_mnist_wd_band is the direct precedent, where lr*lambda=1e-5
+    never generalised inside 20,000 epochs while 1e-4 took 3,800 -- so 10,000
+    steps at wd=0.1 is plausibly under-budget before federation is invoked at
+    all. This project has manufactured a boundary out of a budget four times
+    (v1's headline claim, the E=1 probe cells, the first FL probe, setup C's
+    Gate A verdict). This is the check that stops the fifth.
+
+    THE SWEEP. Deliberately identical in shape to p1_cd_decay_band -- same
+    5-point log-spaced lr*lambda ladder, same 3 seeds -- so the three AdamW
+    setups' bands are directly comparable:
+
+        wd     0.01    0.03    0.1     0.3     1.0
+        lr*wd  1e-5    3e-5    1e-4    3e-4    1e-3  (the inherited value)
+
+    alpha=0.30 is B's Gate A working point. 50,000 epochs is ~7.5x B's WORST
+    observed seed rather than a multiple of its median, because B's seed
+    variance is intrinsic and bimodal (4,400 / 6,100 / 6,600 / 19,500 / 20,400)
+    -- sizing off the median would censor the slow cluster and hand back exactly
+    the ambiguity this sweep exists to remove.
+
+    > DECISION RULE. Read B's centralized T_grok at whichever band the federated
+    > arm uses. If it is comfortably under 10,000 steps, those federated cells
+    > were given enough time and "memorises at K=20/30, never generalises" is a
+    > FEDERATED breakdown of grokking with memorisation intact -- the mechanism
+    > this project has been looking for, with the per-client checkpoints as its
+    > evidence base. If it is above 10,000, the cells were censored by the clock
+    > and say nothing yet; re-run them at 5x the measured requirement before
+    > claiming anything. Either way this gates the K axis for B/C/D/E, and with
+    > it exp2/exp3/exp4, whose primary axis is K.
+    """
+    return expand_grid(
+        {"mode": "centralized", **SETUP_B, "alpha": 0.30,
+         "epochs": 50_000, "log_every": 50},
+        {"weight_decay": [0.01, 0.03, 0.1, 0.3, 1.0], "seed": SEEDS3},
+        tags={"tier": "P1", "group": "b_decay_band", "experiment": "decay",
+              "setup": "B"},
+    )
+
+
 def p1_aprime_alpha():
     """PHASE 1: setup A' -- A's architecture and task under AdamW. The alpha ladder.
 
@@ -1419,6 +1477,7 @@ def _longest_first(specs):
 BUILDERS = {
     "p1_d_gd_probe": p1_d_gd_probe,
     "p1_cd_decay_band": p1_cd_decay_band,
+    "p1_b_decay_band": p1_b_decay_band,
     "p1_aprime_alpha": p1_aprime_alpha,
     "p1_k_collapse_wd": p1_k_collapse_wd,
     "x_d_alpha_fine": x_d_alpha_fine,
