@@ -7,7 +7,7 @@ Companion documents: `PROGRESS.md` (what is built and what remains),
 `~/.claude/plans/plan-all-that-needs-nested-seal.md` (the boundary campaign, closed).
 
 **Data behind every number here:**
-`results/data/runs_v2.csv` (814 v2 runs) and `results/data/runs.csv` (870 v1 runs,
+`results/data/runs_v2.csv` (831 v2 runs) and `results/data/runs.csv` (870 v1 runs,
 recovered from logs). Both are committed. Regenerate any table with:
 
 ```bash
@@ -35,24 +35,29 @@ partially censored.
 5. **Weight decay's effect depends on the optimizer, not the loss** — AdamW's
    decoupled decay accelerates grokking, plain GD's coupled decay does not.
 
-6. **Every setup has its own cliff, and they nearly coincide** — A, B and D all
-   sit at α≈0.20 (§11). The data threshold looks like a property of the task
-   family, not of the architecture.
-7. **Federation breaks the new setups at K≈30, and it is not a grokking
-   failure** — those models never memorise (§12). Every affected setup uses
-   AdamW; the anchor, under plain GD, is fine at K=97.
+6. **Every setup has its own cliff, and A, B and D nearly coincide** at α≈0.20
+   (§11) — but that is not because the threshold belongs to the task family.
+   **The optimiser moves it**: A′ groks 5/5 at α=0.20 where A, same architecture
+   and same data under GD, manages 0/5 (§13.3).
+7. **Federation breaks the new setups at K≈30, and it is a training failure, not
+   a grokking one** (§12). The recovery under a corrected decay is **graded**:
+   complete at K=20/30, partial at K=50 (§13.6). Every affected setup uses AdamW;
+   the anchor, under plain GD, is fine at K=97.
 
 8. **The optimiser is worth ~45× on the anchor's own task** — the identical
    architecture on the identical data groks in 500 steps under AdamW where it
    takes 25,300 under Gromov's GD, at every α they share (§13.3).
-9. **Two of the three inherited hyperparameters survived being checked** — C's
-   and D's weight decay were adopted from Nanda's mod-113 transformer without
-   justification, and measuring them for their own setups returns the same value
-   (§13.2). The third, B's, is still being measured.
+9. **All three inherited weight decays survived being checked.** C's, D's and B's
+   were adopted from Nanda's mod-113 transformer with justification only for B,
+   and measuring each for its own setup returns the same value every time
+   (§13.2, §13.5). On B, decay leaves memorisation untouched at epoch 150 and
+   acts purely on the generalisation timescale.
 
 Open: whether K=97 IID *fails* or is merely *slow* — both successes landed within
-5% of the budget ceiling, so that cell is not yet resolved. And whether the K≈30
-collapse is an inherited-hyperparameter defect or a real breakdown mechanism.
+5% of the budget ceiling, so that cell is not yet resolved. And whether a
+corrected decay lets the new setups grok federated at all: the cells that looked
+like a breakdown were censored at 10,000 steps against a measured centralized
+requirement of 45,050 (§13.6), and are being re-run at up to 200,000.
 
 ---
 
@@ -178,32 +183,87 @@ Together they separate *when did it generalise* from *when did it stop falling
 over*, which on an unstable setup are different questions. This is the fifth
 measurement artifact this project has caught reading as a scientific result.
 
-### 13.5 The K≈30 collapse — in progress (`p1_k_collapse_wd`, 16/18)
+### 13.5 B's decay band, and why it had to be measured (`p1_b_decay_band`, 15/15)
 
-Weight decay does move the failure, decisively, but not in the direction the
-one-seed lead suggested. At 3 seeds, α=0.30, E=5, 10,000 steps:
+The third AdamW setup's decay, on the same 5-point lr·λ ladder as C and D.
+α=0.30, 3 seeds, 50,000 epochs. Per-seed T_grok, since B's seed variance is
+bimodal by design:
+
+| lr·λ | wd | grokked | T_grok per seed | KM median |
+|---|---|---|---|---|
+| 1e-5 | 0.01 | 0/3 | never | censored |
+| 3e-5 | 0.03 | 0/3 | never | censored |
+| 1e-4 | 0.1 | 3/3 | 40,250 · 45,050 · 46,050 | **45,050** |
+| 3e-4 | 0.3 | 3/3 | 18,000 · 20,000 · 49,350 | 20,000 |
+| **1e-3** | **1.0** | **3/3** | 4,350 · 6,100 · 19,450 | **6,100** |
+
+Three things, in order of importance:
+
+**Every cell memorises at epoch 150.** Decay does nothing to memorisation on this
+setup; the entire effect is on the generalisation timescale. That is the cleanest
+statement of the AdamW weight-decay mechanism the project has produced.
+
+**Weight decay accelerates grokking monotonically, and the inherited wd=1.0 is
+optimal.** A third independent confirmation of §6.4 — and the third inherited
+hyperparameter to survive being checked, after C's and D's. It also reproduces
+Gate A independently (6,100 here against 6,600 there) including the bimodality:
+one slow seed appears at *every* band.
+
+**And it is the control the K-collapse arm was missing.** See below.
+
+### 13.6 The K≈30 collapse — a graded training failure, and a budget trap avoided
+
+`p1_k_collapse_wd`, complete at 18/18. α=0.30, E=5, 3 seeds, **10,000 steps**:
 
 | K | wd | peak train | final test | t_memo | grokked |
 |---|---|---|---|---|---|
-| 20 | **0.1** | **100.0** | **0.2–0.5** | 3,500–3,900 | 0/3 |
+| 20 | **0.1** | **100.0** | 0.23 / 0.45 / 0.46 | 3,500–3,900 | 0/3 |
 | 20 | 1.0 | 44.9 / 100.0 | 7.3 / 99.8 | inf / 7,300 | 1/2 |
-| 30 | **0.1** | **100.0** | **0.2–0.4** | 5,600–6,600 | 0/3 |
+| 30 | **0.1** | **100.0** | 0.17 / 0.25 / 0.45 | 5,600–6,600 | 0/3 |
 | 30 | 1.0 | 93.1 / 51.9 | 82.2 / 24.2 | inf | 0/2 |
+| 50 | **0.1** | **77.6 / 79.2** | 0.34 / 0.38 | **inf** | 0/2 |
 
-**wd=0.1 restores training completely and generalisation not at all.** Every
-wd=0.1 cell memorises — 100% train, 3/3, by epoch ~3,600 — and then sits at
-0.2–0.5% test, which against chance (1/113 ≈ 0.88%) is not slow generalisation
-but none. That is the two-timescale split §12.1 predicted would become visible
-once `t_memo` was recorded.
+**The recovery is graded, not binary.** wd=0.1 restores memorisation *completely*
+at K=20 and K=30 — 100% train, 3/3, against 42.8% at K=30 under the inherited
+decay — and only *partially* at K=50, where peak train rises from ~3.6% to
+~78% but never reaches the 99% memorisation bar. So the decision rule as written
+("t_memo finite, 3/3 at K=50") is **not met**, but the knob is unambiguously the
+right one: decay is what moves this failure, and it moves it a long way.
 
-**This is not yet interpretable, for two reasons, and both are being fixed.**
-The K=50 cells — the ones the decision rule is actually evaluated on — are the
-two runs missing from the sweep. And every centralized B run in the corpus is
-wd=1.0, so there is no reference for what wd=0.1 does with *one* client;
-`p1_b_decay_band` measures it. Until that lands, "memorised but never
-generalised" cannot be attributed to federation rather than to wd=0.1 simply
-having a longer delay than the 10,000-step budget allowed — which is precisely
-the mistake that cost v1 its headline claim.
+**The generalisation half of the question was about to be answered wrongly.**
+Read alone, the wd=0.1 rows look decisive: memorised at 100% train, then sitting
+at 0.2–0.5% test against a 0.88% chance level. Not slow generalisation — none.
+That reads as a federated breakdown of grokking with memorisation intact, which
+would be the headline of the whole campaign.
+
+It is not. **§13.5 says centralized B at wd=0.1 needs 45,050 steps to generalise.
+These runs were given 10,000** — with a *single* client the same configuration
+would also show 100% train and no test accuracy at that budget. The cells are
+censored by the clock, and say nothing about federation yet.
+
+That is the **fifth** time a fixed budget has manufactured a boundary in this
+project — after v1's headline claim, the E=1 probe cells, the first FL probe, and
+setup C's Gate A verdict. It is the first time it was caught *before* being
+claimed rather than after, and the only reason is that the control was run first.
+
+`p1_k_collapse_budget` re-runs the arm at a budget keyed to that measured number:
+K=20 at **200,000 steps (4.4×)** because it is the cheapest cell and therefore the
+place to buy the most headroom, K=30 and K=50 at 100,000 (2.2×), plus a wd=1.0
+control at the longer budget to check that "never memorises" is itself
+budget-independent rather than the same error mirrored.
+
+> **This is the gate on the whole campaign.** If wd=0.1 groks at K=20, the
+> collapse is an inherited-hyperparameter defect, the K axis reopens for B/C/D/E
+> at a corrected decay, and exp2/exp3/exp4 can be specified on their primary
+> axis. If it memorises and does not generalise at 4.4× the centralized
+> requirement, that is a real federated breakdown — and the per-client
+> checkpoints, which this manifest turns on, are its evidence base.
+
+**Cost note.** Measured on these runs, setup B federated is ~0.44–0.52 s/round
+and **nearly flat in K** (886 s at K=20, 1,014 at K=30, 1,047 at K=50, all at
+2,000 rounds). The fitted cost model in §8 comes from setup A and carries a
+`1.291·K` term; it over-costs setup B by ~2.6× at K=50. Per-setup cost fits are
+still owed.
 
 ---
 
@@ -578,7 +638,7 @@ cut wall-clock from ~7.2 h to ~5.9 h for identical work.
 | | runs | grokked | censored |
 |---|---|---|---|
 | **v1** (`results/data/runs.csv`, log-recovered) | 870 | 554 | 316 |
-| **v2** (`results/data/runs_v2.csv`) | 814 | 558 | 256 |
+| **v2** (`results/data/runs_v2.csv`) | 831 | 567 | 264 |
 
 v1 by experiment: exp2 333 · exp5 153 · exp3a 100 · exp7 74 · exp4a 72 · exp4b 72 ·
 exp4 36 · exp3b 30.
@@ -603,13 +663,14 @@ v2 by campaign — regenerate with
 | `probe` | 18 | done (6 E=250 cells cancelled for cost) — §3 |
 | `mnist_wd_band` | 15 | done — §6.3 |
 | `d_wd_ladder` | 12 | **partial** (12/45) — tier X, the dip's decay hypothesis |
-| `k_collapse_wd` | 10 | **in flight** — §13.5 |
+| `k_collapse_wd` | 12 | done (18/18 incl. dedup) — §13.6 |
+| `b_decay_band` | 15 | done — §13.5 |
 | `d_gd_probe` | 9 | done — §13.1 |
 | `probe_rerun` | 9 | done — B K=10 operand and D K=50 iid recover at 5× budget |
 | `poly_pilot` | 6 | done — §7 |
 | plus 8 smaller diagnosis groups | 34 | `adam_restart`, `c_alpha`, `k50_hparam`, `k50_ladder`, `grok_confirm_fl` |
 
-**v2 compute to date: 104.4 machine-hours.** Checkpoints on disk: 3.9 GB
+**v2 compute to date: 206.6 machine-hours.** Checkpoints on disk: 3.9 GB
 (gitignored).
 
 ---

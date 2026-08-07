@@ -1151,6 +1151,89 @@ def p1_b_decay_band():
     )
 
 
+def p1_k_collapse_budget():
+    """PHASE 1: the K-collapse arm again, at a budget keyed to a MEASURED number.
+
+    WHAT p1_b_decay_band CHANGED. That sweep supplied the centralized reference
+    the collapse diagnosis never had. Setup B, alpha=0.30, 3 seeds, memorising at
+    epoch 150 in every cell:
+
+        lr*wd    1e-5    3e-5    1e-4      3e-4     1e-3 (inherited)
+        T_grok   never   never   45,050    20,000   6,100
+
+    Every cell memorises at epoch 150, so decay does nothing to memorisation here
+    and the whole effect is on the generalisation timescale. wd=1.0 is optimal,
+    which vindicates the inherited value a third time after C and D.
+
+    So weight decay ACCELERATES grokking on B, monotonically -- the AdamW pattern
+    RESULTS 6.4 predicts, now measured on a third setup. And the federated wd=0.1
+    cells were given 2,000 rounds x E=5 = 10,000 steps against a centralized
+    requirement of 45,050 (KM median, 3/3). They were censored by the clock. "Memorises at
+    K=20/30 and never generalises" is not evidence of anything federated yet;
+    it is the fifth budget-manufactured boundary in this project, caught before
+    it was claimed rather than after.
+
+    THE BUDGET. Not the "5x measured requirement" rule of thumb: 5 x 45,050 =
+    225,000 steps, which at K=50 on a transformer is 15-20 h/run and not
+    affordable at 3 seeds. 100,000 steps is 2.2x the centralized requirement and
+    matches the t2_boundary precedent (100k for a setup needing ~47k at K=50).
+
+    WHY K=20 GETS DOUBLE. There is one honest worry about 100,000 being enough.
+    Federated memorisation on this setup is ~23x slower than centralized (t_memo
+    150 -> 3,500 at K=20), and if the generalisation timescale stretched by
+    anything like that factor no affordable budget would reach it. The anchor
+    says otherwise -- federation costs only +9% to +21% on T_grok at K=20-50 --
+    but that is a different setup, and betting the answer on it is the mistake
+    this manifest exists to stop repeating. So the CHEAPEST cell carries the
+    DEEPEST budget: K=20 gets 200,000 steps (4.4x). If wd=0.1 is merely slow
+    federated, K=20 is where that shows up, and it costs the least to find out.
+
+    THE wd=1.0 CONTROL, at 1 seed. Its documented failure is that the model never
+    memorises (peak ~= final, 3-5% train), which no budget fixes -- but that was
+    read off 10,000-step runs too, and asserting "more budget will not help" is
+    the mirror image of the error above. Two runs settle it.
+
+    > DECISION RULE. If wd=0.1 groks at K=20 within 200,000 steps, the collapse
+    > is an inherited-hyperparameter defect: the K axis reopens for B/C/D/E at a
+    > corrected decay, exp2/exp3/exp4 can be specified on their primary axis, and
+    > D' is not needed. Read K=30 and K=50 for how the requirement scales with K
+    > -- that scaling IS the federated cost, and it is the number the campaign
+    > budgets come from. If wd=0.1 memorises and does not generalise at K=20 with
+    > 4.4x the centralized requirement, that is a federated breakdown of grokking
+    > with memorisation intact, and it is the mechanism the project has been
+    > looking for rather than a nuisance.
+    """
+    base = {**SETUP_B, "mode": "federated", "alpha": 0.30, "local_epochs": 5,
+            "partition": "iid", "eval_every": FL_EVAL_EVERY,
+            # per-client weights ON: if this turns out to BE the breakdown, the
+            # evidence base has to already exist. checkpoint_* are Config fields,
+            # so adding them afterwards changes the ids and re-runs the sweep.
+            "checkpoint_every": 2_000, "checkpoint_client_weights": True}
+    specs = []
+    # The decisive cell: cheapest K, deepest budget (200,000 steps).
+    specs += expand_grid(
+        {**base, "weight_decay": 0.1, "num_clients": 20, "num_rounds": 40_000},
+        {"seed": SEEDS3},
+        tags={"tier": "P1", "group": "k_collapse_budget",
+              "experiment": "diagnosis", "setup": "B"},
+    )
+    # How the requirement scales with K (100,000 steps).
+    specs += expand_grid(
+        {**base, "weight_decay": 0.1, "num_rounds": 20_000},
+        {"num_clients": [30, 50], "seed": SEEDS3},
+        tags={"tier": "P1", "group": "k_collapse_budget",
+              "experiment": "diagnosis", "setup": "B"},
+    )
+    # The control: is "never memorises" really budget-independent?
+    specs += expand_grid(
+        {**base, "weight_decay": 1.0, "num_rounds": 20_000},
+        {"num_clients": [30, 50], "seed": [42]},
+        tags={"tier": "P1", "group": "k_collapse_budget",
+              "experiment": "diagnosis", "setup": "B"},
+    )
+    return specs
+
+
 def p1_aprime_alpha():
     """PHASE 1: setup A' -- A's architecture and task under AdamW. The alpha ladder.
 
@@ -1480,6 +1563,7 @@ BUILDERS = {
     "p1_b_decay_band": p1_b_decay_band,
     "p1_aprime_alpha": p1_aprime_alpha,
     "p1_k_collapse_wd": p1_k_collapse_wd,
+    "p1_k_collapse_budget": p1_k_collapse_budget,
     "x_d_alpha_fine": x_d_alpha_fine,
     "x_d_alpha_cliff": x_d_alpha_cliff,
     "x_d_alpha_high": x_d_alpha_high,

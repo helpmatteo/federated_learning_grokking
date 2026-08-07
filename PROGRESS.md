@@ -8,8 +8,8 @@ Closed plans: `plan-all-that-needs-nested-seal.md` (boundary campaign),
 **Current as of 2026-08-07.** v2 code complete across all plan phases (0–5); Gate A
 closed; **Phase 1 run, and its four decision rules answered** (RESULTS.md §13). The
 work in front is porting v1's exp0–exp7 chain onto the new setups. One thing still
-gates it: the K ceiling per setup, which is what `p1_k_collapse_wd` +
-`p1_b_decay_band` are settling.
+gates it: the K ceiling per setup, now down to a single sweep —
+`p1_k_collapse_budget`, in flight.
 
 > **Read the data, not just this file.** Sweeps get banked faster than these notes
 > get rewritten. Ground truth is `results/data/runs_v2.csv` and
@@ -21,8 +21,8 @@ gates it: the K ceiling per setup, which is what `p1_k_collapse_wd` +
 |---|---|
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`; `main` has nothing this lacks) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
-| Tests | **~530 pass** (`venv/bin/python -m pytest tests/ -q`, ~10.5 min incl. FL integration) |
-| Runs banked | **814** in `results/data/runs_v2.csv` (558 grokked, 256 censored) + 870 v1 runs in `runs.csv`. 204 machine-hours |
+| Tests | **534/534 pass** (`venv/bin/python -m pytest tests/ -q`, ~9 min incl. FL integration) |
+| Runs banked | **831** in `results/data/runs_v2.csv` (567 grokked, 264 censored) + 870 v1 runs in `runs.csv`. 207 machine-hours |
 | Setups | A quad-MLP/mod-97 · A′ quad-MLP/mod-97/AdamW (**measured**, §13.3) · B transformer/mod-113 · C transformer/S₅ · D quad-MLP/S₅ · E MLP/MNIST-1k · D′ (**gated**, §13.1) |
 | FL algorithms | FedAvg, FedProx, FedAvgM, FedYogi, FedAdam (native) + SCAFFOLD (adapted, **raises under AdamW by design**) |
 | Statistics | censored survival (KM median + fraction-grokked + bootstrap CI); `scripts/summarize_runs.py` |
@@ -40,33 +40,41 @@ default hyperparameters — **peak** train accuracy:
 |---|---|---|---|---|---|
 | peak train | 100.0 | 98.2 | 42.8 | 5.9 | 5.0 |
 
-A smooth degradation, not a cliff. It is a **training** failure — these models
-never memorise, so no budget fixes them (`peak ≈ final` throughout: nothing
-memorises then collapses, it never learns). Setup A under plain GD at wd=0 groks
-5/5 at K=50 and is the only setup with no decay clock.
+A smooth degradation, not a cliff, and a **training** failure rather than a
+grokking one: `peak ≈ final` throughout, so nothing memorises and then collapses
+— it never learns. (Whether *no* budget fixes it is itself a budget claim, and
+the wd=1.0 control arm of `p1_k_collapse_budget` now checks it rather than
+asserting it.) Setup A under plain GD at wd=0 groks 5/5 at K=50 and is the only
+setup with no decay clock.
 
 **Ruled out:** weight-norm collapse, client drift, local step size (lower lr is
 *worse* — 4.6% train at lr=1e-4).
 
-**What Phase 1 added (RESULTS.md §13.5).** At 3 seeds, wd=0.1 restores training
-*completely* at K=20 and K=30 — 100% train, 3/3, memorising by epoch ~3,600 — and
-restores generalisation *not at all*: those cells sit at 0.2–0.5% test against a
-0.88% chance level. So the collapse splits into two questions and only the first
-is answered.
+**What Phase 1 settled (RESULTS.md §13.5–13.6).** Weight decay is the knob, and
+the recovery it buys is **graded**: at 3 seeds, wd=0.1 restores memorisation
+*completely* at K=20 and K=30 (100% train, 3/3, by epoch ~3,600, against 42.8% at
+K=30 under the inherited decay) and only *partially* at K=50 (peak train ~78%,
+never reaching the 99% bar). So the decision rule as written — "t_memo finite,
+3/3 at K=50" — is not met, but the diagnosis is right.
 
-**Two gaps stop this being interpretable, and both are closing right now:**
+**And the generalisation half was about to be answered wrongly.** Those wd=0.1
+cells sit at 0.2–0.5% test against a 0.88% chance level, which reads as a
+federated breakdown with memorisation intact. It is not: `p1_b_decay_band` (the
+control `p1_cd_decay_band` skipped) measures **centralized B at wd=0.1 needing
+45,050 steps to generalise**, and the federated runs were given **10,000**. With
+one client the same configuration would look identical at that budget. The cells
+were censored by the clock.
 
-1. The **K=50** cells are the ones the decision rule is actually evaluated on, and
-   they were the two runs missing from the sweep.
-2. There is **no centralized reference for wd=0.1 on setup B** — `p1_cd_decay_band`
-   measured C and D and skipped B, and every banked centralized B run is wd=1.0.
-   Lower decay means a longer delay in this regime (`t0_mnist_wd_band` is the
-   precedent: lr·λ=1e-5 never generalised inside 20k epochs), so the federated
-   arm's 10,000 steps may simply be under-budget. `p1_b_decay_band` measures it.
+That is the fifth budget-manufactured boundary in this project — and the first
+caught *before* being claimed rather than after, purely because the control was
+run first.
 
-Until (2) lands, "memorised but never generalised" cannot be attributed to
-federation. That distinction is the difference between a headline mechanism and
-the fifth budget-manufactured boundary in this project.
+**`p1_k_collapse_budget` is the gate.** It re-runs the arm at a budget keyed to
+that measured number: K=20 at 200,000 steps (4.4×, deepest budget on the cheapest
+cell), K=30/50 at 100,000 (2.2×), plus a wd=1.0 control at the longer budget so
+"never memorises" is not itself an unchecked budget claim. Per-client checkpoints
+are ON, because if this does turn out to be the breakdown its evidence base has
+to already exist.
 
 Careful with the number: lr·λ=1e-3 is *also* where the anchor's WD sweep found
 decay outrunning learning, but that sweep was **GD** (coupled decay) and
@@ -97,9 +105,13 @@ Provenance of the AdamW choices, since only two are inherited:
 - **E** — Omnigrok's family, but wd=0.1 was **measured here** (`t0_mnist_wd_band`).
   The only AdamW setup whose decay was chosen for the setup it runs in — and the
   only one that does not collapse at K≥20.
-- **C** — inherited from B. No independent justification.
+- **C** — inherited from B, and since **measured** (`p1_cd_decay_band`): wd=1.0
+  is optimal for C too, so the inheritance was lucky rather than justified.
 - **D** — **inherited from nothing.** Gromov's architecture running Nanda's
-  optimiser. Never checked: of 370 banked S₅ runs, **zero** use GD.
+  optimiser. Now measured twice over: wd=1.0 is the only band D groks in at all
+  (`p1_cd_decay_band`), and the quad-MLP *does* grok S₅ under GD+MSE
+  (`p1_d_gd_probe`), so the confound is closable via **D′** if the K gate calls
+  for it.
 
 ## Phase 1 — RUN. The pilots that define the setups.
 
@@ -110,17 +122,19 @@ results, not after.
 | manifest | runs | verdict |
 |---|---|---|
 | `p1_d_gd_probe` | 9/9 | **The quad-MLP does grok S₅ under GD+MSE** — lr=50 → 3/3 at 22,600 (α=0.5); lr∈{5,10} → 0/3. Acted on by **adding D′**, gated on the K-collapse outcome — never by moving D, which would orphan ~250 banked runs |
+| `p1_b_decay_band` | 15/15 | **B's decay does not move either** — wd=1.0 is optimal, and every cell memorises at epoch 150, so decay acts purely on the generalisation timescale. Supplies the control the K-collapse arm was missing |
 | `p1_cd_decay_band` | 30/30 | **Neither C's nor D's decay moves.** D groks only at wd=1.0 (0/3 everywhere else); C ties 3/3 at wd∈{0.1,0.3,1.0} and wd=1.0 wins on both statistics. New: **C is unstable** — it dips back below the bar after crossing it, up to 28 times at wd=0.3 |
 | `p1_aprime_alpha` | 45/45 | A′'s cliff sits between α=0.175 and 0.20, **below A's**, and it groks **~45× faster at every shared α**. Its only usable federated working point is **α=0.20** — above that there is no delay left for federation to disrupt |
-| `p1_k_collapse_wd` | 16/18 | **In flight.** wd=0.1 restores training at K=20/30 and generalisation at neither; the K=50 cells and B's centralized reference are what settle it |
+| `p1_k_collapse_wd` | 18/18 | **Graded recovery.** wd=0.1 restores memorisation fully at K=20/30, partially at K=50 (~78% peak). Its zero-generalisation cells turned out to be **censored at 10,000 steps against a measured 45,050 requirement** — `p1_k_collapse_budget` re-runs them |
 
 **Phase 2's hidden cost did not materialise.** The plan reserved ~60 runs to
 re-measure C's and D's α ladders in case their decay moved. Neither moved, so both
 Gate A ladders stand as written. That is Phase 1's largest saving.
 
-**One gap Phase 1 missed, now closing:** `p1_cd_decay_band` measured C and D but
-not **B** — the setup carrying the K-collapse diagnosis. `p1_b_decay_band` (15
-runs) supplies the missing centralized reference.
+**One gap Phase 1 missed, now closed:** `p1_cd_decay_band` measured C and D but
+not **B** — the setup carrying the K-collapse diagnosis. `p1_b_decay_band` supplied
+the missing centralized reference, and it immediately paid for itself by showing
+the federated arm had been reading a censored cell as a result.
 
 ## How to run a sweep now
 
@@ -455,8 +469,9 @@ the launcher's stdout — use `-u`, or just watch `ls results/data/runs/*.json |
 | `p1_d_gd_probe` | 9 | **done** — RESULTS §13.1 |
 | `p1_cd_decay_band` | 30 | **done** — RESULTS §13.2 |
 | `p1_aprime_alpha` | 45 | **done** — RESULTS §13.3 |
-| **`p1_k_collapse_wd`** | **18** | **16/18 — in flight.** The 2 missing are K=50, wd=0.1, the cell the decision rule names |
-| **`p1_b_decay_band`** | **15** | **in flight** — the centralized reference the K-collapse arm is missing |
+| `p1_k_collapse_wd` | 18 | **done** — RESULTS §13.6 |
+| `p1_b_decay_band` | 15 | **done** — RESULTS §13.5 |
+| **`p1_k_collapse_budget`** | **11** | **in flight** — the gate on the whole campaign. ~38 slot-h |
 | `x_d_alpha_{cliff,fine,high}` · `x_d_internals` | 235 | **done** — tier X, setup D's α ladder at 0.025 resolution + the internals run. `d_internals` is **unanalysed** |
 | `x_d_wd_ladder` | 45 | 12/45 — tier X, tests whether the dip is a decay transient |
 | `x_d_lr_control` | 18 | 0/18 — tier X, the step-size control for the above |
