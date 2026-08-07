@@ -56,12 +56,18 @@ Two separable effects, and only one depends on K:
 
 1. **Memorisation slows steeply with K** — 24×, 39×, then 355× the centralized
    value at K = 20, 30, 50.
-2. **The delay — grokking itself — is ~90,000 and flat in K**, about 2× the
-   centralized 44,900.
+2. **The delay is large and roughly doubles under federation** — ~90,000 against
+   the centralized 44,900, established at K=20 across 3 seeds.
 
-So `T_grok(K) ≈ t_memo(K) + 90,000`, which *predicts* the censored cells: K=30
-needs ~95,900 against the 100,000 it got (hence 1/3, at 94,300), and K=50 needs
-~143,000 and got 100,000.
+**Whether the delay grows with K is not established.** It rests on two K values —
+K=20 (3 seeds: 62,800 / 90,100 / 94,300) and K=30 (**one** seed: 88,700) — and the
+K=30 point falls inside K=20's spread, which is itself wider than any K-effect it
+could detect. Flat is consistent with the data; so is a mild increase.
+
+So `T_grok(K) ≈ t_memo(K) + delay` accounts for the censored cells: K=30 needs
+~95,900 against the 100,000 it got (hence 1/3, at 94,300), and K=50 needs ≳143,000
+and got 100,000. Treat 143,000 as a **lower bound** — if the delay grows with K,
+budgeting exactly to it recreates the censoring it came from.
 
 **Consequences for the campaign:**
 
@@ -591,9 +597,9 @@ per-setup FL manifests. The one rule that came out of it:
 > exactly the high-K cells the campaign cares about. Six boundaries in this
 > project have been manufactured by getting this wrong.
 
-Cheapest next run, and worth doing before budgeting anything from the model:
-**3 runs at setup B, K=50, wd=0.1, 30,000 rounds** (150,000 steps), predicted to
-grok at ~143,000. Confirms or kills the additive model for ~9 slot-hours.
+Budget B's K=50 campaign cells with headroom **above** 143,000 (that figure is a
+lower bound, not a prediction) and they double as the test of the additive model —
+no separate confirmation run is needed, since run ids are content hashes.
 
 **Still to write before exp2 can run:**
 

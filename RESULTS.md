@@ -40,10 +40,11 @@ partially censored.
    **The optimiser moves it**: A′ groks 5/5 at α=0.20 where A, same architecture
    and same data under GD, manages 0/5 (§13.3).
 7. **There is no K≈30 collapse.** It was a censored measurement (§13.7). What
-   federation actually does is slow *memorisation* steeply with client count
-   (150 → 3,600 → 53,300 steps at K = 1 / 20 / 50) while roughly doubling the
-   *delay* and then leaving it flat in K. `T_grok ≈ t_memo(K) + delay`, and that
-   predicts every cell that had looked like a breakdown.
+   federation demonstrably does is slow *memorisation* steeply with client count
+   — 150 → 3,600 → 53,300 steps at K = 1 / 20 / 50 — while roughly doubling the
+   *delay*. `T_grok ≈ t_memo(K) + delay` accounts for every cell that had looked
+   like a breakdown. Whether the delay itself grows with K is **not** resolved:
+   two K values, one of them a single seed.
 
 8. **The optimiser is worth ~45× on the anchor's own task** — the identical
    architecture on the identical data groks in 500 steps under AdamW where it
@@ -61,9 +62,10 @@ partially censored.
     learned" from "learned and not yet generalised".
 
 Open: whether K=97 IID *fails* or is merely *slow* — both successes landed within
-5% of the budget ceiling, so that cell is not yet resolved. And the additive model
-in §13.7 predicts setup B needs ~143,000 steps at K=50; that is directly testable
-with 3 runs and is the cheapest way to confirm it before budgeting from it.
+5% of the budget ceiling, so that cell is not yet resolved. And whether the
+grokking delay grows with client count (§13.7) — the sweep that raised the
+question is underpowered to answer it, and the campaign's own cells will settle it
+across several K and setups.
 
 ---
 
@@ -303,18 +305,33 @@ additive one. Restricted to iid, E=5, FedAvg, full participation, α=0.30:
 | K=30 | 5,900 | 94,300 (1/3) | 88,400 |
 | K=50 | 53,300 | censored (0/3) | — |
 
-**Two separate things happen, and only one of them depends on K.**
+**Two separate things happen, and they are not equally well established.**
 
-1. **Memorisation time explodes with K**: 150 → 3,600 → 5,900 → 53,300, i.e. 24×,
-   39×, then 355× the centralized value.
-2. **The delay — the grokking phenomenon itself — is ~90,000 and flat in K**, and
-   is simply ~2× the centralized 44,900.
+1. **Memorisation time explodes with K** — 150 → 3,600 → 5,900 → 53,300, i.e. 24×,
+   39×, then 355× the centralized value. Three seeds at every K, and the effect is
+   orders of magnitude beyond seed spread. **Solid.**
+2. **The delay is large and roughly doubles under federation** — ~90,000 against
+   the centralized 44,900. Established at K=20, 3 seeds.
 
-So `T_grok(K) ≈ t_memo(K) + 90,000`, and that predicts the censored cells rather
-than merely describing them. K=30 needs ≈ 5,900 + 90,000 = 95,900 against the
-100,000 it was given — which is why exactly one seed made it, at 94,300, and two
-did not. K=50 needs ≈ 53,300 + 90,000 = **143,000** and received 100,000; its
-three seeds memorised and sit mid-delay at 2.4–14.0% test, not stuck.
+**Whether the delay grows with K is NOT established, and this sweep cannot settle
+it.** The per-seed delays are:
+
+| K | seeds yielding a delay | delays |
+|---|---|---|
+| 20 | 3/3 | 62,800 · 90,100 · 94,300 |
+| 30 | **1/3** | 88,700 |
+| 50 | **0/3** | — |
+
+Two K values, one of them a single seed, and the K=30 point merely falls inside
+K=20's spread — which is itself a factor of 1.5, **larger than any K-dependence it
+could detect**. Flat is consistent with this data; so is a mild increase.
+
+So `T_grok(K) ≈ t_memo(K) + delay` describes the censored cells well: K=30 needs
+≈ 5,900 + ~90,000 = ~95,900 against the 100,000 it got, which is why exactly one
+seed made it at 94,300 and two did not; K=50 needs **≳ 143,000** and received
+100,000, its three seeds memorising and sitting mid-delay at 2.4–14.0% test rather
+than stuck. But 143,000 is a **lower bound, not a prediction** — if the delay does
+grow with K, budgeting exactly to it recreates the censoring it was derived from.
 
 **Inherited decay, wd=1.0** — same structure, opposite balance:
 
@@ -368,8 +385,11 @@ The K axis is open but it is not free, and budgets must now be set from
 K=97 extrapolates well past 200,000 steps, so the anchor's K ladder cannot be
 reproduced on B at equal seed counts within a comparable budget. Either B's K
 axis stops at 50, or the campaign accepts one expensive high-K cell per setup.
-The prediction at K=50 is directly testable with 3 runs at 30,000 rounds and is
-the cheapest way to confirm the additive model before anything is budgeted from it.
+**No separate confirmation run is warranted.** Run ids are content hashes, so a
+campaign cell specced at K=50 with headroom above 143,000 *is* the test — running
+one first and the other later duplicates the work. The campaign will also yield
+delay estimates across several K and several setups, which is a far better basis
+for the K-dependence question than one more point here.
 
 ---
 
