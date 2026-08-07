@@ -12,6 +12,30 @@ resolved: there was no collapse, and the K axis is open at a measurable cost
 (below). The work in front is now writing the per-setup FL manifests and running
 v1's exp0–exp7 chain on them.
 
+> ## RUNNING RIGHT NOW (launched 2026-08-07, detached)
+>
+> `scripts/run_campaign_part0.sh` is chaining Part 0 of the campaign under
+> `setsid`, so it survives the session that launched it. In order: the 0.2/0.3
+> prerequisite sweeps → full test suite → `t1_setup_k_ladder` (39 runs, ~88
+> slot-h) → `t3_server_lr_calibration` (42 runs, ~17 slot-h), collecting into
+> `runs_v2.csv` after each.
+>
+> **It runs compute only.** It does not commit and takes no decision that depends
+> on a result — the C working-point verdict and the per-setup budgets are
+> judgement calls waiting for a human.
+>
+> ```bash
+> tail -f logs/sweeps/part0_chain_*.log     # progress
+> cat PART0_STATUS.md                       # written when the chain finishes
+> pgrep -af run_campaign_part0              # still alive?
+> ```
+>
+> When it lands, read **PART0_STATUS.md** first: it carries the gate verdict
+> (does C grok at α=0.30 at width 256?), the capacity answer, the K ladder's
+> t_memo(K)/delay(K) per setup, and what each manifest still owes. Parts 1–3 of
+> `~/.claude/plans/plan-all-that-needs-valiant-hamster.md` are written against
+> those numbers and cannot be specified without them.
+
 > **Read the data, not just this file.** Sweeps get banked faster than these notes
 > get rewritten. Ground truth is `results/data/runs_v2.csv` and
 > `results/data/runs/*.json`; the "what is missing" recipe is in the Resume section.
