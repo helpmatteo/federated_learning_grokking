@@ -45,7 +45,9 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from fedgrok.analysis.grokking_metrics import compute_t_memo   # noqa: E402
+from fedgrok.analysis.grokking_metrics import (                # noqa: E402
+    compute_t_memo, compute_t_first_cross, count_post_cross_dips,
+)
 from fedgrok.manifest import build_config, load_manifest, run_id  # noqa: E402
 from fedgrok.run import _write_json_atomic                     # noqa: E402
 
@@ -109,6 +111,17 @@ def _fill_outcomes(row, history):
     out = {}
     if "peak_train_acc" not in row:
         out["peak_train_acc"] = max(train_accs)
+
+    # t_first_cross / post_grok_dips need the bar the run was scored at, which is
+    # recorded per row precisely because it varies by dataset.
+    test_accs = history.get("test_acc", [])
+    bar = row.get("grok_threshold")
+    if test_accs and bar not in (None, ""):
+        bar = float(bar)
+        if "t_first_cross" not in row:
+            out["t_first_cross"] = compute_t_first_cross(steps, test_accs, bar)
+        if "post_grok_dips" not in row:
+            out["post_grok_dips"] = count_post_cross_dips(steps, test_accs, bar)
     if "t_memo" in row:
         return out
 

@@ -1,7 +1,7 @@
 import pytest
 from fedgrok.analysis.grokking_metrics import (
-    compute_t_grok, compute_t_50, compute_t_memo, summarize_seeds,
-    extract_grokking_results,
+    compute_t_grok, compute_t_50, compute_t_memo, compute_t_first_cross,
+    count_post_cross_dips, summarize_seeds, extract_grokking_results,
 )
 
 
@@ -203,3 +203,73 @@ class TestPeakTrainAcc:
         out = extract_grokking_results({"epoch": [], "train_acc": [],
                                         "test_acc": []}, threshold=95.0)
         assert out["peak_train_acc"] == 0.0
+
+
+class TestFirstCrossAndDips:
+    """Separating "when did it generalise" from "when did it stop falling over".
+
+    `t_grok` requires the bar to hold for the REST of the run, which is right for
+    a phase transition but makes the value depend on the LOGGING RATE whenever
+    the curve is not monotone -- every extra sample point is another chance to
+    observe a dip and push the answer later. Measured on setup C, one seed: the
+    identical trajectory scored 15,200 at log_every=200 and 59,350 at
+    log_every=50, because the coarse run never sampled the collapse in between.
+    """
+
+    def test_first_cross_ignores_a_later_dip_that_t_grok_punishes(self):
+        steps = list(range(0, 800, 100))
+        test = [1.0, 1.0, 96.0, 20.0, 96.0, 97.0, 98.0, 99.0]
+        assert compute_t_first_cross(steps, test, 95.0) == 200
+        # t_grok waits for the crossing that is never undone
+        assert compute_t_grok(steps, test, threshold=95.0) == 400
+
+    def test_never_crossed(self):
+        steps = list(range(0, 400, 100))
+        assert compute_t_first_cross(steps, [1.0, 2.0, 3.0, 4.0],
+                                     95.0) == float("inf")
+
+    def test_dips_counted_only_after_the_first_crossing(self):
+        steps = list(range(0, 800, 100))
+        # the two sub-bar points BEFORE the crossing must not count
+        test = [1.0, 2.0, 96.0, 20.0, 96.0, 30.0, 98.0, 99.0]
+        assert count_post_cross_dips(steps, test, 95.0) == 2
+
+    def test_no_dips_when_the_transition_holds(self):
+        steps = list(range(0, 500, 100))
+        assert count_post_cross_dips(steps, [1.0, 96.0, 97.0, 98.0, 99.0],
+                                     95.0) == 0
+
+    def test_no_dips_when_it_never_crossed(self):
+        """Zero must mean "held", not "never got there" -- read next to t_grok."""
+        steps = list(range(0, 400, 100))
+        assert count_post_cross_dips(steps, [1.0] * 4, 95.0) == 0
+
+    def test_both_land_in_the_result_row_at_the_run_threshold(self):
+        steps = list(range(0, 600, 100))
+        test = [1.0, 91.0, 50.0, 91.0, 92.0, 93.0]
+        out = extract_grokking_results(
+            {"epoch": steps, "train_acc": [100.0] * 6, "test_acc": test},
+            threshold=90.0)
+        assert out["t_first_cross"] == 100
+        assert out["post_grok_dips"] == 1
+        assert out["t_grok"] == 300
+
+    def test_sampling_rate_moves_t_grok_but_not_the_first_crossing(self):
+        """The property that motivates the metric, as a regression test.
+
+        One trajectory, two logging rates. The coarse run simply never samples
+        the epoch where accuracy collapsed, so it reports grokking 200 steps
+        earlier -- a difference in the instrument, not in the model.
+        """
+        fine_steps = [0, 100, 200, 300, 400, 500]
+        fine_acc = [1.0, 96.0, 20.0, 96.0, 97.0, 98.0]
+        coarse_steps = [0, 100, 300, 400, 500]          # the dip goes unsampled
+        coarse_acc = [1.0, 96.0, 96.0, 97.0, 98.0]
+
+        assert compute_t_grok(fine_steps, fine_acc, 95.0) == 300
+        assert compute_t_grok(coarse_steps, coarse_acc, 95.0) == 100
+        assert (compute_t_first_cross(fine_steps, fine_acc, 95.0)
+                == compute_t_first_cross(coarse_steps, coarse_acc, 95.0) == 100)
+        # and the dip count is what tells you the two are not the same run
+        assert count_post_cross_dips(fine_steps, fine_acc, 95.0) == 1
+        assert count_post_cross_dips(coarse_steps, coarse_acc, 95.0) == 0

@@ -199,6 +199,8 @@ def run_spec(spec: dict, results_root: str = DEFAULT_RESULTS_DIR,
         # reads identically to a grokking failure in a table of t_grok values.
         "t_memo": metrics["t_memo"],
         "delay": metrics["delay"],
+        "t_first_cross": metrics["t_first_cross"],
+        "post_grok_dips": metrics["post_grok_dips"],
         "peak_train_acc": metrics["peak_train_acc"],
         "final_acc": metrics["final_test_acc"],
         "final_train_acc": metrics["final_train_acc"],

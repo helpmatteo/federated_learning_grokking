@@ -41,7 +41,8 @@ PREFERRED_COLUMNS = [
     "tau", "eval_every", "checkpoint_every", "epochs", "log_every", "momentum",
     "lr", "weight_decay",
     "grok_threshold",
-    "t_grok", "t_50", "t_memo", "delay", "final_acc", "final_train_acc",
+    "t_grok", "t_first_cross", "t_50", "t_memo", "delay", "post_grok_dips",
+    "final_acc", "final_train_acc",
     "peak_train_acc", "final_ipr",
     "grokked", "censored", "steps_run", "wall_s",
 ]

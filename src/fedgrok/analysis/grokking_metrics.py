@@ -67,6 +67,45 @@ def compute_t_memo(steps: list, train_accs: list, threshold: float = 99.0) -> fl
     return float("inf")
 
 
+def compute_t_first_cross(steps: list, test_accs: list, threshold: float) -> float:
+    """First step test accuracy reaches `threshold`, sustained or not.
+
+    `compute_t_grok` requires the bar to hold for the REST of the run, which is
+    the right definition for a phase transition but makes the value depend on the
+    LOGGING RATE whenever the curve is not monotone: every extra sample point is
+    another chance to observe a dip and push the answer later. Measured on setup
+    C, one seed, the identical trajectory scored 15,200 at log_every=200 and
+    59,350 at log_every=50 -- a 4x difference from logging alone, because the
+    coarse run never sampled a collapse to 20.2% at epoch 59,300.
+
+    The first crossing is not sampling-invariant either, but it is stable to
+    within one logging interval rather than to within the instability's duration.
+    Recording both separates "when did it generalise" from "when did it stop
+    falling over", which for an unstable setup are different questions.
+    """
+    for step, acc in zip(steps, test_accs):
+        if acc >= threshold:
+            return step
+    return float("inf")
+
+
+def count_post_cross_dips(steps: list, test_accs: list, threshold: float) -> int:
+    """Logged points below `threshold` AFTER the first crossing.
+
+    Zero means the transition held. Non-zero means the run generalised and then
+    lost it at least once, which is a property of the setup worth carrying: on
+    the S_5 transformer every seed dips (worst observed 9.4% from ~100%), on the
+    S_5 quadratic MLP none do. The magnitude scales with the logging rate, so
+    compare it only within a fixed `log_every` -- the zero/non-zero distinction
+    is the part that transfers.
+    """
+    first = compute_t_first_cross(steps, test_accs, threshold)
+    if first == float("inf"):
+        return 0
+    return sum(1 for step, acc in zip(steps, test_accs)
+               if step > first and acc < threshold)
+
+
 def extract_grokking_results(history: dict, threshold: float = 95.0) -> dict:
     """Extract grokking metrics from a training history dict.
 
@@ -92,6 +131,9 @@ def extract_grokking_results(history: dict, threshold: float = 95.0) -> dict:
         "t_grok": t_grok,
         "t_50": t_50,
         "t_memo": t_memo,
+        # Sampling-robust companion to t_grok, plus the instability it hides.
+        "t_first_cross": compute_t_first_cross(steps, test_accs, threshold),
+        "post_grok_dips": count_post_cross_dips(steps, test_accs, threshold),
         # The delay IS the phenomenon. inf if either end is missing: a run that
         # never memorised has no delay, and neither does one still censored.
         "delay": (t_grok - t_memo
