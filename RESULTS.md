@@ -7,7 +7,7 @@ Companion documents: `PROGRESS.md` (what is built and what remains),
 `~/.claude/plans/plan-all-that-needs-nested-seal.md` (the boundary campaign, closed).
 
 **Data behind every number here:**
-`results/data/runs_v2.csv` (831 v2 runs) and `results/data/runs.csv` (870 v1 runs,
+`results/data/runs_v2.csv` (842 v2 runs) and `results/data/runs.csv` (870 v1 runs,
 recovered from logs). Both are committed. Regenerate any table with:
 
 ```bash
@@ -39,10 +39,11 @@ partially censored.
    (§11) — but that is not because the threshold belongs to the task family.
    **The optimiser moves it**: A′ groks 5/5 at α=0.20 where A, same architecture
    and same data under GD, manages 0/5 (§13.3).
-7. **Federation breaks the new setups at K≈30, and it is a training failure, not
-   a grokking one** (§12). The recovery under a corrected decay is **graded**:
-   complete at K=20/30, partial at K=50 (§13.6). Every affected setup uses AdamW;
-   the anchor, under plain GD, is fine at K=97.
+7. **There is no K≈30 collapse.** It was a censored measurement (§13.7). What
+   federation actually does is slow *memorisation* steeply with client count
+   (150 → 3,600 → 53,300 steps at K = 1 / 20 / 50) while roughly doubling the
+   *delay* and then leaving it flat in K. `T_grok ≈ t_memo(K) + delay`, and that
+   predicts every cell that had looked like a breakdown.
 
 8. **The optimiser is worth ~45× on the anchor's own task** — the identical
    architecture on the identical data groks in 500 steps under AdamW where it
@@ -53,11 +54,16 @@ partially censored.
    (§13.2, §13.5). On B, decay leaves memorisation untouched at epoch 150 and
    acts purely on the generalisation timescale.
 
+10. **Six budget-manufactured boundaries so far**, three of them caught inside the
+    single investigation in §13.5–13.7. Every headline failure this project has
+    reported has, on re-measurement, been a clock running out. `t_memo` is now
+    recorded alongside `t_grok` precisely because one number cannot tell "never
+    learned" from "learned and not yet generalised".
+
 Open: whether K=97 IID *fails* or is merely *slow* — both successes landed within
-5% of the budget ceiling, so that cell is not yet resolved. And whether a
-corrected decay lets the new setups grok federated at all: the cells that looked
-like a breakdown were censored at 10,000 steps against a measured centralized
-requirement of 45,050 (§13.6), and are being re-run at up to 200,000.
+5% of the budget ceiling, so that cell is not yet resolved. And the additive model
+in §13.7 predicts setup B needs ~143,000 steps at K=50; that is directly testable
+with 3 runs and is the cheapest way to confirm it before budgeting from it.
 
 ---
 
@@ -252,18 +258,118 @@ place to buy the most headroom, K=30 and K=50 at 100,000 (2.2×), plus a wd=1.0
 control at the longer budget to check that "never memorises" is itself
 budget-independent rather than the same error mirrored.
 
-> **This is the gate on the whole campaign.** If wd=0.1 groks at K=20, the
-> collapse is an inherited-hyperparameter defect, the K axis reopens for B/C/D/E
-> at a corrected decay, and exp2/exp3/exp4 can be specified on their primary
-> axis. If it memorises and does not generalise at 4.4× the centralized
-> requirement, that is a real federated breakdown — and the per-client
-> checkpoints, which this manifest turns on, are its evidence base.
+> **This was the gate on the whole campaign, and it opened.** wd=0.1 groks 3/3
+> at K=20 — see §13.7, which also shows that the wd=1.0 control caught the same
+> error mirrored, and that §12's headline table was itself censored.
 
 **Cost note.** Measured on these runs, setup B federated is ~0.44–0.52 s/round
 and **nearly flat in K** (886 s at K=20, 1,014 at K=30, 1,047 at K=50, all at
 2,000 rounds). The fitted cost model in §8 comes from setup A and carries a
 `1.291·K` term; it over-costs setup B by ~2.6× at K=50. Per-setup cost fits are
 still owed.
+
+### 13.7 THE GATE: the K≈30 collapse was never a collapse
+
+`p1_k_collapse_budget`, 11/11, 4.9 h. Every cell of the diagnosis re-run at a
+budget keyed to §13.5's measured centralized requirement. **The K axis reopens**,
+and the reason it ever looked closed is the same reason four earlier claims in
+this project were wrong.
+
+**The gate cell.** wd=0.1, K=20, 200,000 steps, iid, E=5:
+
+| seed | t_memo | T_grok | final test |
+|---|---|---|---|
+| 42 | 4,100 | 98,400 | 100.00 |
+| 123 | 3,500 | 66,300 | 99.68 |
+| 456 | 3,600 | 93,700 | 99.66 |
+
+**3/3.** The same configuration was 0/3 at 10,000 steps. So the collapse is an
+inherited-hyperparameter defect plus an under-budget, exactly as the decision
+rule's first branch specified — **D′ is not needed**, and the A-vs-D optimiser
+confound gets recorded as a stated limitation rather than fixed with a seventh
+setup.
+
+#### The decomposition that explains every cell
+
+Recording `t_memo` separately from `t_grok` turns a confusing table into an
+additive one. Restricted to iid, E=5, FedAvg, full participation, α=0.30:
+
+**Corrected decay, wd=0.1:**
+
+| | t_memo | T_grok | **delay** |
+|---|---|---|---|
+| centralized | 150 | 45,050 (3/3) | 44,900 |
+| K=20 | 3,600 | 93,700 (3/3) | 90,100 |
+| K=30 | 5,900 | 94,300 (1/3) | 88,400 |
+| K=50 | 53,300 | censored (0/3) | — |
+
+**Two separate things happen, and only one of them depends on K.**
+
+1. **Memorisation time explodes with K**: 150 → 3,600 → 5,900 → 53,300, i.e. 24×,
+   39×, then 355× the centralized value.
+2. **The delay — the grokking phenomenon itself — is ~90,000 and flat in K**, and
+   is simply ~2× the centralized 44,900.
+
+So `T_grok(K) ≈ t_memo(K) + 90,000`, and that predicts the censored cells rather
+than merely describing them. K=30 needs ≈ 5,900 + 90,000 = 95,900 against the
+100,000 it was given — which is why exactly one seed made it, at 94,300, and two
+did not. K=50 needs ≈ 53,300 + 90,000 = **143,000** and received 100,000; its
+three seeds memorised and sit mid-delay at 2.4–14.0% test, not stuck.
+
+**Inherited decay, wd=1.0** — same structure, opposite balance:
+
+| | t_memo | T_grok | delay |
+|---|---|---|---|
+| centralized | 150 | 6,100 (3/3) | 5,950 |
+| K=5 | 1,800 | 5,250 (1/1) | 3,450 |
+| K=10 | 6,350 | 6,700 (8/9) | 350 |
+| K=20 | 7,300 | 7,500 (1/3) | 200 |
+| K=30 @ 10k | never | censored (0/3) | — |
+| **K=30 @ 100k** | **12,900** | **13,200 (1/1)** | **300** |
+| K=50 @ 100k | never | censored (0/1) | — |
+
+At wd=1.0 the delay collapses to ~300 steps, so `T_grok ≈ t_memo` and the whole
+question is whether the model memorises at all.
+
+#### The correction this forces on §12
+
+**The K=30 cell was a censored measurement, not a training failure.** §12's table
+— peak train 100 / 98.2 / 42.8 / 5.9 / 5.0 at K = 10 / 20 / 30 / 40 / 50 — was
+read off runs given **10,000 steps**. At K=30 memorisation takes **12,900**. Given
+100,000 steps the same setup memorises and groks at 13,200. The "42.8%" that
+anchored the entire collapse narrative is where that run had got to when the clock
+stopped.
+
+K=50 under the inherited decay does still fail at 100,000 steps — but at peak train
+**37.8%**, against the 5.0% recorded at 10,000. It is slow, not stuck, and it is
+the only cell in the diagnosis that still looks like a genuine wall.
+
+> **There is no cliff at K≈30.** There is a steep, continuous slowdown of
+> *memorisation* with client count, and a delay that federation roughly doubles
+> and then leaves alone. Every "collapse" datum was that slowdown, measured
+> against a clock that had already run out.
+
+This is the **sixth** time a fixed budget has manufactured a boundary here, and
+the third caught inside this one investigation — §13.6 (the wd=0.1 arm), the
+wd=1.0 control added specifically to guard against the mirror-image error, and
+§12's headline table itself. The control earned its two runs.
+
+#### What it costs the campaign
+
+The K axis is open but it is not free, and budgets must now be set from
+`t_memo(K) + delay` rather than from a multiple of the centralized number:
+
+| setup B, wd=0.1, iid, E=5 | steps needed |
+|---|---|
+| K=20 | ~95,000 (measured, 3/3 at 200k) |
+| K=30 | ~96,000 (1/3 at 100k) |
+| K=50 | ~143,000 (predicted; 0/3 at 100k) |
+
+K=97 extrapolates well past 200,000 steps, so the anchor's K ladder cannot be
+reproduced on B at equal seed counts within a comparable budget. Either B's K
+axis stops at 50, or the campaign accepts one expensive high-K cell per setup.
+The prediction at K=50 is directly testable with 3 runs at 30,000 rounds and is
+the cheapest way to confirm the additive model before anything is budgeted from it.
 
 ---
 
@@ -307,6 +413,13 @@ every shardable config has a small delay or none. Best compromise
 ---
 
 ## 12. The K≈30 collapse on AdamW setups
+
+> **SUPERSEDED by §13.7.** Everything in this section was measured at a 10,000-step
+> budget. At K=30 memorisation alone takes 12,900 steps, so the "42.8% peak train"
+> below is where that run had got to when the clock stopped, not a capability
+> limit — the same setup memorises and groks at 13,200 given 100,000 steps. The
+> section is kept because it is the reasoning the diagnosis was built on, and
+> because the ruled-out mechanisms below still stand.
 
 Setup B, one seed per cell, default hyperparameters — **peak** train accuracy:
 
@@ -638,7 +751,7 @@ cut wall-clock from ~7.2 h to ~5.9 h for identical work.
 | | runs | grokked | censored |
 |---|---|---|---|
 | **v1** (`results/data/runs.csv`, log-recovered) | 870 | 554 | 316 |
-| **v2** (`results/data/runs_v2.csv`) | 831 | 567 | 264 |
+| **v2** (`results/data/runs_v2.csv`) | 842 | 572 | 270 |
 
 v1 by experiment: exp2 333 · exp5 153 · exp3a 100 · exp7 74 · exp4a 72 · exp4b 72 ·
 exp4 36 · exp3b 30.
@@ -665,12 +778,13 @@ v2 by campaign — regenerate with
 | `d_wd_ladder` | 12 | **partial** (12/45) — tier X, the dip's decay hypothesis |
 | `k_collapse_wd` | 12 | done (18/18 incl. dedup) — §13.6 |
 | `b_decay_band` | 15 | done — §13.5 |
+| `k_collapse_budget` | 11 | done — **§13.7, the gate** |
 | `d_gd_probe` | 9 | done — §13.1 |
 | `probe_rerun` | 9 | done — B K=10 operand and D K=50 iid recover at 5× budget |
 | `poly_pilot` | 6 | done — §7 |
 | plus 8 smaller diagnosis groups | 34 | `adam_restart`, `c_alpha`, `k50_hparam`, `k50_ladder`, `grok_confirm_fl` |
 
-**v2 compute to date: 206.6 machine-hours.** Checkpoints on disk: 3.9 GB
+**v2 compute to date: 236.8 machine-hours.** Checkpoints on disk: 3.9 GB
 (gitignored).
 
 ---
