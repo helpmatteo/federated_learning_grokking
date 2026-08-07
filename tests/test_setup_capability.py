@@ -270,6 +270,49 @@ class TestClientSignature:
         assert sig.shape[1] != cfg.p
 
 
+class TestClientCheckpointsEndToEnd:
+    """The signature must survive the whole path, not just the function call.
+
+    `client_signature` being right is necessary and not sufficient: the matrix
+    still has to cross Flower's metrics channel as bytes, be reassembled from
+    its reported shape, get cached server-side, and reach disk. Every campaign
+    manifest is about to set `checkpoint_client_weights=True` on transformer and
+    MLP setups, and those are Config fields -- so they change run ids, and a path
+    that silently writes nothing is only discovered after the sweep, by which
+    time the fix costs the sweep. No banked run off the anchor has exercised it.
+    """
+
+    @pytest.mark.parametrize("overrides,expect_shape", [
+        (dict(dataset="modular", p=31, model="transformer", hidden_width=32,
+              n_heads=4, d_mlp=64, loss="ce", optimizer="adamw", lr=1e-3),
+         (31, 32)),                                    # W_E: (p, d_model)
+        (dict(dataset="s5", group_n=4, model="groknet", hidden_width=16,
+              loss="ce", optimizer="adamw", lr=1e-3),
+         (16, 24)),                                    # W1_operand: (N, |G|)
+    ], ids=["transformer_modular", "groknet_s5"])
+    def test_per_client_weights_reach_disk_with_the_right_shape(
+            self, tmp_path, overrides, expect_shape):
+        cfg = FedConfig(num_clients=3, num_rounds=2, local_epochs=1,
+                        partition="iid", checkpoint_every=2,
+                        checkpoint_client_weights=True, eval_every=2,
+                        alpha=0.5, seed=42, output_dir=str(tmp_path),
+                        **overrides)
+        from fedgrok.training.federated import fed_train
+        fed_train(cfg)
+
+        saved = tmp_path / "checkpoints" / "client_w1_round2.pt"
+        assert saved.exists(), "no per-client file written"
+
+        blob = torch.load(saved, weights_only=False)
+        assert len(blob) == cfg.num_clients
+        mats = [np.asarray(e["w1"] if isinstance(e, dict) else e) for e in blob]
+        for mat in mats:
+            assert mat.shape == expect_shape
+        # a shared-reference bug would make every client identical, which reads
+        # as "no client drift" rather than as a bug
+        assert not np.allclose(mats[0], mats[1])
+
+
 class TestTransformerCapacityIsConfigurable:
     def test_n_heads_and_d_mlp_round_trip_through_a_spec(self):
         from fedgrok.manifest import build_config
