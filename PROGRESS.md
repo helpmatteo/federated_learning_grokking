@@ -487,6 +487,7 @@ the launcher's stdout — use `-u`, or just watch `ls results/data/runs/*.json |
 | `p1_k_collapse_wd` | 18 | **done** — RESULTS §13.6 |
 | `p1_b_decay_band` | 15 | **done** — RESULTS §13.5 |
 | `p1_k_collapse_budget` | 11 | **done** (11/11, 4.9 h) — RESULTS §13.7, the gate |
+| **`t1_setup_k_ladder`** | **39** | **written, not launched** — the K ladder on B/C/D/E, reading t_memo(K) and delay(K) rather than T_grok(K). ~88 slot-h on measured rates |
 | `x_d_alpha_{cliff,fine,high}` · `x_d_internals` | 235 | **done** — tier X, setup D's α ladder at 0.025 resolution + the internals run. `d_internals` is **unanalysed** |
 | `x_d_wd_ladder` | 45 | 12/45 — tier X, tests whether the dip is a decay transient |
 | `x_d_lr_control` | 18 | 0/18 — tier X, the step-size control for the above |
@@ -588,14 +589,20 @@ for m in sorted(glob.glob('manifests/*.jsonl')):
 EOF
 ```
 
-**The setup/check phase is done.** Next is Part 3 of the plan — writing the
-per-setup FL manifests. The one rule that came out of it:
+**The setup/check phase is done**, and the first campaign manifest is written:
+`t1_setup_k_ladder` (39 runs, ~88 slot-h, not launched). The rules that came out
+of the setup phase:
 
-> **Budget every federated cell as `t_memo(K) + delay`, never as a multiple of the
-> centralized T_grok.** Federation slows memorisation steeply with K while leaving
-> the delay roughly flat, so a centralized-anchored budget under-provisions
-> exactly the high-K cells the campaign cares about. Six boundaries in this
-> project have been manufactured by getting this wrong.
+> **1. Budget every federated cell as `t_memo(K) + delay`, never as a multiple of
+> the centralized T_grok.** A centralized-anchored budget under-provisions exactly
+> the high-K cells the campaign cares about. Six boundaries in this project have
+> been manufactured by getting this wrong.
+>
+> **2. Which of the two terms carries the K dependence is SETUP-DEPENDENT.** On
+> the anchor (GD, wd=0) memorisation is flat in K and the delay grows; on setup B
+> (AdamW) memorisation explodes. A table of T_grok shows one number for both, so
+> budget from whichever term dominates for that setup — and measure it rather
+> than assuming, which is what `t1_setup_k_ladder` is for.
 
 Budget B's K=50 campaign cells with headroom **above** 143,000 (that figure is a
 lower bound, not a prediction) and they double as the test of the additive model —

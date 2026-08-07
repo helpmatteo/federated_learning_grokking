@@ -39,12 +39,12 @@ partially censored.
    (§11) — but that is not because the threshold belongs to the task family.
    **The optimiser moves it**: A′ groks 5/5 at α=0.20 where A, same architecture
    and same data under GD, manages 0/5 (§13.3).
-7. **There is no K≈30 collapse.** It was a censored measurement (§13.7). What
-   federation demonstrably does is slow *memorisation* steeply with client count
-   — 150 → 3,600 → 53,300 steps at K = 1 / 20 / 50 — while roughly doubling the
-   *delay*. `T_grok ≈ t_memo(K) + delay` accounts for every cell that had looked
-   like a breakdown. Whether the delay itself grows with K is **not** resolved:
-   two K values, one of them a single seed.
+7. **There is no K≈30 collapse.** It was a censored measurement (§13.7).
+   Federation costs `t_memo(K) + delay`, and **which of the two terms carries the
+   K dependence is setup-dependent**: on the anchor (GD, wd=0) memorisation is
+   flat in K and the delay grows ~3.5× from K=20 to 97; on setup B (AdamW)
+   memorisation explodes 15× from K=20 to 50. Same axis, opposite mechanism —
+   invisible in a table of T_grok. The decay clock is the likely discriminator.
 
 8. **The optimiser is worth ~45× on the anchor's own task** — the identical
    architecture on the identical data groks in 500 steps under AdamW where it
@@ -370,6 +370,44 @@ This is the **sixth** time a fixed budget has manufactured a boundary here, and
 the third caught inside this one investigation — §13.6 (the wd=0.1 arm), the
 wd=1.0 control added specifically to guard against the mirror-image error, and
 §12's headline table itself. The control earned its two runs.
+
+#### The decomposition is setup-dependent — A and B are opposites
+
+Applying the same split to the anchor, which has 92 banked federated runs, gives
+the reverse picture. Both at α=0.30, iid, E=5, FedAvg, 5 seeds (A) / 3 (B):
+
+| | K=5 | K=10 | K=20 | K=50 |
+|---|---|---|---|---|
+| **A** (GD, wd=0) t_memo | 3,700 | 3,700 | 3,700 | 3,700 |
+| **A** delay | 9,500 | 9,700 | 10,000 | 11,500 |
+| **B** (AdamW, wd=0.1) t_memo | — | — | 3,600 | 53,300 |
+| **B** delay | — | — | ~90,000 | — |
+
+**A's memorisation is flat in K and its delay carries the entire K effect. B's
+memorisation explodes.** Same axis, same statistic, opposite mechanism — and a
+table of T_grok values shows one number for both, which is why this went unseen
+until `t_memo` was recorded.
+
+A's delay dependence is much stronger nearer the cliff. At α=0.25:
+
+| K | 20 | 50 | 97 |
+|---|---|---|---|
+| t_memo | 3,100 | 3,100 | 4,100 |
+| delay | 26,700 | 43,700 | ~92,950 |
+
+Memorisation barely moves across a 5× change in K while the delay grows ~3.5×.
+So on the anchor the delay is emphatically **not** flat in K — which is the
+strongest available reason to treat B's apparent flatness (§13.7) as unproven
+rather than established, and to treat 143,000 at K=50 as a floor.
+
+**The mechanism this suggests** is the decay clock. A runs wd=0 and has none, so
+shard size never fights memorisation. B's decoupled decay is applied per local
+step and is independent of shard size, while the learning signal from a 1/K
+shard is not — so smaller shards lose that race and memorisation is what gives
+way. It predicts that D (AdamW) resembles B, and that any wd=0 setup resembles A.
+
+`t1_setup_k_ladder` (39 runs) tests exactly that, reading t_memo(K) and delay(K)
+per setup rather than T_grok(K).
 
 #### What it costs the campaign
 
