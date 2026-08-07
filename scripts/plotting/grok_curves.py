@@ -103,6 +103,9 @@ def panel_payload(run_id, row, history):
     t_grok = row.get("t_grok")
     if isinstance(t_grok, str):                       # "inf" survives the JSON
         t_grok = float("inf")
+    t_memo = row.get("t_memo")
+    if isinstance(t_memo, str):
+        t_memo = float("inf")
     setup = infer_setup(row)
     return {
         "id": run_id,
@@ -115,6 +118,11 @@ def panel_payload(run_id, row, history):
         "detail": _detail(row),
         "threshold": row.get("grok_threshold"),
         "t_grok": None if t_grok in (None, float("inf")) else t_grok,
+        # The DELAY is the phenomenon, so the panel has to be able to draw it.
+        # t_grok alone shows when generalisation landed but not what it was
+        # waiting for -- and "never trained" and "trained, never generalised"
+        # are the same picture without t_memo.
+        "t_memo": None if t_memo in (None, float("inf")) else t_memo,
         "final_train": row.get("final_train_acc"),
         "final_test": row.get("final_acc"),
         "wall_s": row.get("wall_s"),
@@ -136,12 +144,32 @@ def _detail(row):
     else:
         bits.append(f"α={row.get('alpha')}")
     bits.append(f"{row.get('optimizer')} · {row.get('loss')}")
+    # weight decay and seed are what distinguish cells inside a single sweep --
+    # without them a wd control panel is indistinguishable from the arm it
+    # controls, and two seeds of one cell read as one result.
+    wd = row.get("weight_decay")
+    if wd not in (None, ""):
+        bits.append(f"wd={wd}")
+    if row.get("seed") not in (None, ""):
+        bits.append(f"seed {row.get('seed')}")
     return "  ·  ".join(bits)
 
 
-def build(panels, title):
+def build(panels, title, heading=None, standfirst=None):
     payload = json.dumps(panels, separators=(",", ":"))
-    return _TEMPLATE.replace("__DATA__", payload).replace("__TITLE__", title)
+    return (_TEMPLATE.replace("__DATA__", payload)
+            .replace("__TITLE__", title)
+            .replace("__HEADING__", heading or _DEFAULT_HEADING)
+            .replace("__STANDFIRST__", standfirst or _DEFAULT_STANDFIRST))
+
+
+_DEFAULT_HEADING = "Four new setups, both centrally and under FedAvg — every one groks"
+_DEFAULT_STANDFIRST = """Grokking is the gap between the two curves: the model memorises its
+  training set early (<b>blue</b> saturates) and only generalises much later
+  (<b>orange</b> follows). The shaded band is that gap — from
+  <b>t<sub>memo</sub></b> to <b>T<sub>grok</sub></b>. The
+  horizontal rule is the dataset's threshold, which is a property of the dataset,
+  not a constant: 95% for modular arithmetic, 90% for MNIST, 85% for S₅."""
 
 
 _TEMPLATE = r"""<title>__TITLE__</title>
@@ -159,7 +187,14 @@ _TEMPLATE = r"""<title>__TITLE__</title>
     --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
     font-family:var(--sans);
     background:var(--surface-1); color:var(--text-primary);
-    padding:36px 24px 64px; max-width:1400px; margin:0 auto;
+    /* Full-bleed ground, content still capped at 1400px. The surface has to
+       reach the viewport edges: an embedding host paints its OWN background in
+       the viewer's theme behind this page, so a centred max-width box leaves
+       that host ground showing down both margins -- which is a visible seam
+       whenever the two themes' surfaces differ at all. Centring via padding
+       rather than `margin:0 auto` keeps the measure without the gap. */
+    padding:36px max(24px, calc((100% - 1400px) / 2)) 64px;
+    min-height:100vh; box-sizing:border-box;
     line-height:1.5;
   }
   @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .viz-root{
@@ -256,13 +291,8 @@ _TEMPLATE = r"""<title>__TITLE__</title>
 </style>
 
 <div class="viz-root">
-  <h1>Four new setups, both centrally and under FedAvg — every one groks</h1>
-  <p class="sub">Grokking is the gap between the two curves: the model memorises its
-  training set early (<b>blue</b> saturates) and only generalises much later
-  (<b>orange</b> follows). The vertical rule marks <b>T<sub>grok</sub></b> — the step
-  where test accuracy reaches the dataset's threshold and never falls back. The
-  horizontal rule is that threshold, which is a property of the dataset, not a
-  constant: 95% for modular arithmetic, 90% for MNIST, 85% for S₅.</p>
+  <h1>__HEADING__</h1>
+  <p class="sub">__STANDFIRST__</p>
 
   <div class="strip" id="strip"></div>
 
@@ -349,6 +379,32 @@ function panelSVG(p){
   const xl=mk("text",{x:ML+PW/2,y:H-2,"text-anchor":"middle"});
   xl.setAttribute("class","tick"); xl.textContent="gradient steps (log)";
   svg.appendChild(xl);
+
+  // The delay band: memorised -> generalised. This gap IS grokking, so it is
+  // drawn as an extent rather than left implicit between two rules. Neutral
+  // fill, never a series hue -- the hues mean train/test and nothing else.
+  if(p.t_memo && p.t_grok && p.t_grok>p.t_memo){
+    const x0=s.x(p.t_memo), x1=s.x(p.t_grok);
+    svg.appendChild(mk("rect",{x:x0,y:MT,width:Math.max(0,x1-x0),height:PH,
+      fill:"var(--text-primary)","fill-opacity":.055}));
+    const mid=(x0+x1)/2, w=x1-x0;
+    if(w>54){                       // only label when it fits without collision
+      const t=mk("text",{x:mid,y:MT+PH-6,"text-anchor":"middle"});
+      t.setAttribute("class","tick");
+      t.textContent="delay "+fmtStep(p.t_grok-p.t_memo); svg.appendChild(t);
+    }
+  }
+
+  // t_memo rule - dashed, the opening of the band
+  if(p.t_memo){
+    const x=s.x(p.t_memo);
+    svg.appendChild(mk("line",{x1:x,x2:x,y1:MT,y2:MT+PH,
+      stroke:"var(--text-muted)","stroke-width":1,"stroke-opacity":.55,
+      "stroke-dasharray":"3 3"}));
+    const t=mk("text",{x:Math.min(x+4,W-MR-2),y:MT+PH-18});
+    t.setAttribute("class","tick");
+    t.textContent="t_memo "+fmtStep(p.t_memo); svg.appendChild(t);
+  }
 
   // T_grok rule - solid, so it is not confused with a projection
   if(p.t_grok){
@@ -478,7 +534,7 @@ const chartView=document.getElementById("chartView");
 const tv=document.getElementById("tableView").querySelector(".tablewrap");
 const tb=document.createElement("table");
 const head=document.createElement("tr");
-["Setup","Mode","Config","Grok bar","T_grok","Final train","Final test","Wall"]
+["Setup","Mode","Config","Grok bar","t_memo","T_grok","Delay","Final train","Final test","Wall"]
   .forEach(t=>{const th=document.createElement("th");th.textContent=t;head.appendChild(th);});
 tb.appendChild(document.createElement("thead")).appendChild(head);
 const body=document.createElement("tbody");
@@ -486,7 +542,9 @@ PANELS.forEach(p=>{
   const tr=document.createElement("tr");
   [p.setup+" · "+p.setup_name, p.mode, p.detail,
    p.threshold!=null?p.threshold+"%":"—",
+   p.t_memo?Math.round(p.t_memo).toLocaleString():"never memorised",
    p.t_grok?Math.round(p.t_grok).toLocaleString():"not reached",
+   (p.t_memo&&p.t_grok)?Math.round(p.t_grok-p.t_memo).toLocaleString():"—",
    p.final_train.toFixed(1)+"%", p.final_test.toFixed(1)+"%",
    p.wall_s!=null?Math.round(p.wall_s)+"s":"—"
   ].forEach(t=>{const td=document.createElement("td");td.textContent=t;tr.appendChild(td);});
@@ -534,6 +592,10 @@ def main():
     ap.add_argument("--runs", nargs="+", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--title", default="Grokking across setups")
+    ap.add_argument("--heading", default=None,
+                    help="visible h1; defaults to the four-setups headline")
+    ap.add_argument("--standfirst", default=None,
+                    help="paragraph under the h1 (HTML allowed)")
     ap.add_argument("--runs-root", default="results/data/runs")
     ap.add_argument("--hist-root", default="results/runs")
     args = ap.parse_args()
@@ -557,7 +619,7 @@ def main():
     panels.sort(key=lambda p: (p["mode"] != "centralized", p["setup"]))
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as fh:
-        fh.write(build(panels, args.title))
+        fh.write(build(panels, args.title, args.heading, args.standfirst))
     print(f"\nWrote {len(panels)} panels -> {args.out}")
 
 
