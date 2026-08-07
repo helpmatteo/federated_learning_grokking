@@ -1,224 +1,129 @@
-# Grokking in Federated Learning — Experiment Suite
+# Grokking under federated learning
 
-Empirical study characterising when and why grokking survives — or fails — under federated learning. Reproduces Gromov (2023) "Grokking modular arithmetic" and extends it to federated settings with Flower.
+Does **grokking** — a model memorising its training set, looking like a failure for
+a long time, then abruptly generalising — survive when training is split across many
+clients that average their weights?
 
-## Setup
+Reproduces Gromov (2023) on modular arithmetic and extends it across six setups and
+the FedAvg family, using Flower.
 
-```bash
-# Create venv (requires Python 3.12 for Ray/Flower compatibility)
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install torch numpy matplotlib "flwr[simulation]>=1.27" pytest
-```
+> **The framing that shapes everything here.** FedAvg at one local epoch with `n_k/n`
+> weighting is an *algebraic identity* with centralized GD, proven in
+> `tests/test_fedavg_identity.py` and observed in the wild. So "federation preserves
+> grokking" is not a result — it is forced. The load-bearing axes are therefore local
+> epochs `E`, client count `K`, and **how the data is partitioned**, not the
+> architecture list.
 
-## Quick Start
+## Status
 
-```bash
-# Run a single experiment
-python run_experiment.py exp0
+Active work is on branch **`v2-multisetup`**. `main` is the frozen single-setup study
+(tag `v1-single-setup`) and is 60+ commits behind; everything below describes v2.
 
-# Run with custom parameters
-python run_experiment.py exp1 --hidden_width 256
+- **`PROGRESS.md`** — what is built, what is running, what is next. Start here.
+- **`RESULTS.md`** — every measured number, with the run data behind it.
+- Ground truth is `results/data/runs_v2.csv`, not the prose. The docs lag the data.
 
-# Generate plots from saved results
-python run_experiment.py plot --exp exp1 --results results/exp1_boundary/exp1_results.json
-```
-
-## Experiment Pipeline
-
-The experiments must be run **in order** — each depends on results from the previous:
-
-```
-Exp 0  (width validation)
-  |
-  v
-Exp 1  (centralized phase boundary)  --> determines alpha_crit, T_max
-  |
-  v
-Exp 2  (aggregation effect + FL boundary)
-  |
-  +---> Exp 3  (heterogeneity)          \
-  |                                       |-- can run in parallel
-  +---> Exp 4  (optimization fragmentation) /
-         |
-         v
-       Exp 5  (algorithm rescue)
-         |
-         v
-       Exp 6  (mechanistic analysis, post-hoc)
-```
-
-### Step-by-step
-
-#### 1. Experiment 0 — Width Validation (~6 min)
-
-Verifies that N=256 is sufficient across the alpha range. Determines T_base.
+## Install
 
 ```bash
-python run_experiment.py exp0
-# Results: results/exp0_width/exp0_results.json
+python3.10 -m venv venv                 # pyproject requires >=3.10
+venv/bin/pip install -e ".[dev]"
 ```
 
-**What to check:** All widths should grok at alpha=0.5. Record the smallest alpha where N=256 groks — this hints at where the phase boundary lies.
+Versions are pinned in `pyproject.toml`; `torch` and `torchvision` are a pinned *pair*,
+and `flwr>=1.27` is required for the `run_simulation` API. Runs assume CUDA — the
+launcher pins one GPU per subprocess via `CUDA_VISIBLE_DEVICES`.
 
-#### 2. Experiment 1 — Centralized Phase Boundary (~96 min)
+## Running a sweep
 
-Sweeps alpha to find alpha_crit (where grokking fails). Determines T_max for all FL budgets.
+Experiments are declared as **manifests** — JSONL files of run specs — rather than as
+CLI invocations. A run's id is a content hash of its config, which is what makes
+resume free and makes duplicate work across manifests impossible.
 
 ```bash
-python run_experiment.py exp1 --hidden_width 256
-# Results: results/exp1_boundary/exp1_results.json
+venv/bin/python scripts/build_manifests.py                    # (re)generate manifests/
+venv/bin/python scripts/validate_manifest.py manifests/<name>.jsonl
+venv/bin/python scripts/launch_sweep.py manifests/<name>.jsonl --gpus 0,1,2,3 --per-gpu 1
+venv/bin/python scripts/collect_runs.py                       # -> results/data/runs_v2.csv
+venv/bin/python scripts/summarize_runs.py results/data/runs_v2.csv --group setup,num_clients
 ```
 
-**What to check:** The output prints `alpha_crit` and `T_max`. Record these — they parameterise all subsequent experiments.
+Resume is automatic: re-running a manifest executes only what is missing. A long sweep
+should be detached, or it dies with its shell:
 
 ```bash
-# Generate the phase boundary figure
-python run_experiment.py plot --exp exp1 --results results/exp1_boundary/exp1_results.json
+setsid nohup venv/bin/python -u scripts/launch_sweep.py manifests/<name>.jsonl \
+    --gpus 0,1,2,3,4,5,6,7 --per-gpu 1 > logs/<name>.log 2>&1 < /dev/null &
 ```
 
-#### 3. Experiment 2 — Aggregation Effect (~102 hr sequential)
+**Every manifest builder in `scripts/build_manifests.py` carries its decision rule in
+its docstring.** Read it before reading that sweep's results, not after.
 
-The main result: does FL aggregation compensate for data fragmentation? Three conditions per (alpha, K): centralized-full, centralized-reduced, FL-IID.
+## Two things that will bite you
 
-```bash
-# Use alpha values near the boundary found in Exp 1
-python run_experiment.py exp2 --alphas 0.05,0.1,0.15,0.2,0.3,0.5 --t_max <T_MAX_FROM_EXP1>
+**Budget as `t_memo(K) + delay`, never as a multiple of the centralized T_grok.**
+Federation slows *memorisation* steeply with client count while leaving the *delay*
+roughly flat. A centralized-anchored budget under-provisions exactly the high-`K`
+cells you care about. Six boundaries in this project were manufactured by getting
+this wrong — every headline failure it has reported turned out, on re-measurement, to
+be a clock running out. `t_memo` is recorded next to `t_grok` for this reason.
 
-# Generate aggregation effect figure
-python run_experiment.py plot --exp exp2 --results results/exp2_aggregation/exp2_results.json
-```
+**Wall-clock is ~99% orchestration, not compute.** 50,000 centralized gradient steps
+take under a minute; the identical arithmetic federated across 5 clients takes ~22.
+Cost scales with *client count*, not training length, so order manifests
+longest-job-first and do not size the work in GPU-hours.
 
-#### 4. Experiments 3 & 4 — Heterogeneity & Optimization (parallel, ~86+95 hr)
-
-These can run in parallel on separate machines.
-
-```bash
-# Exp 3a: Dirichlet heterogeneity sweep
-python run_experiment.py exp3a --alphas 0.1,0.15,0.2,0.3,0.5 --k 10 --t_max <T_MAX>
-
-# Exp 3b: Structured partition comparison
-python run_experiment.py exp3b --alphas 0.1,0.15,0.2,0.3,0.5 --k 10 --t_max <T_MAX>
-
-# Exp 4a: Drift accumulation x heterogeneity
-python run_experiment.py exp4a --alphas 0.2,0.3,0.5 --k 10 --t_max <T_MAX>
-
-# Exp 4b: Partial participation x heterogeneity
-python run_experiment.py exp4b --alphas 0.2,0.3,0.5 --k 10 --t_max <T_MAX>
-
-# Exp 4c: Compute vs communication budget
-python run_experiment.py exp4c --alphas 0.2,0.3,0.5 --k 10
-```
-
-#### 5. Experiment 5 — Algorithm Rescue (~110 hr)
-
-Uses "hard" settings from Exps 2-4 where FedAvg fails. Create a JSON file with the hard settings:
-
-```bash
-cat > hard_settings.json << 'EOF'
-[
-  {"label": "H1", "alpha": 0.15, "K": 20, "partition": "iid", "local_epochs": 5, "fraction_train": 1.0},
-  {"label": "H2", "alpha": 0.15, "K": 10, "partition": "dirichlet", "local_epochs": 5, "fraction_train": 1.0, "dirichlet_alpha": 0.1},
-  {"label": "H3", "alpha": 0.3, "K": 10, "partition": "iid", "local_epochs": 25, "fraction_train": 0.4}
-]
-EOF
-
-python run_experiment.py exp5 --hard_settings hard_settings.json --t_max <T_MAX>
-```
-
-#### 6. Experiment 6 — Mechanistic Analysis (fast, post-hoc)
-
-No new training. Analyses drift vs grokking across all prior FL runs.
-
-```bash
-python run_experiment.py exp6
-# Results: results/exp6_mechanistic/drift_vs_grokking.json
-
-python run_experiment.py plot --exp exp6 --results results/exp6_mechanistic/drift_vs_grokking.json
-```
-
-## Architecture
+## Layout
 
 ```
-core/                          # Shared components
-  config.py                    # Config dataclass (p, alpha, N, optimizer, lr, ...)
-  model.py                     # GrokNet: 2-layer MLP, quadratic activation, mean-field init
-  dataset.py                   # Modular arithmetic dataset (one-hot encoded)
-  metrics.py                   # Weight norms, IPR, Fourier spectrum, accuracy
-  utils.py                     # Device selection, optimizer factory
+src/fedgrok/
+  core/        Config + FedConfig dataclasses, model/loss registry, guards
+  data/        dataset registry — modular arithmetic, S_n composition, MNIST-1k;
+               partitioning (iid, operand, target, dirichlet, label_block, coset)
+  models/      GrokNet (quadratic MLP), Nanda transformer, generic ReLU MLP
+  training/    centralized loop, Flower/Ray federated loop, SCAFFOLD, runner
+  metrics/     Fourier/IPR, S_n isotypic decomposition, exact quadratic-circuit
+               split, per-setup mechanistic probes
+  analysis/    T_grok / t_memo detection, censored-survival statistics
+  manifest.py  spec -> config, content-hash run ids, grid expansion
+  run.py       single-run entry point, atomic result JSON
 
-centralized/                   # Baseline training
-  train.py                     # Full-batch GD loop
-
-federated/                     # Flower-based FL
-  config.py                    # FedConfig (K, rounds, E, partition, strategy, ...)
-  dataset.py                   # Data partitioning (IID, operand, target, Dirichlet)
-  train.py                     # FedAvg/FedProx/FedAdam via Flower simulation
-
-experiments/                   # Experiment orchestration
-  grokking_metrics.py          # T_grok, T_50 detection + multi-seed aggregation
-  runner.py                    # Multi-seed runner with adaptive step budgets
-  exp0_width.py                # Width validation
-  exp1_boundary.py             # Centralized phase boundary
-  exp2_aggregation.py          # Aggregation effect (centralized-full/reduced/FL)
-  exp3_heterogeneity.py        # Dirichlet + structured partition sweeps
-  exp4_optimization.py         # Drift, participation, compute vs communication
-  exp5_algorithms.py           # Algorithm comparison (FedAvg/FedProx/FedAdam/WD)
-  exp6_mechanistic.py          # Post-hoc drift vs grokking analysis
-  visualization.py             # Publication-quality figures
-
-run_experiment.py              # Unified CLI entry point
+scripts/       build_manifests, validate_manifest, launch_sweep, collect_runs,
+               summarize_runs, backfill_runs, harvest_logs
+scripts/plotting/   result-row consumers; grok_curves.py builds a self-contained
+                    HTML page of train/test curves with the delay band marked
+manifests/     the declared experiments
+results/data/  runs_v2.csv + runs.csv — the committed evidentiary base
+tests/         the suite, ~9 min including Flower/Ray integration
 ```
 
-## Key Definitions
+`run_experiment.py` and `experiments/` are the **v1 orchestration surface**, kept
+because v1's 870 runs are still cited. They predate the manifest system and are not
+used by anything in `src/`, `scripts/` or `tests/`.
 
-| Symbol | Meaning |
-|--------|---------|
-| **T_grok** | Smallest step where test_acc >= 95% and never drops below |
-| **T_50** | First step where test_acc >= 50% (onset of generalisation) |
-| **alpha_crit** | Critical training fraction below which grokking fails |
-| **S_FL** | Adaptive FL step budget: min(50000, ceil(1.5 * T_max / 1000) * 1000) |
-| **S_rescue** | Extended budget for Exp 5: min(80000, 2 * T_max) |
+## Statistics
 
-## FL Strategies
+Runs that do not grok within budget are **right-censored**, not dropped and not
+recorded as infinity. Headline numbers are Kaplan–Meier medians with bootstrap 95%
+CIs over seeds, alongside the fraction of seeds that grokked — which is the order
+parameter, and the honest headline whenever a cell is partly censored.
 
-| Strategy | CLI flag | Description |
-|----------|----------|-------------|
-| FedAvg | `--strategy fedavg` | Default; weighted averaging of client models |
-| FedProx | `--strategy fedprox --proximal_mu 0.1` | FedAvg + proximal regularisation on client |
-| FedAdam | `--strategy fedadam --server_lr 0.1` | Server-side adaptive optimiser |
-
-## Metrics Tracked
-
-Every federated run logs per-round:
-- Train/test loss and accuracy (global model on full data)
-- Weight norms (W1, W2 Frobenius)
-- IPR (Inverse Participation Ratio — Fourier structure indicator)
-- Mean client drift (||w_after - w_before||_F averaged over clients)
-- Client weight divergence (std of client weight norms)
+The grok threshold is a **dataset property**, not a constant (95% modular, 90% MNIST,
+85% S₅), and is stored per run: a `t_grok` only means something next to the bar it was
+measured at.
 
 ## Tests
 
 ```bash
-source .venv/bin/activate
-python -m pytest tests/ -v          # Full suite (~3 min, includes FL integration)
-python -m pytest tests/ -v -k "not Fed"  # Fast unit tests only (~2 sec)
+venv/bin/python -m pytest tests/ -q          # full suite, ~9 min
+venv/bin/python -m pytest tests/ -q -k "not Fed and not fed and not integration"   # ~45 s
 ```
 
-## Estimated Compute Budget
-
-| Experiment | Runs | Type | Sequential runtime |
-|-----------|------|------|-------------------|
-| Exp 0 | 12 | Centralized | ~6 min |
-| Exp 1 | 24 | Centralized | ~96 min |
-| Exp 2 | 234 | Mixed | ~102 hr |
-| Exp 3 | ~147 | FL | ~86 hr |
-| Exp 4 | ~160 | FL | ~95 hr |
-| Exp 5 | 99 | FL | ~110 hr |
-| Exp 6 | 0 | Post-hoc | minutes |
-
-All runs within each experiment are independent and can be parallelised across machines by running subsets of the parameter grid.
+The exact passing count lives in `PROGRESS.md`; the slow half is Flower/Ray simulation.
 
 ## References
 
-- Gromov, A. (2023). "Grokking modular arithmetic." arXiv:2301.02679
+- Gromov, A. (2023). *Grokking modular arithmetic.* arXiv:2301.02679
+- Nanda et al. (2023). *Progress measures for grokking via mechanistic interpretability.*
+- Liu et al. (2023). *Omnigrok: grokking beyond algorithmic data.*
+- Stander et al. (2023). *Grokking group multiplication with cosets.*

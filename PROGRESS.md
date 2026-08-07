@@ -22,7 +22,7 @@ v1's exp0–exp7 chain on them.
 |---|---|
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`; `main` has nothing this lacks) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
-| Tests | **534/534 pass** (`venv/bin/python -m pytest tests/ -q`, ~9 min incl. FL integration) |
+| Tests | **537/537 pass** (`venv/bin/python -m pytest tests/ -q`, ~9 min incl. FL integration) |
 | Runs banked | **842** in `results/data/runs_v2.csv` (572 grokked, 270 censored) + 870 v1 runs in `runs.csv`. 237 machine-hours |
 | Setups | A quad-MLP/mod-97 · A′ quad-MLP/mod-97/AdamW (**measured**, §13.3) · B transformer/mod-113 · C transformer/S₅ · D quad-MLP/S₅ · E MLP/MNIST-1k. **D′ dropped** — the gate that would have required it opened (§13.7) |
 | FL algorithms | FedAvg, FedProx, FedAvgM, FedYogi, FedAdam (native) + SCAFFOLD (adapted, **raises under AdamW by design**) |
@@ -504,7 +504,8 @@ spending T2/T3. Check with
   (zero custom code); add to `_build_strategy` if the robustness axis is wanted.
 - **The `metrics/fourier.py` split** (fourier/spectral/basic/nonabelian) — cosmetic.
 - **The deferred DP / compression / Byzantine follow-up paper** — out of scope for v2 (see plan).
-- **README is v1-era** and documents a directory layout that no longer exists; `paper/` is empty.
+- **`paper/` is empty.** (The README was v1-era and has been rewritten against the
+  actual v2 layout.)
 
 **Done, previously listed here as deferred:** wiring mechanistic metrics into per-epoch
 history. `metrics/probes.py::mechanistic_probe(cfg)` dispatches per (dataset, model) —
