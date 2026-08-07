@@ -46,7 +46,7 @@ v1's exp0–exp7 chain on them.
 |---|---|
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`; `main` has nothing this lacks) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
-| Tests | **537/537 pass** (`venv/bin/python -m pytest tests/ -q`, ~9 min incl. FL integration) |
+| Tests | **542/542 pass** (`venv/bin/python -m pytest tests/ -q`, ~9 min incl. FL integration) |
 | Runs banked | **842** in `results/data/runs_v2.csv` (572 grokked, 270 censored) + 870 v1 runs in `runs.csv`. 237 machine-hours |
 | Setups | A quad-MLP/mod-97 · A′ quad-MLP/mod-97/AdamW (**measured**, §13.3) · B transformer/mod-113 · C transformer/S₅ · D quad-MLP/S₅ · E MLP/MNIST-1k. **D′ dropped** — the gate that would have required it opened (§13.7) |
 | FL algorithms | FedAvg, FedProx, FedAvgM, FedYogi, FedAdam (native) + SCAFFOLD (adapted, **raises under AdamW by design**) |
