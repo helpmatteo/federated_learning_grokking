@@ -1,12 +1,13 @@
 # Results — federated grokking
 
-Everything measured, as of 2026-07-31. Branch `v2-multisetup`.
+Everything measured, as of 2026-08-07. Branch `v2-multisetup`.
 
 Companion documents: `PROGRESS.md` (what is built and what remains),
-`~/.claude/plans/plan-all-that-needs-nested-seal.md` (the campaign design).
+`~/.claude/plans/plan-all-that-needs-valiant-hamster.md` (the current plan),
+`~/.claude/plans/plan-all-that-needs-nested-seal.md` (the boundary campaign, closed).
 
 **Data behind every number here:**
-`results/data/runs_v2.csv` (720 v2 runs) and `results/data/runs.csv` (870 v1 runs,
+`results/data/runs_v2.csv` (814 v2 runs) and `results/data/runs.csv` (870 v1 runs,
 recovered from logs). Both are committed. Regenerate any table with:
 
 ```bash
@@ -41,9 +42,168 @@ partially censored.
    failure** — those models never memorise (§12). Every affected setup uses
    AdamW; the anchor, under plain GD, is fine at K=97.
 
+8. **The optimiser is worth ~45× on the anchor's own task** — the identical
+   architecture on the identical data groks in 500 steps under AdamW where it
+   takes 25,300 under Gromov's GD, at every α they share (§13.3).
+9. **Two of the three inherited hyperparameters survived being checked** — C's
+   and D's weight decay were adopted from Nanda's mod-113 transformer without
+   justification, and measuring them for their own setups returns the same value
+   (§13.2). The third, B's, is still being measured.
+
 Open: whether K=97 IID *fails* or is merely *slow* — both successes landed within
 5% of the budget ceiling, so that cell is not yet resolved. And whether the K≈30
 collapse is an inherited-hyperparameter defect or a real breakdown mechanism.
+
+---
+
+## 13. Phase 1 — the setups, measured instead of inherited
+
+Four sweeps, 96 runs, run to answer questions whose answers every downstream
+manifest depends on. Each manifest's docstring in `scripts/build_manifests.py`
+carries the decision rule it was written against; the verdicts below are those
+rules applied.
+
+### 13.1 The quadratic MLP does grok S₅ under plain GD (`p1_d_gd_probe`, 9/9)
+
+Setup D is Gromov's architecture running Nanda's optimiser — inherited from the
+S₅ side rather than the architecture side, and never checked: of 370 banked S₅
+runs, **zero** used GD. That makes A vs D, which is meant to isolate the *task*,
+move task and optimiser and loss together.
+
+α=0.5, wd=0, MSE, 50,000 epochs, 3 seeds:
+
+| lr | grokked | KM median T_grok |
+|---|---|---|
+| 5 | 0/3 | censored |
+| 10 | 0/3 | censored |
+| **50** | **3/3** | **22,600 [22,500, 23,200]** |
+
+So the confound is closable — Gromov's exact configuration transfers to S₅ at
+Gromov's exact learning rate. It costs ~3× the time AdamW needs at the same α
+(22,600 against 7,200), which is the price of the clean contrast.
+
+**Acted on by adding D′, not by moving D.** Run ids are content hashes, so
+editing `SETUP_D` in place would orphan ~250 banked D runs — the Gate A ladder,
+the 0.025-resolution tier-X ladder, and every D federated cell. This is the same
+reasoning that produced A′ rather than a change to A. D′ is **gated**: its real
+value is that wd=0 gives it no decay clock, which should make it immune to the
+K≈30 collapse the way setup A is, and that only matters if §12 turns out to be a
+genuine breakdown rather than a hyperparameter defect.
+
+### 13.2 C's and D's decay: neither moves (`p1_cd_decay_band`, 30/30)
+
+Both inherited wd=1.0 from B, which has a reason to carry it (B *is* the Nanda
+replication) where they do not. Same log-spaced lr·λ ladder as `t0_wd_grid` and
+`t0_mnist_wd_band`, 3 seeds, 100,000 epochs.
+
+**D** (quad-MLP, S₅, α=0.30) — one band works and it is the inherited one:
+
+| lr·λ | 1e-5 | 3e-5 | 1e-4 | 3e-4 | **1e-3** |
+|---|---|---|---|---|---|
+| grokked | 0/3 | 0/3 | 0/3 | 0/3 | **3/3** |
+| T_grok | — | — | — | — | **21,300** |
+
+**C** (transformer, S₅, α=0.50, width 256) — three bands work, and the tie-break
+decides. Both statistics pick wd=1.0, by a wider margin on the sampling-robust one:
+
+| lr·λ | grokked | KM median T_grok | median first crossing | dips after crossing |
+|---|---|---|---|---|
+| 1e-5 | 0/3 | censored | — | — |
+| 3e-5 | 1/3 | censored | 97,100 | 0 |
+| 1e-4 | 3/3 | 83,800 | 70,200 | 0, 1, 0 |
+| 3e-4 | 3/3 | 96,750 | 42,650 | **13, 28, 2** |
+| **1e-3** | **3/3** | **59,350** | **15,150** | 2, 1, 1 |
+
+**Consequence: the re-ladder that Phase 2 was budgeted for does not happen.** The
+plan reserved ~60 runs to re-measure C's and D's α ladders at a moved decay,
+because the ladder sets the working point and every downstream budget. Neither
+moved, so both Gate A ladders stand as written. This is Phase 1's largest saving.
+
+**But C is unstable, and that is a new setup property.** Read the last two columns
+together: higher decay reaches the bar much sooner and then oscillates, lower
+decay is slow and steady. At wd=0.3 one seed drops below the bar 28 separate
+times after first crossing it. C stays at wd=1.0 with `t_first_cross` as its
+primary statistic — see §13.4 for why `t_grok` alone cannot be trusted here.
+
+### 13.3 A′ cliffs *below* A, and groks ~45× faster (`p1_aprime_alpha`, 45/45)
+
+A′ is A's architecture and task under AdamW (MSE, not CE, so A vs A′ moves one
+variable). 5 seeds:
+
+| α | 0.15 | 0.175 | **0.2** | 0.25 | 0.3 | 0.4 | 0.5 |
+|---|---|---|---|---|---|---|---|
+| **A′** (AdamW) | 0/5 | 0/5 | **5/5 · 5,500** | 5/5 · 500 | 5/5 · 300 | 5/5 · 200 | 5/5 · 170 |
+| **A** (GD) | 0/5 | — | **0/5** | 25,300 | 13,100 | 8,800 | 7,600 |
+| ratio | | | A′ only | **51×** | 44× | 44× | 45× |
+
+Two things, both new:
+
+**The optimiser is worth a factor of ~45, flat across α.** Same architecture,
+same data, same loss, same seeds — only GD → AdamW. The ratio is remarkably
+constant, which says AdamW is rescaling the clock rather than changing the
+transition.
+
+**The cliff moves down.** A′ groks 5/5 at α=0.20 where A manages 0/5. So the data
+threshold is *not* purely a property of the task family, as §11 suggested from
+four setups that happened to agree — the optimiser shifts it too.
+
+**A′'s only usable federated working point is α=0.20.** Above it there is no
+delay left to disrupt: 500 steps at α=0.25 means E=5 federation gets 100 rounds
+to act. This is the trap setup E already fell into, where the FL probe ran MNIST
+at a working point with no delay at all and its censoring meant nothing. Only the
+α=0.20 cell has a real gap (5,500, with a wide seed spread of 3,000–8,500).
+
+### 13.4 `t_grok` measures the logging rate on an unstable setup
+
+Found while reading §13.2. `compute_t_grok` requires the bar to hold for the rest
+of the run — correct for a phase transition, but on a non-monotone curve every
+extra sample point is another chance to observe a dip and push the answer later.
+
+Setup C, one seed, **one trajectory**: `t_grok` = 15,200 at `log_every=200` and
+59,350 at `log_every=50`. A 4× difference from the instrument alone, because the
+coarse run never sampled a collapse to 20.2% at epoch 59,300. C's decay band was
+about to be chosen by tie-breaking on exactly that number.
+
+Two outcomes are now recorded per run alongside it, at the run's own
+`grok_threshold`, and backfilled across all 814 banked rows:
+
+- **`t_first_cross`** — first time the bar is reached, sustained or not. Not
+  sampling-invariant either, but stable to within one logging interval rather
+  than to within the instability's duration.
+- **`post_grok_dips`** — logged points below the bar after that crossing. Zero
+  means the transition held. The magnitude scales with `log_every`, so only the
+  zero/non-zero distinction transfers between runs.
+
+Together they separate *when did it generalise* from *when did it stop falling
+over*, which on an unstable setup are different questions. This is the fifth
+measurement artifact this project has caught reading as a scientific result.
+
+### 13.5 The K≈30 collapse — in progress (`p1_k_collapse_wd`, 16/18)
+
+Weight decay does move the failure, decisively, but not in the direction the
+one-seed lead suggested. At 3 seeds, α=0.30, E=5, 10,000 steps:
+
+| K | wd | peak train | final test | t_memo | grokked |
+|---|---|---|---|---|---|
+| 20 | **0.1** | **100.0** | **0.2–0.5** | 3,500–3,900 | 0/3 |
+| 20 | 1.0 | 44.9 / 100.0 | 7.3 / 99.8 | inf / 7,300 | 1/2 |
+| 30 | **0.1** | **100.0** | **0.2–0.4** | 5,600–6,600 | 0/3 |
+| 30 | 1.0 | 93.1 / 51.9 | 82.2 / 24.2 | inf | 0/2 |
+
+**wd=0.1 restores training completely and generalisation not at all.** Every
+wd=0.1 cell memorises — 100% train, 3/3, by epoch ~3,600 — and then sits at
+0.2–0.5% test, which against chance (1/113 ≈ 0.88%) is not slow generalisation
+but none. That is the two-timescale split §12.1 predicted would become visible
+once `t_memo` was recorded.
+
+**This is not yet interpretable, for two reasons, and both are being fixed.**
+The K=50 cells — the ones the decision rule is actually evaluated on — are the
+two runs missing from the sweep. And every centralized B run in the corpus is
+wd=1.0, so there is no reference for what wd=0.1 does with *one* client;
+`p1_b_decay_band` measures it. Until that lands, "memorised but never
+generalised" cannot be attributed to federation rather than to wd=0.1 simply
+having a longer delay than the 10,000-step budget allowed — which is precisely
+the mistake that cost v1 its headline claim.
 
 ---
 
@@ -418,21 +578,36 @@ cut wall-clock from ~7.2 h to ~5.9 h for identical work.
 | | runs | grokked | censored |
 |---|---|---|---|
 | **v1** (`results/data/runs.csv`, log-recovered) | 870 | 554 | 316 |
-| **v2** (`results/data/runs_v2.csv`) | 158 | 133 | 25 |
+| **v2** (`results/data/runs_v2.csv`) | 814 | 558 | 256 |
 
 v1 by experiment: exp2 333 · exp5 153 · exp3a 100 · exp7 74 · exp4a 72 · exp4b 72 ·
 exp4 36 · exp3b 30.
 
-v2 by campaign:
+v2 by campaign — regenerate with
+`summarize_runs.py results/data/runs_v2.csv --group group`:
 
 | campaign | runs | status |
 |---|---|---|
-| `t0_wd_grid` | 45 | done — §6.2 |
-| `t0_poly_pilot` | 6 | done — §7 |
-| `t0_mnist_wd_band` | 15 | done — §6.3 |
-| `t1_probe` | 18 | done (6 E=250 cells cancelled for cost) — §3 |
-| `t2_k_breakdown` | 54 | done — §4 |
-| `t2_boundary` | 20 | done — §5 |
+| `central_anchor` | 131 | done — Gate A ladders, §11 |
+| `d_alpha_high` / `d_alpha_fine` / `d_alpha_cliff` | 150 | done — tier X, setup D's α ladder at 0.025 resolution |
+| `d_internals` | 85 | done — tier X, with checkpoints + the exact circuit instruments. **Unanalysed** |
+| `k_fixed_total` | 54 | done — §4 |
+| `fl_probe` | 48 | done — under-budgeted by construction; its censoring is not a federated effect |
+| `aprime_alpha` | 45 | done — §13.3 |
+| `wd_grid` | 45 | done — §6.2 |
+| `mnist_fl` | 36 | done — E groks iid at K=10/20; `label_block` 0/12 |
+| `mnist_working_point` | 33 | done — delay vs shardability, §11 |
+| `cd_decay_band` | 30 | done — §13.2 |
+| `c_capacity` | 24 | done — C's failure was censoring, not capacity, §11 |
+| `boundary` | 20 | done — §5 |
+| `probe` | 18 | done (6 E=250 cells cancelled for cost) — §3 |
+| `mnist_wd_band` | 15 | done — §6.3 |
+| `d_wd_ladder` | 12 | **partial** (12/45) — tier X, the dip's decay hypothesis |
+| `k_collapse_wd` | 10 | **in flight** — §13.5 |
+| `d_gd_probe` | 9 | done — §13.1 |
+| `probe_rerun` | 9 | done — B K=10 operand and D K=50 iid recover at 5× budget |
+| `poly_pilot` | 6 | done — §7 |
+| plus 8 smaller diagnosis groups | 34 | `adam_restart`, `c_alpha`, `k50_hparam`, `k50_ladder`, `grok_confirm_fl` |
 
 **v2 compute to date: 104.4 machine-hours.** Checkpoints on disk: 3.9 GB
 (gitignored).

@@ -1,21 +1,29 @@
 # v2-multisetup — progress and resume notes
 
-Working branch for the multi-setup rewrite. Full plan lives at
-`~/.claude/plans/plan-all-that-needs-nested-seal.md`.
+Working branch for the multi-setup rewrite. Current plan:
+`~/.claude/plans/plan-all-that-needs-valiant-hamster.md` (the setup/check phase).
+Closed plans: `plan-all-that-needs-nested-seal.md` (boundary campaign),
+`gate-a-closeout.md` (Gate A).
 
-**Current as of 2026-07-31.** v2 code complete across all plan phases (0–5); Gate A
-run and closed out. The work in front is porting v1's exp0–exp7 chain onto the new
-setups, which is gated on **Phase 1** below.
+**Current as of 2026-08-07.** v2 code complete across all plan phases (0–5); Gate A
+closed; **Phase 1 run, and its four decision rules answered** (RESULTS.md §13). The
+work in front is porting v1's exp0–exp7 chain onto the new setups. One thing still
+gates it: the K ceiling per setup, which is what `p1_k_collapse_wd` +
+`p1_b_decay_band` are settling.
+
+> **Read the data, not just this file.** Sweeps get banked faster than these notes
+> get rewritten. Ground truth is `results/data/runs_v2.csv` and
+> `results/data/runs/*.json`; the "what is missing" recipe is in the Resume section.
 
 ## State
 
 | | |
 |---|---|
-| Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`) |
+| Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`; `main` has nothing this lacks) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
-| Tests | **522/522 pass** (`venv/bin/python -m pytest tests/ -q`, ~10.5 min incl. FL integration) |
-| Runs banked | **720** in `results/data/runs_v2.csv` (511 grokked, 209 censored) + 870 v1 runs in `runs.csv` |
-| Setups | A quad-MLP/mod-97 · A′ quad-MLP/mod-97/AdamW (new, unrun) · B transformer/mod-113 · C transformer/S₅ · D quad-MLP/S₅ · E MLP/MNIST-1k |
+| Tests | **~530 pass** (`venv/bin/python -m pytest tests/ -q`, ~10.5 min incl. FL integration) |
+| Runs banked | **814** in `results/data/runs_v2.csv` (558 grokked, 256 censored) + 870 v1 runs in `runs.csv`. 204 machine-hours |
+| Setups | A quad-MLP/mod-97 · A′ quad-MLP/mod-97/AdamW (**measured**, §13.3) · B transformer/mod-113 · C transformer/S₅ · D quad-MLP/S₅ · E MLP/MNIST-1k · D′ (**gated**, §13.1) |
 | FL algorithms | FedAvg, FedProx, FedAvgM, FedYogi, FedAdam (native) + SCAFFOLD (adapted, **raises under AdamW by design**) |
 | Statistics | censored survival (KM median + fraction-grokked + bootstrap CI); `scripts/summarize_runs.py` |
 | deps | torch 2.10 + torchvision 0.25 (pinned pair); flwr 1.27 |
@@ -24,7 +32,7 @@ setups, which is gated on **Phase 1** below.
 
 ## THE BLOCKER: FL collapses at K≈30 on every AdamW setup
 
-This is what stands between here and running exp2/exp3/exp4/exp5 on the new
+Still the one thing standing between here and exp2/exp3/exp4/exp5 on the new
 setups, because K is exp2's primary axis (v1 swept K up to 97). Setup B, one seed,
 default hyperparameters — **peak** train accuracy:
 
@@ -38,9 +46,27 @@ memorises then collapses, it never learns). Setup A under plain GD at wd=0 groks
 5/5 at K=50 and is the only setup with no decay clock.
 
 **Ruled out:** weight-norm collapse, client drift, local step size (lower lr is
-*worse* — 4.6% train at lr=1e-4). **The one knob that moves it is weight decay**:
-at K=50, wd=1.0 → ~3.6% train, wd=0.1 → 70.2%. One seed, so a lead not a result.
-`manifests/p1_k_collapse_wd.jsonl` settles it.
+*worse* — 4.6% train at lr=1e-4).
+
+**What Phase 1 added (RESULTS.md §13.5).** At 3 seeds, wd=0.1 restores training
+*completely* at K=20 and K=30 — 100% train, 3/3, memorising by epoch ~3,600 — and
+restores generalisation *not at all*: those cells sit at 0.2–0.5% test against a
+0.88% chance level. So the collapse splits into two questions and only the first
+is answered.
+
+**Two gaps stop this being interpretable, and both are closing right now:**
+
+1. The **K=50** cells are the ones the decision rule is actually evaluated on, and
+   they were the two runs missing from the sweep.
+2. There is **no centralized reference for wd=0.1 on setup B** — `p1_cd_decay_band`
+   measured C and D and skipped B, and every banked centralized B run is wd=1.0.
+   Lower decay means a longer delay in this regime (`t0_mnist_wd_band` is the
+   precedent: lr·λ=1e-5 never generalised inside 20k epochs), so the federated
+   arm's 10,000 steps may simply be under-budget. `p1_b_decay_band` measures it.
+
+Until (2) lands, "memorised but never generalised" cannot be attributed to
+federation. That distinction is the difference between a headline mechanism and
+the fifth budget-manufactured boundary in this project.
 
 Careful with the number: lr·λ=1e-3 is *also* where the anchor's WD sweep found
 decay outrunning learning, but that sweep was **GD** (coupled decay) and
@@ -75,22 +101,26 @@ Provenance of the AdamW choices, since only two are inherited:
 - **D** — **inherited from nothing.** Gromov's architecture running Nanda's
   optimiser. Never checked: of 370 banked S₅ runs, **zero** use GD.
 
-## Phase 1 — the pilots that define the setups (96 runs, ~12 slot-h, ~1.5 h on 8 slots)
+## Phase 1 — RUN. The pilots that define the setups.
 
-Must finish before any FL manifest can be written, because manifests need a
-working α and a budget. Each manifest's docstring carries its decision rule.
+All four executed; full readings and tables in **RESULTS.md §13**. Each manifest's
+docstring carries the decision rule it was written against — read it before the
+results, not after.
 
-| manifest | runs | question |
+| manifest | runs | verdict |
 |---|---|---|
-| `p1_d_gd_probe` | 9 | Does the quad-MLP grok S₅ under GD+MSE? Decides whether D's config changes at all |
-| `p1_cd_decay_band` | 30 | C's and D's decay, measured instead of inherited |
-| `p1_aprime_alpha` | 45 | A′'s cliff and working point |
-| `p1_k_collapse_wd` | 18 (12 new) | Does wd=0.1 reopen the K axis? |
+| `p1_d_gd_probe` | 9/9 | **The quad-MLP does grok S₅ under GD+MSE** — lr=50 → 3/3 at 22,600 (α=0.5); lr∈{5,10} → 0/3. Acted on by **adding D′**, gated on the K-collapse outcome — never by moving D, which would orphan ~250 banked runs |
+| `p1_cd_decay_band` | 30/30 | **Neither C's nor D's decay moves.** D groks only at wd=1.0 (0/3 everywhere else); C ties 3/3 at wd∈{0.1,0.3,1.0} and wd=1.0 wins on both statistics. New: **C is unstable** — it dips back below the bar after crossing it, up to 28 times at wd=0.3 |
+| `p1_aprime_alpha` | 45/45 | A′'s cliff sits between α=0.175 and 0.20, **below A's**, and it groks **~45× faster at every shared α**. Its only usable federated working point is **α=0.20** — above that there is no delay left for federation to disrupt |
+| `p1_k_collapse_wd` | 16/18 | **In flight.** wd=0.1 restores training at K=20/30 and generalisation at neither; the K=50 cells and B's centralized reference are what settle it |
 
-**Phase 2 is the hidden cost.** If the decay band moves for C or D, their Gate A
-α ladders no longer describe the setup — the ladder is what sets the working point
-and every downstream budget, so it must be re-measured at the chosen decay
-(~60 runs). C additionally needs ≥100k epochs; its Gate A verdict was censoring.
+**Phase 2's hidden cost did not materialise.** The plan reserved ~60 runs to
+re-measure C's and D's α ladders in case their decay moved. Neither moved, so both
+Gate A ladders stand as written. That is Phase 1's largest saving.
+
+**One gap Phase 1 missed, now closing:** `p1_cd_decay_band` measured C and D but
+not **B** — the setup carrying the K-collapse diagnosis. `p1_b_decay_band` (15
+runs) supplies the missing centralized reference.
 
 ## How to run a sweep now
 
@@ -422,12 +452,16 @@ the launcher's stdout — use `-u`, or just watch `ls results/data/runs/*.json |
 | `s5_mnist_fl` | 36 | **done** — E groks iid at K=10/20 (batch=100); `label_block` 0/12 |
 | `s5_probe_rerun` | 9 | **done** — B K=10 operand and D K=50 iid recover at 5× budget; **D K=10 operand does not** |
 | `s5_k50_diagnosis` | 9 | **done** — lr does not rescue; wd does (RESULTS §12) |
-| **`p1_d_gd_probe`** | **9** | **PHASE 1 — ready to launch** |
-| **`p1_cd_decay_band`** | **30** | **PHASE 1 — ready to launch** |
-| **`p1_aprime_alpha`** | **45** | **PHASE 1 — ready to launch** |
-| **`p1_k_collapse_wd`** | **18** | **PHASE 1 — ready to launch** (12 new; 6 dedup to banked cells) |
-| `t1_replication` | 150 | pending — **blocked on Phase 1**; its setup definitions predate Gate A |
-| `t2_phase_diagram` | 415 | pending — **re-scope first**: the α=0.3 plane it grids is now known uniformly safe |
+| `p1_d_gd_probe` | 9 | **done** — RESULTS §13.1 |
+| `p1_cd_decay_band` | 30 | **done** — RESULTS §13.2 |
+| `p1_aprime_alpha` | 45 | **done** — RESULTS §13.3 |
+| **`p1_k_collapse_wd`** | **18** | **16/18 — in flight.** The 2 missing are K=50, wd=0.1, the cell the decision rule names |
+| **`p1_b_decay_band`** | **15** | **in flight** — the centralized reference the K-collapse arm is missing |
+| `x_d_alpha_{cliff,fine,high}` · `x_d_internals` | 235 | **done** — tier X, setup D's α ladder at 0.025 resolution + the internals run. `d_internals` is **unanalysed** |
+| `x_d_wd_ladder` | 45 | 12/45 — tier X, tests whether the dip is a decay transient |
+| `x_d_lr_control` | 18 | 0/18 — tier X, the step-size control for the above |
+| `t1_replication` | 150 | **rewrite, do not launch** — 24/150 banked, but its setup definitions predate Gate A (wrong working points, budgets not keyed to measured T_grok) |
+| `t2_phase_diagram` | 415 | **re-scope first** — 108/415 banked; the α=0.3 plane it grids is now known uniformly safe, and `k_fixed_per_client` is geometrically impossible at the boundary |
 | `t3_server_lr_calibration` | 42 | pending (run before `t3_algorithm_comparison`) |
 | `t3_algorithm_comparison` | 90 | pending — fix each method at its calibrated server LR first. Note **SCAFFOLD is unavailable on B/C/D/E** (raises under AdamW by design), so drift correction is FedProx-only there |
 
@@ -442,20 +476,18 @@ spending T2/T3. Check with
 
 ## Deferred follow-ups (lower priority, not blocking)
 
-- **Wire mechanistic metrics into per-epoch history** — `coset_attribution` (S5) and embedding-
-  space measures (transformer W_E restricted/excluded loss). Fold the `metrics/fourier.py` split
-  (fourier/spectral/basic/nonabelian) in here.
 - **Native robust aggregators** — FedMedian / FedTrimmedAvg / Krum / Bulyan are all in stock Flower
   (zero custom code); add to `_build_strategy` if the robustness axis is wanted.
+- **The `metrics/fourier.py` split** (fourier/spectral/basic/nonabelian) — cosmetic.
 - **The deferred DP / compression / Byzantine follow-up paper** — out of scope for v2 (see plan).
+- **README is v1-era** and documents a directory layout that no longer exists; `paper/` is empty.
 
-## Deferred follow-ups (lower priority than Phase 4)
-
-- **Wire mechanistic metrics into the training-loop history** — `coset_attribution` for S5 and
-  embedding-space measures (Nanda restricted/excluded loss over the transformer's W_E) for the
-  transformer. Both currently compute fine as standalone functions but aren't logged per-epoch.
-  Fold the deferred `metrics/fourier.py` split (fourier/spectral/basic/nonabelian) in here.
-- **Locate the MNIST grok band** — run `manifests/t0_mnist_wd_band.jsonl` (queued).
+**Done, previously listed here as deferred:** wiring mechanistic metrics into per-epoch
+history. `metrics/probes.py::mechanistic_probe(cfg)` dispatches per (dataset, model) —
+coset attribution + the exact quadratic-circuit and irrep decompositions on S₅, `embed_ipr`
+on the modular transformer, `ipr` on the anchor — and **both** training loops call it inside
+the eval block. `client_signature(model, cfg)` likewise generalises per-client checkpointing
+to every architecture (`W1_operand` / `W_E` / `layer0`).
 
 **Equivalence harness** (reuse for every training-loop change): `traj.py` in the scratchpad
 runs one config and dumps history JSON; diff against `ref_run1.json` (archived c7c997f
@@ -503,34 +535,53 @@ if a big-K sweep is slow, lower `--per-gpu` or make `num_cpus` fractional in
 ```bash
 cd /home/jse44/modules/ToDL/federated_learning_grokking
 git checkout v2-multisetup
-venv/bin/python -m pytest tests/ -q          # expect 522 passed, ~10.5 min
+venv/bin/python -m pytest tests/ -q          # ~530 passed, ~10.5 min
 nvidia-smi                                   # SHARED box -- check what is free first
 ```
 
-Then **launch Phase 1** (96 runs, ~12 slot-h, ~1.5 h on 8 slots). Independent of
-each other, so they can go in any order or concurrently:
+**First, find the real state.** These notes lag the banked data; the CSV and the
+result JSONs do not:
 
 ```bash
-for m in p1_d_gd_probe p1_cd_decay_band p1_aprime_alpha p1_k_collapse_wd; do
-  venv/bin/python scripts/validate_manifest.py manifests/$m.jsonl
-done
-venv/bin/python -u scripts/launch_sweep.py manifests/p1_k_collapse_wd.jsonl \
-    --gpus <free> --per-gpu 2          # highest value: decides if the K axis exists
-venv/bin/python scripts/collect_runs.py --backfill-legacy
-venv/bin/python scripts/summarize_runs.py results/data/runs_v2.csv --group group,setup,num_clients,weight_decay
+venv/bin/python scripts/collect_runs.py                  # per-run JSONs -> runs_v2.csv
+venv/bin/python scripts/summarize_runs.py results/data/runs_v2.csv --group group,setup,alpha
+# what each manifest still owes -- run ids are content hashes, so this is exact
+venv/bin/python - <<'EOF'
+import sys, os, glob; sys.path.insert(0, 'src')
+from fedgrok.manifest import load_manifest, run_id
+banked = {os.path.basename(p)[:-5] for p in glob.glob('results/data/runs/*.json')}
+for m in sorted(glob.glob('manifests/*.jsonl')):
+    ids = [run_id(s) for s in load_manifest(m)]
+    print(f"{os.path.basename(m):<32} {len(ids):>4} specs, "
+          f"{sum(i not in banked for i in ids):>4} missing")
+EOF
 ```
 
-Each Phase 1 manifest's docstring in `scripts/build_manifests.py` states its
-decision rule — read it before reading the results, not after.
+**Then finish the setup/check phase** (plan:
+`~/.claude/plans/plan-all-that-needs-valiant-hamster.md`). In order, because each
+gates the next:
 
-**Still to write before exp2 can run**, beyond Phase 1:
+1. `p1_k_collapse_wd` — the last 2 runs (K=50, wd=0.1).
+2. `p1_b_decay_band` — B's centralized decay reference, 15 runs.
+3. Re-run the federated wd arm at **5× the requirement (2) measures**, if (2) shows
+   the 10,000-step budget was short.
+4. **The gate:** if the K axis reopens, C and D work at high K and D′ is skipped.
+   If it does not, that is a federated breakdown with memorisation intact — the
+   mechanism this project has been looking for — and D′ becomes necessary as the
+   only S₅ setup runnable on the K axis.
+
+**Still to write before exp2 can run:**
 
 - Per-setup FL manifests, with budgets as a multiple of each setup's *measured*
-  centralized T_grok (Phase 2 re-measures these for C and D if their decay moves).
+  centralized T_grok at its *own* working point (see RESULTS §13 and §11 for the
+  table). Never a shared constant — that is the mistake that cost v1 its headline
+  claim, the E=1 probe cells, the first FL probe and setup C's Gate A verdict.
 - `checkpoint_every` + `checkpoint_client_weights` on the cells feeding the
   circuit analysis — **no B/C/D/E run has per-client weights**, so exp7 has no
-  data on any new setup. The 20 anchor runs that do are now findable by query
-  (`checkpoint_client_weights == True`).
+  data on any new setup. These are config fields, so they change run ids: setting
+  them after a sweep re-runs it. The 20 anchor runs that do have them are
+  findable by query (`checkpoint_client_weights == True`).
 - The three-arm wiring for exp2: `reduced_arm()` builds the floor condition
-  (dataset-aware — α/K for grid datasets, `n_train`/K for MNIST), but no manifest
-  calls it yet.
+  (dataset-aware — α/K for grid datasets, `n_train`/K for MNIST) and is tested,
+  but **no manifest calls it yet**.
+- Per-setup capacity (exp0) checks: done for C only.
