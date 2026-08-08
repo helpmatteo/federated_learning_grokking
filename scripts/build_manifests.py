@@ -1093,6 +1093,107 @@ def p1_cd_decay_band():
     return specs
 
 
+def t2_aggregation():
+    """PART 1: exp2 -- does aggregation compensate for fragmenting the data?
+
+    v1's exp2 ran three conditions per (alpha, K) and this is the same three:
+
+        ceiling  centralized on the full training set
+        floor    one model on ONE client's shard  (reduced_arm)
+        FL       K clients, FedAvg, iid, full participation
+
+    No v2 manifest has ever had the floor. reduced_arm has been written, tested
+    and plumbed through TAG_KEYS/PREFERRED_COLUMNS for months with nothing
+    calling it, so exp2 has been a two-arm subset.
+
+    WHAT THE FLOOR IS AND IS NOT FOR. v1's headline was "FL groks in 23 of 30
+    cells where the floor groks in 1". Most of that gap is just FL seeing K times
+    more data than one shard -- it is not evidence about aggregation. So the
+    headline comparison here is FL against the CEILING on the compute-matched
+    step axis. The floor answers the narrower question a federated result is
+    practically answering: could a client have done this alone? It is also the
+    cheapest arm by a wide margin (centralized, 1/K of the data).
+
+    DROPPED FROM v1's GRID: the alpha sweep. exp1 covers alpha centrally,
+    t2_k_breakdown showed the alpha=0.3 plane uniformly safe, and K's cost is now
+    known to be set by t_memo(K) + delay rather than by proximity to the cliff.
+    Each setup sits at ITS OWN working point instead.
+
+    BUDGETS ARE MEASURED, NOT ASSUMED. Every one exceeds the slowest banked
+    first-crossing for that setup at the largest K it runs (RESULTS 14.3):
+
+        setup  working pt        slowest measured   budget    headroom
+        A      alpha 0.30            15,200          50,000     3.3x
+        A'     alpha 0.20             5,500 (cent)  100,000    18x
+        B      alpha 0.30, wd 1.0     7,500 (K=20)  100,000    13x
+        C      alpha 0.40, w 256     56,900 (K=50)  200,000     3.5x
+        D      alpha 0.30            95,600 (K=20)  250,000     2.6x
+        E      n_train 2000          11,900 (K=20)   40,000     3.4x
+
+    D sets the ceiling on cost: its K=20 cell used 95,600 of a 100,000 budget in
+    the ladder -- 1.0x headroom, i.e. right at the edge -- and K=50 never
+    memorised at all. 250,000 is the honest number for it.
+
+    B RUNS AT ITS PUBLISHED wd=1.0, not the wd=0.1 that reopens its K axis. B's
+    value is that it IS the Nanda replication, and 13.5 confirmed wd=1.0 is also
+    its fastest band centrally. Its K=50 cell is expected to fail to memorise --
+    that is the decay clock (14.3), it is understood, and it is a property of the
+    setup rather than a defect in this manifest. The aggregation question at high
+    K for B is a wd=0.1 follow-up, deliberately not folded in here.
+
+    E stops at K=20: at n_train=2000 the shards are 400/200/100 at K=5/10/20
+    against batch=100, so K=50 has no viable local epoch.
+
+    > DECISION RULE. Per setup, compare FL against the CEILING on total_steps. If
+    > FL tracks the ceiling as K grows, aggregation compensates for fragmentation
+    > and the delay law is the whole story. If FL degrades toward the FLOOR, the
+    > averaging is not recovering what fragmentation costs, and the K at which
+    > that starts is the number the paper reports. The floor is the reference for
+    > "could one client have done this alone", not for the aggregation claim.
+    """
+    # (label, base, working-point overrides, num_rounds, ceiling epochs, Ks)
+    BLOCKS = [
+        ("A",  {**{k: v for k, v in SETUP_A.items()
+                   if k not in ("mode", "num_rounds", "eval_every")}},
+         {"alpha": 0.30}, 10_000, 50_000, [5, 10, 20, 50]),
+        ("A'", SETUP_A_PRIME, {"alpha": 0.20}, 20_000, 100_000, [5, 10, 20, 50]),
+        ("B",  SETUP_B, {"alpha": 0.30}, 20_000, 100_000, [5, 10, 20, 50]),
+        ("C",  SETUP_C, {"alpha": 0.40, "hidden_width": 256},
+         40_000, 200_000, [5, 10, 20, 50]),
+        ("D",  SETUP_D, {"alpha": 0.30}, 50_000, 250_000, [5, 10, 20, 50]),
+        ("E",  {k: v for k, v in SETUP_E.items() if k != "batch_size"},
+         {"n_train": 2000, "n_test": 5000, "batch_size": 100},
+         8_000, 40_000, [5, 10, 20]),
+    ]
+    specs = []
+    for label, base, wp, rounds, cent_epochs, Ks in BLOCKS:
+        tags = {"tier": "T2", "group": "aggregation", "experiment": "exp2",
+                "setup": label}
+        fl = expand_grid(
+            {"mode": "federated", **base, **wp, "local_epochs": 5,
+             "partition": "iid", "strategy": "fedavg", "fraction_train": 1.0,
+             "num_rounds": rounds, "eval_every": FL_EVAL_EVERY,
+             "checkpoint_every": max(1, rounds // 10),
+             "checkpoint_client_weights": True},
+            {"num_clients": Ks, "seed": SEEDS3},
+            tags={**tags, "arm": "fl"},
+        )
+        specs += fl
+        # (b) the floor -- one model on one client's shard, 2x the FL arm's steps
+        specs += [{**r, **tags, "arm": r["arm"], "reduced_from_k": r["reduced_from_k"]}
+                  for r in reduced_arm(fl)]
+        # (a) the ceiling -- centralized on the full training set. Dedupes against
+        # Gate A wherever the working point already has banked runs.
+        specs += expand_grid(
+            {"mode": "centralized", **{k: v for k, v in base.items()
+                                       if k not in _FED_ONLY},
+             **wp, "epochs": cent_epochs, "log_every": max(10, cent_epochs // 500)},
+            {"seed": SEEDS3},
+            tags={**tags, "arm": "cent_full"},
+        )
+    return specs
+
+
 def p0_c_alpha_width256():
     """PART 0.2: C's alpha ladder at the capacity it will actually use.
 
@@ -1801,6 +1902,7 @@ BUILDERS = {
     "p1_d_gd_probe": p1_d_gd_probe,
     "p1_cd_decay_band": p1_cd_decay_band,
     "p1_b_decay_band": p1_b_decay_band,
+    "t2_aggregation": t2_aggregation,
     "p0_c_alpha_width256": p0_c_alpha_width256,
     "p0_capacity": p0_capacity,
     "t1_setup_k_ladder": t1_setup_k_ladder,
