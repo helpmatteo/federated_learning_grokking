@@ -1,13 +1,13 @@
 # Results — federated grokking
 
-Everything measured, as of 2026-08-07. Branch `v2-multisetup`.
+Everything measured, as of 2026-08-08. Branch `v2-multisetup`.
 
 Companion documents: `PROGRESS.md` (what is built and what remains),
 `~/.claude/plans/plan-all-that-needs-valiant-hamster.md` (the current plan),
 `~/.claude/plans/plan-all-that-needs-nested-seal.md` (the boundary campaign, closed).
 
 **Data behind every number here:**
-`results/data/runs_v2.csv` (842 v2 runs) and `results/data/runs.csv` (870 v1 runs,
+`results/data/runs_v2.csv` (926 v2 runs) and `results/data/runs.csv` (870 v1 runs,
 recovered from logs). Both are committed. Regenerate any table with:
 
 ```bash
@@ -39,12 +39,12 @@ partially censored.
    (§11) — but that is not because the threshold belongs to the task family.
    **The optimiser moves it**: A′ groks 5/5 at α=0.20 where A, same architecture
    and same data under GD, manages 0/5 (§13.3).
-7. **There is no K≈30 collapse.** It was a censored measurement (§13.7).
-   Federation costs `t_memo(K) + delay`, and **which of the two terms carries the
-   K dependence is setup-dependent**: on the anchor (GD, wd=0) memorisation is
-   flat in K and the delay grows ~3.5× from K=20 to 97; on setup B (AdamW)
-   memorisation explodes 15× from K=20 to 50. Same axis, opposite mechanism —
-   invisible in a table of T_grok. The decay clock is the likely discriminator.
+7. **There is no K≈30 collapse** — it was a censored measurement (§13.7).
+   Federation costs `t_memo(K) + delay` and **both terms grow with K**. What the
+   **decay clock** controls is whether *memorisation* also blows up: flat under GD
+   at wd=0, explosive under AdamW. Confirmed on a second setup — D (quad-MLP, S₅)
+   reproduces B's collapse exactly, sharing neither its architecture nor its task
+   (§14.3).
 
 8. **The optimiser is worth ~45× on the anchor's own task** — the identical
    architecture on the identical data groks in 500 steps under AdamW where it
@@ -55,19 +55,138 @@ partially censored.
    (§13.2, §13.5). On B, decay leaves memorisation untouched at epoch 150 and
    acts purely on the generalisation timescale.
 
-10. **Six budget-manufactured boundaries so far**, three of them caught inside the
-    single investigation in §13.5–13.7. Every headline failure this project has
-    reported has, on re-measurement, been a clock running out. `t_memo` is now
-    recorded alongside `t_grok` precisely because one number cannot tell "never
-    learned" from "learned and not yet generalised".
+10. **Seven budget-manufactured boundaries so far.** Every headline failure this
+    project has reported has, on re-measurement, been a clock running out — the
+    latest being setup C's supposed α≥0.5 cliff, which was a ladder cut off at the
+    median for an easier α (§14.1). `t_memo` is recorded alongside `t_grok`
+    precisely because one number cannot tell "never learned" from "learned and not
+    yet generalised".
+11. **`t_grok` is not comparable across budgets.** Because it requires the bar to
+    hold for the rest of the run, *extending* a run can make its measured grokking
+    time 22× worse on an identical trajectory prefix (§14.4). Compare
+    `t_first_cross` whenever budgets or logging rates differ.
 
 Open: whether K=97 IID *fails* or is merely *slow* — both successes landed within
-5% of the budget ceiling, so that cell is not yet resolved. And whether the
-grokking delay grows with client count (§13.7) — the sweep that raised the
-question is underpowered to answer it, and the campaign's own cells will settle it
-across several K and setups.
+5% of the budget ceiling, so that cell is not yet resolved.
 
 ---
+
+## 14. Part 0 — the campaign prerequisites, and the decay clock confirmed
+
+87 runs. Three questions that every campaign manifest depends on, plus one
+methodological finding that changes which statistic the project reports.
+
+### 14.1 Setup C's cliff is at α≈0.3, not above 0.5 (`p0_c_alpha_width256`)
+
+"C's working α is ≥0.5" has been carried since Gate A and used to argue C could
+not be matched to the other setups. It rested on **one cell** — α=0.30, 0/5, at
+hidden_width **128** with 40,000 epochs — while at that same width α=0.50 has a
+KM median of 39,800. The ladder was cut off essentially *at the median for an
+easier α*, so a harder α censoring under it was the expected outcome, not a
+cliff. C had never been run below α=0.5 at width 256, the width the capacity
+sweep actually selected.
+
+At width 256, 100,000 epochs, 3 seeds:
+
+| α | grokked | median first crossing | final test |
+|---|---|---|---|
+| 0.25 | 0/3 | — | 0.3–0.6% (chance) |
+| 0.30 | **1/3** | 55,500 | 0.9 · 1.0 · **100** |
+| 0.40 | **3/3** | 37,450 | 100% |
+| 0.50 | 15/15 | ~15,150 | 100% |
+| 0.60 | 3/3 | 5,300 | 100% |
+
+**C's usable working point is α=0.40**, not ≥0.50 and not 0.30. The old claim is
+withdrawn. α=0.30 is genuinely marginal at 1/3 rather than cliffed — its two
+failures sit at chance for the full 100,000 epochs, but C's seed spread is
+enormous (at α=0.6: 2,550 / 52,850 / 77,000 on t_grok, a 30× range), so a slow
+tail running past budget is entirely consistent with what the grokking seed did
+at 55,500.
+
+**Every C run memorises at epoch 100–200**, at every α. So α does nothing to
+memorisation on this setup; the entire α effect is on the delay.
+
+### 14.2 Capacity: wider is not better, and for A′ it is fatal (`p0_capacity`)
+
+Half / default / double width per setup, at its own working α. Read on
+`t_first_cross`, for the reason in §14.4:
+
+| setup | narrow | **default** | double |
+|---|---|---|---|
+| **A′** quad-MLP/mod-97 | **1,050** (128) | 3,900 (256) | **0/3 — never** (512) |
+| **B** transformer/mod-113 | 3,750 (64) | **4,350** (128) | 3,500 (256) |
+| **D** quad-MLP/S₅ | 0/3 (128) | 21,300 (256) | 18,550 (512) |
+| **E** MLP/MNIST | 2,575 (100) | **725** (200) | 600 (400) |
+
+- **A′ is 3.7× faster at half its default width, and fails outright at double.**
+  There is an upper capacity limit, and A′'s inherited 256 sits above the optimum.
+- **B's width is not binding at all** — all three widths cross at ~3,500–4,350.
+  What does change is stability: post-crossing dips run [0,0,2] at width 64,
+  [0,1,2] at 128 and [2,3,3] at 256, so wider is *less* stable. Nanda's 128 stands.
+- **D needs ≥256**; 512 buys ~13%, not enough to justify moving off the default.
+- **E's 200 stands.** Width 100 is unstable (dips 4 / 14 / 45); 200 and 400 have none.
+
+### 14.3 THE DECAY CLOCK, CONFIRMED — D reproduces the collapse (`t1_setup_k_ladder`)
+
+§13.7's mechanism hypothesis was that memorisation blows up with K on setups with
+a decay clock (AdamW) and stays flat on those without (GD at wd=0), because
+decoupled decay is applied per local step and is independent of shard size while
+the learning signal from a 1/K shard is not. It predicted **D resembles B**.
+
+It does, on a different architecture *and* a different task:
+
+| setup D (quad-MLP, S₅, AdamW), iid, E=5, α=0.30 | K=5 | K=10 | K=20 | K=50 |
+|---|---|---|---|---|
+| t_memo | 1,400 | 3,200 | 15,300 | **never** |
+| peak train | 100 | 100 | 100 | **69–74%** |
+| grokked | 3/3 | 2/3 | 1/3 | **0/3** |
+
+D at K=50 does not memorise inside 100,000 steps — the same failure B shows at
+wd=1.0, on a setup that shares neither its architecture nor its task. Every
+AdamW setup measured now shows memorisation slowing steeply with K: B, C, D and E
+alike.
+
+**And the delay grows with K too — B's is not flat.** §13.7 recorded that as
+unproven on two K values with n=1 at one of them. The ladder resolves it:
+
+| B, wd=0.1, iid, E=5 | centralized | K=5 | K=10 | K=20 | K=30 |
+|---|---|---|---|---|---|
+| t_memo | 150 | 800 | 1,300 | 3,600 | 5,900 |
+| **delay** | 44,900 | 50,400 | 54,600 | **90,100** | 88,400 |
+
+The delay doubles from centralized to K=20 and then plateaus. So the corrected,
+unified statement is:
+
+> **The delay grows with K on every setup measured.** What the decay clock
+> controls is whether *memorisation* also blows up — flat under GD at wd=0,
+> explosive under AdamW. Budget from both terms, and neither is constant.
+
+**Setup C is the exception that sharpens it.** Its delay *collapses* with K —
+3,500 at K=5, 4,600 at K=10, 600 at K=20, and **negative** at K=50, where the
+first crossing (36,500) precedes memorisation (44,150). At high K, C stops
+grokking and simply learns: test accuracy reaches the bar before train accuracy
+reaches 99%. C is 3/3 at every K, the only setup that never degrades.
+
+### 14.4 `t_grok` depends on the BUDGET, not only the logging rate
+
+§13.4 recorded that `t_grok` measures the logging rate on an unstable setup. It
+is worse than that. Same config, same seed, same `log_every=50` — only the budget
+differs:
+
+| run | epochs | t_grok | t_first_cross |
+|---|---|---|---|
+| `b_decay_band` seed 123 | 50,000 | **4,350** | 4,350 |
+| `capacity` seed 123 | 100,000 | **95,750** | 4,350 |
+
+Because `t_grok` requires the bar to hold for the *rest of the run*, **a longer
+budget can report a later t_grok for an identical trajectory prefix**. Extending
+a run can therefore make its measured grokking time 22× worse.
+
+This is not a corner case: it silently invalidated the first reading of §14.2,
+where B appeared 13× faster at width 64 purely because the wider runs sampled
+more dips. **`t_first_cross` is the statistic to compare across cells whenever
+budgets differ**, and `t_grok` should only be compared within a fixed budget
+*and* a fixed logging rate.
 
 ## 13. Phase 1 — the setups, measured instead of inherited
 
