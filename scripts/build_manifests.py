@@ -1141,8 +1141,14 @@ def t2_aggregation():
     setup rather than a defect in this manifest. The aggregation question at high
     K for B is a wd=0.1 follow-up, deliberately not folded in here.
 
-    E stops at K=20: at n_train=2000 the shards are 400/200/100 at K=5/10/20
-    against batch=100, so K=50 has no viable local epoch.
+    K=2 is main's lowest rung and is kept deliberately. It is the cheapest cell
+    in the sweep, and it anchors the low end of the K curve closest to the
+    centralized arm -- which is where cent_full and fl should agree if the
+    compute-matched step axis is right. Disagreement at K=2 is a harness fault
+    rather than a federated effect, so the rung doubles as a control.
+
+    E stops at K=20: at n_train=2000 the shards are 1000/400/200/100 at
+    K=2/5/10/20 against batch=100, so K=50 has no viable local epoch.
 
     > DECISION RULE. Per setup, compare FL against the CEILING on total_steps. If
     > FL tracks the ceiling as K grows, aggregation compensates for fragmentation
@@ -1155,15 +1161,15 @@ def t2_aggregation():
     BLOCKS = [
         ("A",  {**{k: v for k, v in SETUP_A.items()
                    if k not in ("mode", "num_rounds", "eval_every")}},
-         {"alpha": 0.30}, 10_000, 50_000, [5, 10, 20, 50]),
-        ("A'", SETUP_A_PRIME, {"alpha": 0.20}, 20_000, 100_000, [5, 10, 20, 50]),
-        ("B",  SETUP_B, {"alpha": 0.30}, 20_000, 100_000, [5, 10, 20, 50]),
+         {"alpha": 0.30}, 10_000, 50_000, [2, 5, 10, 20, 50]),
+        ("A'", SETUP_A_PRIME, {"alpha": 0.20}, 20_000, 100_000, [2, 5, 10, 20, 50]),
+        ("B",  SETUP_B, {"alpha": 0.30}, 20_000, 100_000, [2, 5, 10, 20, 50]),
         ("C",  SETUP_C, {"alpha": 0.40, "hidden_width": 256},
-         40_000, 200_000, [5, 10, 20, 50]),
-        ("D",  SETUP_D, {"alpha": 0.30}, 50_000, 250_000, [5, 10, 20, 50]),
+         40_000, 200_000, [2, 5, 10, 20, 50]),
+        ("D",  SETUP_D, {"alpha": 0.30}, 50_000, 250_000, [2, 5, 10, 20, 50]),
         ("E",  {k: v for k, v in SETUP_E.items() if k != "batch_size"},
          {"n_train": 2000, "n_test": 5000, "batch_size": 100},
-         8_000, 40_000, [5, 10, 20]),
+         8_000, 40_000, [2, 5, 10, 20]),
     ]
     specs = []
     for label, base, wp, rounds, cent_epochs, Ks in BLOCKS:
