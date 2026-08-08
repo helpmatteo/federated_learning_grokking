@@ -12,29 +12,24 @@ resolved: there was no collapse, and the K axis is open at a measurable cost
 (below). The work in front is now writing the per-setup FL manifests and running
 v1's exp0–exp7 chain on them.
 
-> ## RUNNING RIGHT NOW (launched 2026-08-07, detached)
+> ## PART 0 COMPLETE (2026-08-08)
 >
-> `scripts/run_campaign_part0.sh` is chaining Part 0 of the campaign under
-> `setsid`, so it survives the session that launched it. In order: the 0.2/0.3
-> prerequisite sweeps → full test suite → `t1_setup_k_ladder` (39 runs, ~88
-> slot-h) → `t3_server_lr_calibration` (42 runs, ~17 slot-h), collecting into
-> `runs_v2.csv` after each.
+> All five prerequisites landed: 129 runs, **0 failures**, 542/542 tests green.
+> `PART0_STATUS.md` has the raw summary; RESULTS §14 has the readings.
 >
-> **It runs compute only.** It does not commit and takes no decision that depends
-> on a result — the C working-point verdict and the per-setup budgets are
-> judgement calls waiting for a human.
+> | | verdict |
+> |---|---|
+> | 0.1 floor arm | wired + tested; fixed a latent `IncompleteRun` trap |
+> | 0.2 C's α ladder | **C's cliff is at α≈0.3, not ≥0.5.** Working point **α=0.40** (3/3) |
+> | 0.3 capacity | A′ is faster at width 128 and **fails at 512**; B's width is not binding; D needs ≥256; E's 200 stands |
+> | 0.4 K ladder | **decay clock confirmed** — D reproduces B's collapse. Both terms grow with K |
+> | 0.5 calibration | FedAdam 0.1 · FedYogi 0.1 · FedAvgM (1.0, 0.9). **FedYogi beats FedAdam once both are tuned** |
 >
-> ```bash
-> tail -f logs/sweeps/part0_chain_*.log     # progress
-> cat PART0_STATUS.md                       # written when the chain finishes
-> pgrep -af run_campaign_part0              # still alive?
-> ```
->
-> When it lands, read **PART0_STATUS.md** first: it carries the gate verdict
-> (does C grok at α=0.30 at width 256?), the capacity answer, the K ladder's
-> t_memo(K)/delay(K) per setup, and what each manifest still owes. Parts 1–3 of
-> `~/.claude/plans/plan-all-that-needs-valiant-hamster.md` are written against
-> those numbers and cannot be specified without them.
+> **Next: Parts 1–3** of `~/.claude/plans/plan-all-that-needs-valiant-hamster.md`
+> — exp2 (three arms), exp3b (structured partitions), and the anchor redo. The
+> budgets they need are now measured; see RESULTS §14.3 for `t_memo(K)`/`delay(K)`
+> per setup. One decision waits for a human: **C runs at α=0.40, not 0.30**, which
+> raises C's cost above the plan's estimate.
 
 > **Read the data, not just this file.** Sweeps get banked faster than these notes
 > get rewritten. Ground truth is `results/data/runs_v2.csv` and
@@ -47,7 +42,7 @@ v1's exp0–exp7 chain on them.
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`; `main` has nothing this lacks) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
 | Tests | **542/542 pass** (`venv/bin/python -m pytest tests/ -q`, ~9 min incl. FL integration) |
-| Runs banked | **926** in `results/data/runs_v2.csv` (637 grokked) + 870 v1 runs in `runs.csv`. 321 machine-hours |
+| Runs banked | **968** in `results/data/runs_v2.csv` (664 grokked, 304 censored) + 870 v1 runs in `runs.csv`. 338 machine-hours |
 | Setups | A quad-MLP/mod-97 · A′ quad-MLP/mod-97/AdamW (**measured**, §13.3) · B transformer/mod-113 · C transformer/S₅ · D quad-MLP/S₅ · E MLP/MNIST-1k. **D′ dropped** — the gate that would have required it opened (§13.7) |
 | FL algorithms | FedAvg, FedProx, FedAvgM, FedYogi, FedAdam (native) + SCAFFOLD (adapted, **raises under AdamW by design**) |
 | Statistics | censored survival (KM median + fraction-grokked + bootstrap CI); `scripts/summarize_runs.py` |

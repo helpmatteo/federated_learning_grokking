@@ -7,7 +7,7 @@ Companion documents: `PROGRESS.md` (what is built and what remains),
 `~/.claude/plans/plan-all-that-needs-nested-seal.md` (the boundary campaign, closed).
 
 **Data behind every number here:**
-`results/data/runs_v2.csv` (926 v2 runs) and `results/data/runs.csv` (870 v1 runs,
+`results/data/runs_v2.csv` (968 v2 runs) and `results/data/runs.csv` (870 v1 runs,
 recovered from logs). Both are committed. Regenerate any table with:
 
 ```bash
@@ -73,7 +73,7 @@ Open: whether K=97 IID *fails* or is merely *slow* — both successes landed wit
 
 ## 14. Part 0 — the campaign prerequisites, and the decay clock confirmed
 
-87 runs. Three questions that every campaign manifest depends on, plus one
+129 runs. Four questions that every campaign manifest depends on, plus one
 methodological finding that changes which statistic the project reports.
 
 ### 14.1 Setup C's cliff is at α≈0.3, not above 0.5 (`p0_c_alpha_width256`)
@@ -187,6 +187,54 @@ where B appeared 13× faster at width 64 purely because the wider runs sampled
 more dips. **`t_first_cross` is the statistic to compare across cells whenever
 budgets differ**, and `t_grok` should only be compared within a fixed budget
 *and* a fixed logging rate.
+
+### 14.5 Server-LR calibration — and FedAdam's advantage does not survive it
+
+`t3_server_lr_calibration`, 42/42. One representative heterogeneous cell (setup A,
+α=0.30, K=10, E=5, dirichlet α=0.1), 3 seeds, read on `t_first_cross`:
+
+| strategy | server_lr | momentum | grokked | first crossing |
+|---|---|---|---|---|
+| **FedAdam** | 0.01 | — | 3/3 | 2,100 |
+| **FedAdam** | **0.1** | — | **3/3** | **600** |
+| FedAdam | 0.3 / 1.0 | — | 0/3 | never — 1.0% test |
+| **FedYogi** | 0.01 | — | 3/3 | 2,000 |
+| **FedYogi** | **0.1** | — | **3/3** | **400** |
+| FedYogi | 0.3 / 1.0 | — | 0/3 | never — 1.0% test |
+| FedAvgM | 0.1 | 0.0 | **0/3** | never — 0.2% test |
+| FedAvgM | 0.1 | 0.9 | 3/3 | 13,900 |
+| FedAvgM | 0.3 | 0.9 | 3/3 | 5,000 |
+| **FedAvgM** | **1.0** | **0.9** | **3/3** | **1,800** |
+
+**The calibrated working points**, to be fixed before any algorithm comparison:
+
+| | server_lr | momentum |
+|---|---|---|
+| FedAdam | 0.1 | — |
+| FedYogi | 0.1 | — |
+| FedAvgM | 1.0 | 0.9 |
+
+Three things follow.
+
+**FedAdam is not the best adaptive method once the others are tuned too.** At its
+own best setting FedYogi reaches the bar at **400** against FedAdam's **600**.
+v1's exp5 reported FedAdam ~10× faster than the field, but it swept `server_lr`
+for FedAdam *alone* — so that headline compared a tuned method against untuned
+ones. Fixing each at the points above is what makes the re-run fair, and on this
+evidence the ordering may not survive.
+
+**Both adaptive methods fall off a cliff above server_lr = 0.1.** At 0.3 and 1.0
+they sit at chance (1.0% test, 0/3). The usable band is narrow, and 1.0 — the
+natural default, and FedAvg's implicit value — is outside it for both.
+
+**FedAvgM without momentum is worse than useless at low server_lr**: 0/3 at
+(0.1, 0.0), against 3/3 at (0.1, 0.9). Its server LR and momentum are not
+separable knobs and must be tuned as a pair.
+
+**Caveat.** This cell has no FedAvg arm — FedAvg has no server-LR knob, so it was
+not part of the sweep. These numbers calibrate each method against itself; they
+do not establish a speedup over FedAvg. That comparison *is* exp5, and it now has
+fair settings to run at.
 
 ## 13. Phase 1 — the setups, measured instead of inherited
 
