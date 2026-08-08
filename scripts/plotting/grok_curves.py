@@ -95,7 +95,7 @@ def infer_setup(row):
             ("mnist", "mlp"): "E"}.get(key, "?")
 
 
-def panel_payload(run_id, row, history):
+def panel_payload(run_id, row, history, section=None):
     xs, ys = series_for(history)
     if not xs:
         return None
@@ -116,6 +116,7 @@ def panel_payload(run_id, row, history):
         "model": row.get("model"),
         "loss": row.get("loss"),
         "detail": _detail(row),
+        "section": section,
         "threshold": row.get("grok_threshold"),
         "t_grok": None if t_grok in (None, float("inf")) else t_grok,
         # The DELAY is the phenomenon, so the panel has to be able to draw it.
@@ -147,12 +148,32 @@ def _detail(row):
     # weight decay and seed are what distinguish cells inside a single sweep --
     # without them a wd control panel is indistinguishable from the arm it
     # controls, and two seeds of one cell read as one result.
+    # hidden_width is a defining property of the config, not a detail: a capacity
+    # sweep's panels are otherwise IDENTICAL in caption and the comparison the
+    # page exists to show becomes unreadable.
+    if row.get("hidden_width") not in (None, ""):
+        bits.append(f"width {row.get('hidden_width')}")
     wd = row.get("weight_decay")
     if wd not in (None, ""):
         bits.append(f"wd={wd}")
     if row.get("seed") not in (None, ""):
         bits.append(f"seed {row.get('seed')}")
     return "  ·  ".join(bits)
+
+
+def _section_for(row, args):
+    """The heading a panel sits under.
+
+    Defaults to the mode, which is what the page has always done. `--section-by`
+    points it at any result-row field instead -- `experiment` splits a page into
+    exp0 / exp1 / exp2, which is the comparison a reader of the campaign wants,
+    and mode cannot express because a section may contain both.
+    """
+    if not getattr(args, "section_by", None):
+        return {"centralized": "Centralized reference",
+                "federated": "Federated (FedAvg)"}.get(row.get("mode"), row.get("mode"))
+    key = str(row.get(args.section_by, "") or "other")
+    return (args.section_labels or {}).get(key, key)
 
 
 def build(panels, title, heading=None, standfirst=None):
@@ -520,15 +541,24 @@ function card(p){
 })();
 
 const chartView=document.getElementById("chartView");
-[["centralized","Centralized reference"],["federated","Federated (FedAvg)"]]
- .forEach(([mode,label])=>{
-  const rows=PANELS.filter(p=>p.mode===mode);
-  if(!rows.length) return;
-  const lab=document.createElement("div"); lab.className="rowlabel"; lab.textContent=label;
-  const g=document.createElement("div"); g.className="grid";
-  rows.forEach(p=>g.appendChild(card(p)));
-  chartView.append(lab,g);
-});
+// Sections come from the payload and keep its order, so the page can be split
+// by whatever the comparison actually is -- experiment, mode, setup -- instead
+// of always by mode. Panels carry `section` (see --section-by).
+(function(){
+  const order=[]; const byS=new Map();
+  PANELS.forEach(p=>{
+    const k=p.section||p.mode;
+    if(!byS.has(k)){ byS.set(k,[]); order.push(k); }
+    byS.get(k).push(p);
+  });
+  order.forEach(k=>{
+    const rows=byS.get(k); if(!rows.length) return;
+    const lab=document.createElement("div"); lab.className="rowlabel"; lab.textContent=k;
+    const g=document.createElement("div"); g.className="grid";
+    rows.forEach(p=>g.appendChild(card(p)));
+    chartView.append(lab,g);
+  });
+})();
 
 // table view - every plotted value is reachable without hovering
 const tv=document.getElementById("tableView").querySelector(".tablewrap");
@@ -596,9 +626,20 @@ def main():
                     help="visible h1; defaults to the four-setups headline")
     ap.add_argument("--standfirst", default=None,
                     help="paragraph under the h1 (HTML allowed)")
+    ap.add_argument("--section-by", default=None,
+                    help="result-row field to split the page on, e.g. `experiment`. "
+                         "Default: mode.")
+    ap.add_argument("--section-labels", default=None,
+                    help="rename sections, ';'-separated so labels may "
+                         "contain commas: 'width=exp0 - width;boundary=exp1 - cliff'")
     ap.add_argument("--runs-root", default="results/data/runs")
     ap.add_argument("--hist-root", default="results/runs")
     args = ap.parse_args()
+
+    # must happen BEFORE any panel is built: _section_for reads it per row
+    if args.section_labels:
+        args.section_labels = dict(
+            kv.split("=", 1) for kv in args.section_labels.split(";") if "=" in kv)
 
     panels = []
     for run_id in args.runs:
@@ -607,7 +648,8 @@ def main():
         except FileNotFoundError as exc:
             print(f"  skip {run_id}: {exc}")
             continue
-        payload = panel_payload(run_id, row, history)
+        payload = panel_payload(run_id, row, history,
+                                _section_for(row, args))
         if payload is None:
             print(f"  skip {run_id}: empty history")
             continue
@@ -616,7 +658,15 @@ def main():
               f"t_grok={payload['t_grok']} test={payload['final_test']:.1f}% "
               f"({len(next(iter(payload['series'].values())))} pts)")
 
-    panels.sort(key=lambda p: (p["mode"] != "centralized", p["setup"]))
+    if args.section_by:
+        # keep the caller's run order inside a section; order sections by first
+        # appearance, so `--runs` fully determines the layout
+        seen = {}
+        for pl in panels:
+            seen.setdefault(pl["section"], len(seen))
+        panels.sort(key=lambda pl: seen[pl["section"]])
+    else:
+        panels.sort(key=lambda p: (p["mode"] != "centralized", p["setup"]))
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as fh:
         fh.write(build(panels, args.title, args.heading, args.standfirst))
