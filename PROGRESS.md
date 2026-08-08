@@ -83,15 +83,15 @@ Two separable effects, and only one depends on K:
 2. **The delay is large and roughly doubles under federation** — ~90,000 against
    the centralized 44,900, established at K=20 across 3 seeds.
 
-**Whether the delay grows with K is not established.** It rests on two K values —
-K=20 (3 seeds: 62,800 / 90,100 / 94,300) and K=30 (**one** seed: 88,700) — and the
-K=30 point falls inside K=20's spread, which is itself wider than any K-effect it
-could detect. Flat is consistent with the data; so is a mild increase.
+**RESOLVED by the K ladder (§14.3): the delay DOES grow with K.** The low rungs
+close the curve — 44,900 centralized → 50,400 (K=5) → 54,600 (K=10) → 90,100
+(K=20) → 88,400 (K=30). It roughly doubles by K=20, then plateaus. So both terms
+grow; what the decay clock controls is whether *memorisation* also blows up.
 
-So `T_grok(K) ≈ t_memo(K) + delay` accounts for the censored cells: K=30 needs
-~95,900 against the 100,000 it got (hence 1/3, at 94,300), and K=50 needs ≳143,000
-and got 100,000. Treat 143,000 as a **lower bound** — if the delay grows with K,
-budgeting exactly to it recreates the censoring it came from.
+`T_grok(K) ≈ t_memo(K) + delay` therefore accounts for the censored cells: K=30
+needs ~95,900 against the 100,000 it got (hence 1/3, at 94,300), and K=50 needs
+≳143,000 and got 100,000. **143,000 stays a lower bound** — budgeting exactly to
+an estimate is what recreates the censoring it came from.
 
 **Consequences for the campaign:**
 
@@ -103,8 +103,11 @@ budgeting exactly to it recreates the censoring it came from.
 - **B's K ladder is bounded by cost, not capability.** K=97 extrapolates well past
   200,000 steps, so either B stops at K=50 or the campaign accepts one expensive
   high-K cell per setup.
-- **The additive model is worth confirming before it is budgeted from**: 3 runs at
-  K=50, 30,000 rounds, predicted to grok at ~143,000 steps.
+- **No separate confirmation run.** Run ids are content hashes, so a campaign cell
+  at K=50 with headroom above 143,000 *is* the test.
+- **The decay clock is confirmed, not hypothesised** (§14.3) — D reproduces B's
+  collapse on a different architecture and task. Expect any AdamW setup to lose
+  memorisation at high K, and any wd=0 setup not to.
 
 The only cell that still looks like a genuine wall is **K=50 at the inherited
 wd=1.0**, which fails to memorise even at 100,000 steps — though at peak train
