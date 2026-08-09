@@ -135,6 +135,16 @@ def panel_payload(run_id, row, history, section=None):
 def _detail(row):
     """The one-line config description under each panel title."""
     bits = []
+    # The arm leads, when there is one. A three-arm experiment renders cent_full
+    # and cent_reduced with the SAME caption otherwise -- both are "centralized",
+    # and they differ only in an alpha the reader has to know is alpha/K. Naming
+    # them uses main's own arm names, which is what the code and the paper use.
+    arm = row.get("arm")
+    if arm:
+        if arm == "cent_reduced" and row.get("reduced_from_k"):
+            bits.append(f"cent_reduced (1/{row['reduced_from_k']} shard)")
+        else:
+            bits.append(str(arm))
     if row["mode"] == "federated":
         bits.append(f"K={row.get('num_clients')} · E={row.get('local_epochs')}"
                     f" · {row.get('partition')}")
