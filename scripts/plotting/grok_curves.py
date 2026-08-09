@@ -182,7 +182,11 @@ def _section_for(row, args):
     if not getattr(args, "section_by", None):
         return {"centralized": "Centralized reference",
                 "federated": "Federated (FedAvg)"}.get(row.get("mode"), row.get("mode"))
-    key = str(row.get(args.section_by, "") or "other")
+    # NOT `or "other"`: a legitimately zero value (weight_decay=0.0, the control
+    # arm of any decay sweep) is falsy, so that would file the one row you most
+    # want labelled under "other".
+    raw = row.get(args.section_by)
+    key = "other" if raw is None or raw == "" else str(raw)
     return (args.section_labels or {}).get(key, key)
 
 
