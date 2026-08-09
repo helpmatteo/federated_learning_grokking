@@ -31,6 +31,39 @@ v1's exp0–exp7 chain on them.
 > per setup. One decision waits for a human: **C runs at α=0.40, not 0.30**, which
 > raises C's cost above the plan's estimate.
 
+> ## RUNNING (launched 2026-08-09, detached)
+>
+> Two chains under `setsid`, so they survive the session:
+> `x_controls` (12 runs) then `run_exp3b_now.sh` (54 runs), which waits for it.
+>
+> | | |
+> |---|---|
+> | `x_controls` | A′ at E=1/K=2 (the FedAvg identity control) + wd=0 on B, C, E |
+> | `t3b_now` | exp3b on **A, A′, E** — the setups whose seed noise is small enough to see the effect — plus D's iid/operand cells |
+>
+> ```bash
+> tail -f logs/sweeps/exp3b_*.log ; cat EXP3B_STATUS.md
+> ```
+
+> ## DEFERRED: exp3b on B, C and D
+>
+> `logs/sweeps/split/t3b_later.jsonl` — 54 runs, ~190 slot-h — **written and
+> deliberately not run.** exp3b hunts a ~10% effect (on the anchor, operand groks
+> at 13,700 against iid's 15,200). Within-cell seed spread at exp2's K=10 cells:
+>
+> | A | A′ | E | B | C | D |
+> |---|---|---|---|---|---|
+> | 1.1× | 1.0× | 1.0× | **1.9×** | **1.8×** | **1.9×** |
+>
+> B, C and D vary by ~2× when the *identical* config is re-run, so a 10% effect is
+> buried and 3 seeds cannot recover it. They are 190 of exp3b's 261 slot-h. Run
+> them when there is budget for more seeds, or when the question for them is a
+> large qualitative one rather than a timing difference.
+>
+> D's iid/operand cells are in the NOW split regardless: an earlier probe hinted
+> D's operand shard is much *worse* than iid, and an effect that size is not
+> hidden by 1.9× noise. If it holds it inverts the project's headline.
+
 > **Read the data, not just this file.** Sweeps get banked faster than these notes
 > get rewritten. Ground truth is `results/data/runs_v2.csv` and
 > `results/data/runs/*.json`; the "what is missing" recipe is in the Resume section.
