@@ -1093,6 +1093,88 @@ def p1_cd_decay_band():
     return specs
 
 
+def x_controls():
+    """Two controls for claims already being made. 12 runs, ~3 slot-hours.
+
+    ---- 1. A' AT E=1: is exp2's A' column measuring anything real? ----
+
+    exp2 reads A' at K=2 as 13.3x its centralized ceiling (53,200 against 4,000),
+    consistent across all three seeds, with memorisation identical at 200. K=2 is
+    where federation should be nearly a no-op, so either that is a real and very
+    large E-effect or the harness is wrong -- and if the harness is wrong, A's
+    1.00x agreement at the same K would be the coincidence, not this.
+
+    E=1 settles it, because at E=1 FedAvg with n_k/n weighting is an EXACT
+    algebraic identity with centralized GD -- proven in tests/test_fedavg_identity
+    and observed in the wild (the T1 probe's iid and operand runs returned
+    identical test accuracies seed-for-seed). So this cell MUST reproduce the
+    ceiling.
+
+    > DECISION RULE. If E=1/K=2 matches A's centralized ladder, the pipeline is
+    > sound and A's 13x is a genuine E-effect -- most likely AdamW's optimiser
+    > restart (persist_local_opt_state=False rebuilds Adam every round, so each
+    > round is E cold-start bias-corrected steps) amplified by A' sitting AT its
+    > cliff, margin +0.01 against +0.10 for every other setup. Both are testable
+    > afterwards and neither invalidates exp2. If E=1 does NOT match, exp2's A'
+    > column is not interpretable and the fault may not stop at A'.
+
+    Budget 30,000 rounds. At E=1 one round IS one step, so rounds = steps and
+    the Flower round-trip is paid 30,000 times -- this is the most
+    orchestration-heavy cell per unit of learning in the campaign, which is
+    exactly why E=1 was trimmed from the going-forward E_SPINE. A' groks
+    centrally at 3,000 / 4,000 / 8,600 across its three seeds, so 30,000 is ~3.5x
+    the slowest and the control cannot plausibly censor. A first draft of this
+    manifest asked for 300,000 and would have cost 22 slot-hours to answer a
+    question that needs three.
+
+    ---- 2. wd=0 ON B, C AND E: is the inherited decay load-bearing? ----
+
+    Setup D has the with/without control and it is decisive: it MEMORISES at
+    epoch ~250 in every band from wd=0 to wd=1.0, and generalises only at 1.0.
+    At wd=0 it sits at 1.2% test -- chance on S_5 is 0.83% -- with 100% train,
+    indefinitely. A clean dose-response: 1.2 -> 1.3 -> 1.7 -> 52 -> 73 -> 96%.
+
+    B, C and E have NO run at wd=0. Their decay bands started at 0.01. So "these
+    setups need weight decay" is measured for D and inherited from Nanda and
+    Omnigrok for the rest -- and this project has now been wrong about an
+    inherited value three times (C's cliff, D's optimiser, B's band), each time
+    in a way that survived into RESULTS before being caught.
+
+    Budgets are each setup's own measured centralized requirement with headroom,
+    so a failure here means the decay and not the clock.
+
+    > DECISION RULE. If a setup groks at wd=0, its decay is not load-bearing and
+    > every claim resting on the decay clock (14.3) needs re-examining for it. If
+    > it memorises and sits at chance like D, the mechanism generalises and the
+    > inherited values are vindicated on measurement rather than on citation.
+    """
+    specs = []
+    # 1. the FedAvg identity control
+    specs += expand_grid(
+        {"mode": "federated", **SETUP_A_PRIME, "alpha": 0.20,
+         "local_epochs": 1, "num_clients": 2, "partition": "iid",
+         "strategy": "fedavg", "fraction_train": 1.0,
+         "num_rounds": 30_000, "eval_every": 50},
+        {"seed": SEEDS3},
+        tags={"tier": "X", "group": "e1_identity", "experiment": "control",
+              "setup": "A'"},
+    )
+    # 2. wd=0 on the three setups that have never been asked
+    for label, base, wp, epochs in (
+            ("B", SETUP_B, {"alpha": 0.30}, 100_000),
+            ("C", SETUP_C, {"alpha": 0.40, "hidden_width": 256}, 200_000),
+            ("E", {k: v for k, v in SETUP_E.items() if k != "batch_size"},
+             {"n_train": 2000, "n_test": 5000, "batch_size": 100}, 40_000)):
+        specs += expand_grid(
+            {"mode": "centralized", **base, **wp, "weight_decay": 0.0,
+             "epochs": epochs, "log_every": max(10, epochs // 500)},
+            {"seed": SEEDS3},
+            tags={"tier": "X", "group": "wd_zero", "experiment": "control",
+                  "setup": label},
+        )
+    return specs
+
+
 def t2_aggregation():
     """PART 1: exp2 -- does aggregation compensate for fragmenting the data?
 
@@ -1908,6 +1990,7 @@ BUILDERS = {
     "p1_d_gd_probe": p1_d_gd_probe,
     "p1_cd_decay_band": p1_cd_decay_band,
     "p1_b_decay_band": p1_b_decay_band,
+    "x_controls": x_controls,
     "t2_aggregation": t2_aggregation,
     "p0_c_alpha_width256": p0_c_alpha_width256,
     "p0_capacity": p0_capacity,
