@@ -1093,6 +1093,96 @@ def p1_cd_decay_band():
     return specs
 
 
+def t3b_partitions():
+    """PART 2: exp3b -- does HOW you shard matter more than how far you shard?
+
+    main's exp3b compared iid / operand / target at K=10. This keeps those three
+    and adds two that main could not run:
+
+      dirichlet  unstructured non-IID. THE CONTROL, and the reason this is not
+                 just main's experiment again. t2_k_breakdown found operand
+                 significantly FASTER than iid at K=50 while dirichlet tracked
+                 iid exactly at every K -- so the effect is structure, not
+                 heterogeneity. Without a dirichlet arm the two are confounded.
+      coset      S_5's algebraically coherent split (S_4 -> 5 cosets). On S_5 the
+                 operand partition shards by first-operand ELEMENT, which is NOT
+                 coherent the way a mod-p operand shard is; coset is. C and D
+                 only. K must equal the coset count exactly, so it is its own
+                 block at K=5.
+
+    THE CLAIM UNDER TEST. "Coherent shards beat random ones, and the gap grows
+    with K" is the project's strongest result and rests on setup A alone. It is
+    also the one claim insensitive to where the budget was set. This asks whether
+    it is a property of grokking or of one architecture.
+
+    K IS CHOSEN PER SETUP FROM exp2, not shared. exp2 measured where each setup
+    still functions federated, and there is no point asking about partitions
+    where the setup cannot grok under ANY partition:
+
+        A   K in {10, 50}   FL tracks the ceiling to 1.17x at K=50
+        C   K in {10, 50}   3/3 at every K
+        A'  K in {10, 20}   already 14.6x at K=20
+        B   K in {10, 20}   0/3 at K=50 -- the decay clock, not the partition
+        D   K in {10, 20}   0/3 at K=50, same reason
+        E   K in {10, 20}   shards degenerate past 20 at batch=100
+
+    Budgets are exp2's, which are the measured ones.
+
+    > DECISION RULE. Per setup, compare operand (and coset on S_5) against iid at
+    > matched K, with dirichlet as the control. If structured partitions are
+    > faster wherever the setup groks at all, the claim generalises beyond the
+    > anchor. If the ordering flips on any setup -- and s5_fl_probe already hinted
+    > D's operand cell is WORSE, which would invert the headline -- that setup's
+    > shard geometry is the thing to explain, and the coset arm is what
+    > distinguishes "structured" from "algebraically coherent".
+    """
+    BLOCKS = [
+        ("A",  {k: v for k, v in SETUP_A.items()
+                if k not in ("mode", "num_rounds", "eval_every")},
+         {"alpha": 0.30}, 10_000, [10, 50]),
+        ("A'", SETUP_A_PRIME, {"alpha": 0.20}, 20_000, [10, 20]),
+        ("B",  SETUP_B, {"alpha": 0.30}, 20_000, [10, 20]),
+        ("C",  SETUP_C, {"alpha": 0.40, "hidden_width": 256}, 40_000, [10, 50]),
+        ("D",  SETUP_D, {"alpha": 0.30}, 50_000, [10, 20]),
+    ]
+    specs = []
+    for label, base, wp, rounds, Ks in BLOCKS:
+        tags = {"tier": "T3b", "group": "partitions", "experiment": "exp3b",
+                "setup": label}
+        common = {"mode": "federated", **base, **wp, "local_epochs": 5,
+                  "strategy": "fedavg", "fraction_train": 1.0,
+                  "num_rounds": rounds, "eval_every": FL_EVAL_EVERY,
+                  "checkpoint_every": max(1, rounds // 10),
+                  "checkpoint_client_weights": True}
+        specs += expand_grid(
+            common,
+            {"partition": ["iid", "operand", "target", "dirichlet"],
+             "num_clients": Ks, "seed": SEEDS3},
+            tags=tags,
+        )
+        # coset: S_5 only, and K must BE the coset count (S_4 -> 5)
+        if base.get("dataset") == "s5":
+            specs += expand_grid(
+                {**common, "num_clients": 5, "partition": "coset",
+                 "coset_subgroup": "s_nm1"},
+                {"seed": SEEDS3}, tags=tags,
+            )
+    # E: MNIST has no operand or coset structure; label_block is its analogue
+    specs += expand_grid(
+        {"mode": "federated", **{k: v for k, v in SETUP_E.items()
+                                 if k != "batch_size"},
+         "n_train": 2000, "n_test": 5000, "batch_size": 100, "local_epochs": 5,
+         "strategy": "fedavg", "fraction_train": 1.0, "num_rounds": 8_000,
+         "eval_every": FL_EVAL_EVERY, "checkpoint_every": 800,
+         "checkpoint_client_weights": True},
+        {"partition": ["iid", "dirichlet", "label_block"],
+         "num_clients": [10, 20], "seed": SEEDS3},
+        tags={"tier": "T3b", "group": "partitions", "experiment": "exp3b",
+              "setup": "E"},
+    )
+    return specs
+
+
 def x_controls():
     """Two controls for claims already being made. 12 runs, ~3 slot-hours.
 
@@ -1990,6 +2080,7 @@ BUILDERS = {
     "p1_d_gd_probe": p1_d_gd_probe,
     "p1_cd_decay_band": p1_cd_decay_band,
     "p1_b_decay_band": p1_b_decay_band,
+    "t3b_partitions": t3b_partitions,
     "x_controls": x_controls,
     "t2_aggregation": t2_aggregation,
     "p0_c_alpha_width256": p0_c_alpha_width256,
