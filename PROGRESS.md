@@ -22,20 +22,35 @@ which is organised newest-first and keeps older sections for their reasoning.
 > | **Part 0** | 129 runs | C's cliff is α≈0.3 **not ≥0.5** (working point **α=0.40**) · A′ is faster at half width and **fails at double** · **decay clock confirmed** — D reproduces B's collapse · calibration: FedAdam 0.1, FedYogi 0.1, FedAvgM (1.0, 0.9), and **FedYogi beats FedAdam once both are tuned** |
 > | **exp2** (Part 1) | 192 runs | **On the anchor aggregation fully compensates** — 50 clients cost 17%. On the AdamW setups it degrades with K then fails, as the decay clock predicts. Floor arm ran for the first time: 6/87 cells grok |
 > | **exp3b** (Part 2, partial) | 54 runs | Anchor replicates: operand beats iid by 11% at K=50, **dirichlet tracks iid** → the effect is *coherence*, not heterogeneity. **`target` is 2× worse than iid.** **D inverts**: iid groks, operand 0/3 |
+> | **mechanism** (§16) | 0 runs | post-hoc on banked checkpoints. **The coherence effect precedes grokking** — the arms separate on spectral IPR by round 6,000 against a first crossing at 11,560 — and predicts *which* iid seeds grok. The per-client channel **cannot** test it on the operand arm (instrument = treatment). Setup D's dip is **masking**, not circuit decay |
 > | **diagnostics** | 12 runs | wd=0: B/C/D memorise then sit at chance — decay is load-bearing. **E is different** (74–81% without decay) — decay *finishes* rather than gates. Plus a correction to my own claim, §15.3 |
 >
-> ### Next
+> ### IN FLIGHT — launched 2026-08-10 12:57, two chains on disjoint GPU pools
+>
+> | chain | pool | blocks | runs | cost |
+> |---|---|---|---|---|
+> | `run_long_c_k50.sh` | 0–2, **per-gpu 1** | `t3b_bigk` — setup C K=50 | 9 | ~60 slot-h |
+> | `run_main_chain.sh` | 3–7, per-gpu 2 | `t3b_coset` → tier X → exp5 → `t3b_small` | 186 | ~137 slot-h |
+>
+> `--per-gpu 1` on the long chain is **required**: a C K=50 run measures 16.8 GB,
+> so two will not fit on a 23 GB L4. Progress lands in `ALL5_STATUS.md` after
+> every block. Costs are from measured `wall_s`, not the §8 fitted model, which
+> over-costs non-anchor setups ~2.6×.
+>
+> ### Next, after those land
 >
 > | | runs | cost | note |
 > |---|---|---|---|
-> | **D's coset arm** | ~9 | ~4 h | **highest value.** Decides whether D's operand failure *contradicts* the headline or *refines* it — coset is S₅'s algebraically coherent split, operand is not |
-> | `persist_local_opt_state=True` | ~12 | ~10 h | separates federation from optimiser restart on the AdamW setups (§15.3). No run has ever used this flag |
-> | exp3b on B, C, D | 54 | ~190 h | **deferred** — `logs/sweeps/split/t3b_later.jsonl`. Their ~1.9× within-cell seed spread buries the ~10% effect at 3 seeds |
-> | **Part 3** anchor redo | ~225 | ~275 h | exp4b (broken step axis) + exp5 (now unblocked by calibration). Repair, not new ground |
+> | **A′ at `persist_local_opt_state=True`** | ~3 | ~2 h | narrowed from ~12: the flag **has** been run — 12 paired runs in `s5_fl_probe`, and persisting Adam state does *not* recover the ceiling on B. Only A′'s 13.3× is still open (§15.3) |
+> | K=97 iid at a larger budget | ~5 | ~45 h | the one genuinely unresolved cell (§5.3); both successes land within 5% of the ceiling |
+> | a dedicated cell for §16.2's predictor | ~10 | — | pre-transition spectral IPR orders seeds by an outcome 9,000 rounds away, at n=5 |
+> | exp4b re-run | ~72 | — | the only remaining Part 3 item; its banked `total_steps` sit on the pre-0.6 inflated axis |
 >
 > Stale and **not** to be launched as written: `t1_replication`, `t2_phase_diagram`
-> (both predate Gate A), `t3_algorithm_comparison` (deferred), `t1_probe`'s 6
-> cancelled E=250 cells.
+> (both predate Gate A), `t1_probe`'s 6 cancelled E=250 cells.
+> (`t3_algorithm_comparison` is no longer deferred — it is running. Its
+> "placeholder" server LRs already equal §14.5's calibrated values, so its ids
+> did not move.)
 >
 > Scratch summaries from the run chains: `PART0_STATUS.md`, `EXP2_STATUS.md`,
 > `EXP3B_STATUS.md`.

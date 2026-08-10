@@ -92,7 +92,12 @@ Open: whether K=97 IID *fails* or is merely *slow* — both successes landed wit
 
 ## 16. The mechanism behind the partition result, and setup D's internals
 
-Post-hoc analysis of banked checkpoints. No new runs.
+Post-hoc analysis of banked checkpoints. No new runs. Every table below
+regenerates with:
+
+```bash
+venv/bin/python scripts/analyze_mechanism.py all      # or: confound | global | internals
+```
 
 ### 16.1 The per-client channel cannot test the mechanism in the cell that matters
 
