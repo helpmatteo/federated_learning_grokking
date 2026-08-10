@@ -182,11 +182,17 @@ def _section_for(row, args):
     if not getattr(args, "section_by", None):
         return {"centralized": "Centralized reference",
                 "federated": "Federated (FedAvg)"}.get(row.get("mode"), row.get("mode"))
+    # Several fields compose into one heading, so a page can be split by setup
+    # AND by partition -- the two-level grouping a comparison usually wants.
+    #
     # NOT `or "other"`: a legitimately zero value (weight_decay=0.0, the control
     # arm of any decay sweep) is falsy, so that would file the one row you most
     # want labelled under "other".
-    raw = row.get(args.section_by)
-    key = "other" if raw is None or raw == "" else str(raw)
+    parts = []
+    for field in [f.strip() for f in args.section_by.split(",") if f.strip()]:
+        raw = row.get(field)
+        parts.append("other" if raw is None or raw == "" else str(raw))
+    key = "  ·  ".join(parts)
     return (args.section_labels or {}).get(key, key)
 
 
@@ -641,7 +647,8 @@ def main():
     ap.add_argument("--standfirst", default=None,
                     help="paragraph under the h1 (HTML allowed)")
     ap.add_argument("--section-by", default=None,
-                    help="result-row field to split the page on, e.g. `experiment`. "
+                    help="result-row field(s) to split the page on, comma-"
+                         "separated for a composite heading, e.g. `setup,partition`. "
                          "Default: mode.")
     ap.add_argument("--section-labels", default=None,
                     help="rename sections, ';'-separated so labels may "
