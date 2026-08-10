@@ -66,8 +66,175 @@ partially censored.
     time 22× worse on an identical trajectory prefix (§14.4). Compare
     `t_first_cross` whenever budgets or logging rates differ.
 
+12. **The partition result now has a mechanism, and it runs the right way round**
+    (§16.2). Coherent shards build Fourier structure *before* they generalise:
+    at K=97 the operand and iid arms separate completely on per-neuron spectral
+    IPR by round 6,000, against an earliest first crossing anywhere of round
+    11,560. Within the iid arm alone the same measure orders the two seeds that
+    eventually grok above the three that never do, ~9,000 rounds early.
+
+13. **The per-client checkpoints cannot test that mechanism on the arm that
+    carries it** (§16.1). The saved signature is `W1[:, :p]` and `operand`
+    shards on the first operand, so at K=97 each client trains exactly one
+    column of the matrix being read — 98.8% of its deviation energy, against
+    10% under iid. Instrument and treatment are the same variable.
+
+14. **Setup D's mid-training dip is masking, not decay** (§16.3). The
+    non-compositional circuit is at chance (0.1–0.4%) at every α; the
+    compositional circuit alone *beats the full model* by up to 20 points, and
+    keeps improving straight through the dip while its share of the logit falls.
+    The dip is the marginal terms growing over a circuit that never degrades.
+
 Open: whether K=97 IID *fails* or is merely *slow* — both successes landed within
 5% of the budget ceiling, so that cell is not yet resolved.
+
+---
+
+## 16. The mechanism behind the partition result, and setup D's internals
+
+Post-hoc analysis of banked checkpoints. No new runs.
+
+### 16.1 The per-client channel cannot test the mechanism in the cell that matters
+
+Readiness blocker #2 added per-client weight checkpoints specifically so the
+frequency-consensus explanation for §5.4 could be tested post-hoc. On the cell
+that carries the claim — `t2_boundary`, K=97, operand vs iid — **it cannot**.
+
+`metrics/probes.py::client_signature` ships `W1[:, :p]`, the first-operand
+block. The `operand` partition shards by first operand. At K=97 = p each client
+therefore holds exactly one first-operand value, and trains exactly one column
+of the matrix the analysis reads. Measured as each client's deviation energy
+from the across-client mean, profiled by column:
+
+| top-1 column's share of per-client deviation energy | r1000 | r5000 | r9000 | r13000 | r17000 | r20000 |
+|---|---|---|---|---|---|---|
+| operand | 0.989 | 0.989 | 0.988 | 0.988 | 0.988 | 0.988 |
+| iid | 0.091 | 0.103 | 0.106 | 0.105 | 0.103 | 0.098 |
+
+Stable across every checkpoint round. Any cross-client "shared basis" statistic
+computed on this channel compares two structurally different objects, and would
+report a large effect that is a restatement of the partition's definition. The
+instrument and the treatment are the same variable.
+
+**This does not invalidate the checkpoints** — it says they answer the question
+on `iid`, `dirichlet` and `target` shards, and not on `operand` (or `coset`,
+which shards the same axis). It is the seventh measurement artifact this project
+has caught before it was claimed.
+
+### 16.2 The mechanism holds on the GLOBAL model, and it precedes grokking
+
+The global model is the same object in both arms, so it carries no such
+confound. Per-neuron spectral IPR of the global `W1[:, :97]`
+(`metrics/fourier.py::spectral_ipr`, the project's own instrument — values
+reproduce the CSV's `final_ipr` exactly, max |Δ| = 0.0000 across all 10 runs).
+`t2_boundary`, K=97, α=0.25, 5 seeds per arm. Higher = more periodic; 1/IPR is
+the effective number of frequencies per neuron.
+
+| round | 1,000 | 4,000 | 7,000 | 10,000 | 13,000 | 16,000 | 19,000 |
+|---|---|---|---|---|---|---|---|
+| iid | 0.0236 | 0.0352 | 0.0513 | 0.0667 | 0.0816 | 0.1005 | 0.1204 |
+| **operand** | 0.0250 | 0.0505 | 0.0804 | 0.1067 | 0.1357 | 0.1775 | **0.2296** |
+| iid 1/IPR | 42.4 | 28.4 | 19.5 | 15.0 | 12.3 | 10.0 | 8.3 |
+| **operand** 1/IPR | 40.0 | 19.8 | 12.4 | 9.4 | 7.4 | 5.6 | **4.4** |
+
+At the final round the arms are completely separated per seed — operand
+0.2313–0.2839 against iid 0.1159–0.1632.
+
+**The gap is not a consequence of grokking.** The earliest first crossing
+anywhere in the cell is round 11,560 (operand seed 42, 57,800 steps at E=5), so
+every round below it is pre-transition for all ten runs:
+
+| round | iid range | operand range | ratio | |
+|---|---|---|---|---|
+| 2,000 | 0.0261–0.0305 | 0.0300–0.0412 | 1.19× | overlap |
+| 4,000 | 0.0325–0.0421 | 0.0417–0.0642 | 1.43× | overlap |
+| 6,000 | 0.0405–0.0546 | 0.0556–0.0857 | 1.52× | **separated** |
+| 8,000 | 0.0485–0.0654 | 0.0731–0.1095 | 1.58× | **separated** |
+| 10,000 | 0.0575–0.0774 | 0.0962–0.1387 | 1.60× | **separated** |
+
+Complete separation ~5,600 rounds before any run reaches the bar. So coherent
+shards build Fourier structure *first*, and generalise *because* of it — the
+ordering the mechanism hypothesis predicts.
+
+**Why this is a consensus measure and not merely a circuit-quality one.** Under
+the operand partition each column of the first-operand block is trained by
+exactly one client. A periodic pattern *across* columns therefore cannot be
+produced by any single client — it requires the clients to agree. Under iid
+every client touches every column, so no agreement is needed. The global
+spectrum is thus a stricter test of consensus under operand than under iid, and
+operand is the arm that wins.
+
+**It is not confined to the sharded axis.** The second-operand block, which
+`operand` does not shard, shows the same ordering — 1.20× at round 4,000 rising
+to 1.43× at 10,000, separated by round 10,000. Weaker and later, consistent with
+consensus acting first where the shards bite and propagating to the rest of the
+circuit.
+
+**And it predicts *which seeds* grok.** Within the iid arm alone, the two seeds
+that eventually cross (at rounds 19,120 and 19,700) separate completely from the
+three that never do, from round 6,000 onward:
+
+| round | grokked (2) | censored (3) | |
+|---|---|---|---|
+| 4,000 | 0.0352, 0.0421 | 0.0325, 0.0334, 0.0386 | overlap |
+| 6,000 | 0.0477, 0.0546 | 0.0405, 0.0418, 0.0468 | **separated** |
+| 8,000 | 0.0613, 0.0654 | 0.0485, 0.0516, 0.0565 | **separated** |
+| 10,000 | 0.0746, 0.0774 | 0.0575, 0.0604, 0.0667 | **separated** |
+
+A within-arm result, so the partition is held fixed: spectral concentration at
+round 10,000 orders the seeds by an outcome ~9,000 rounds away. n=5, so this is
+a lead worth a dedicated cell, not a finished claim.
+
+### 16.3 `d_internals`: the dip is masking, not a loss of structure
+
+85 runs, 17 α rungs × 5 seeds, setup D centralized, previously unanalysed. The
+manifest asked *why* α's effect is almost entirely the phase-1 plateau P(α).
+Setup D's quadratic activation makes the split exact:
+`logit = A[c,a] + 2T[c,a,b] + B[c,b]`, where A and B cannot compose, so T is the
+compositional circuit.
+
+**The non-compositional circuit is dead everywhere.** A+B scores 0.1–0.4% at
+every α and every phase, at or below the 0.83% chance level. There is no
+memorise-then-compose handoff on this setup: it is compositional from the start.
+
+**The compositional circuit alone beats the full model**, at the plateau
+(step 1,800) and by more at the dip (3,600):
+
+| α | 0.3 | 0.4 | 0.45 | 0.5 | 0.6 |
+|---|---|---|---|---|---|
+| T accuracy − full-model test, plateau | 3.9 | 18.9 | **19.6** | 13.0 | 4.5 |
+| same, at the dip | 9.0 | 33.8 | 29.4 | 19.8 | 7.4 |
+
+Per-seed spread is ~1 point (α=0.4: 18.8, 18.9, 18.9, 19.2, 19.8), which for
+this project is an unusually tight effect. The gap peaks mid-ladder, near where
+P(α)'s sigmoid has its midpoint.
+
+**So the dip is not the circuit degrading.** From 1,800 to 3,600 steps T's own
+accuracy *rises* at every α ≥ 0.3 (α=0.4: 51.4 → 65.9%) while the full model's
+test accuracy falls and T's share of the logit drops (0.797 → 0.698). The
+marginal terms grow and mask a compositional circuit that never stops improving.
+P(α) is T's accuracy at 1,800 steps minus that masking penalty.
+
+**The pilot's `circ_units` lead does not replicate.** The manifest cites one
+seed at α=0.55 going 54 units at 1,800 → 75 at 3,600. That seed reproduces
+exactly; the other four go 95→55, 142→29, 89→68, 54→90. Across all 85 runs the
+participation ratio rises in 30 and falls in 55, and spans 22–206 at fixed α.
+The direction is seed noise, not a property of the dip.
+
+**Group structure arrives late.** Total-variation distance of the S₅ isotypic
+shares from the dimension-proportional null (dim²/120):
+
+| α | 0.2 | 0.3 | 0.4 | 0.45 | 0.5 | 0.55 | 0.6 |
+|---|---|---|---|---|---|---|---|
+| plateau | 0.017 | 0.031 | 0.062 | 0.067 | 0.078 | 0.083 | 0.084 |
+| dip | 0.016 | 0.040 | 0.070 | 0.079 | 0.078 | 0.082 | 0.086 |
+| end | 0.066 | 0.099 | 0.100 | 0.114 | 0.121 | 0.118 | 0.116 |
+
+Through phase 1 and the dip the decomposition is close to "no irrep selection at
+all"; it roughly doubles by the end, moving weight off the 6-dimensional 311 and
+onto the standard representation while suppressing both 1-dimensional irreps. So
+representation-theoretic structure is a phase-2 phenomenon, where the
+compositional circuit is a phase-1 one.
 
 ---
 
@@ -185,8 +352,23 @@ Two consequences:
    with an adaptive optimiser, amplified by A′ sitting at its cliff.
 2. **Every AdamW setup's federated cost conflates federation with optimiser
    restart** — A′, B, C, D, E alike. `persist_local_opt_state=True` exists to
-   separate them and no run has ever used it. That is the experiment that should
-   have been run here.
+   separate them.
+
+**CORRECTION (2026-08-10): it has been used.** This section originally said no
+run ever had. `s5_fl_probe` carries a paired arm — 12 banked runs, setup B,
+α=0.30, K=10, iid, 3 seeds, at E=5 and E=50 — and it was sitting unread:
+
+| E=5, 2,000 rounds | persist=False | persist=True |
+|---|---|---|
+| grokked | **3/3** | 2/3 |
+| t_memo | 8,200 · 4,400 · 6,800 | ∞ · 5,900 · 4,000 |
+| t_first_cross | 9,100 · 4,600 · 6,800 | ∞ · 6,600 · 4,900 |
+
+Persisting Adam state across rounds does **not** recover the ceiling on B: one
+seed fails outright, and the two that grok overlap the standard arm. So on the
+setup that has the data the optimiser-restart cost is small, and the claim above
+is weaker than stated for the family. The open case is **A′ specifically** —
+where the 13.3× was observed — not every AdamW setup. That is ~3 runs, not ~12.
 
 ### 15.4 Weight decay is load-bearing on three setups, and finishing on the fourth
 
@@ -1009,8 +1191,14 @@ Combined with §4 (Dirichlet ≡ iid at every K), the claim is:
 Unlike the breakdown claim, this one is insensitive to where the budget was set.
 The mechanism hypothesis — coherent shards let clients select a *shared* Fourier
 basis that averaging reinforces, where iid clients pick conflicting sets that
-partially cancel — is testable on **400 per-client weight snapshots already on
-disk** (20 checkpoints × 20 runs, `results/runs/*/checkpoints/`).
+partially cancel — is tested in **§16**, which finds it holds on the global
+model and *precedes* grokking, and finds that the per-client channel cannot test
+it on the operand arm at all.
+
+(The snapshot inventory here was also understated: **211 banked runs** carry
+per-client weights across all six setups — `aggregation`, `partitions`,
+`setup_k_ladder`, `boundary` and `k_collapse_budget` — not the 20 boundary runs
+this originally cited. `results/runs/*/checkpoints/`, 25 GB, gitignored.)
 
 ---
 
