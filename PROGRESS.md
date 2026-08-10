@@ -5,64 +5,40 @@ Working branch for the multi-setup rewrite. Current plan:
 Closed plans: `plan-all-that-needs-nested-seal.md` (boundary campaign),
 `gate-a-closeout.md` (Gate A).
 
-**Current as of 2026-08-07.** v2 code complete across all plan phases (0–5); Gate A
-closed; **Phase 1 run, and its four decision rules answered** (RESULTS.md §13). The
-**The setup/check phase is complete.** The K ceiling — the last thing gating it —
-resolved: there was no collapse, and the K axis is open at a measurable cost
-(below). The work in front is now writing the per-setup FL manifests and running
-v1's exp0–exp7 chain on them.
+v2 code is complete across all plan phases (0–5). Gate A, Phase 1 and the
+setup/check phase are all closed; the campaign itself is under way. The state
+block below is the current summary — read it before anything else in this file,
+which is organised newest-first and keeps older sections for their reasoning.
 
-> ## PART 0 COMPLETE (2026-08-08)
+> # STATE — 2026-08-10
 >
-> All five prerequisites landed: 129 runs, **0 failures**, 542/542 tests green.
-> `PART0_STATUS.md` has the raw summary; RESULTS §14 has the readings.
+> **1,226 runs banked · 594 machine-hours · 545 tests collected · 0 failed runs all campaign.**
+> Full readings in `RESULTS.md` §14 (Part 0) and §15 (exp2, exp3b, the diagnostics).
 >
-> | | verdict |
-> |---|---|
-> | 0.1 floor arm | wired + tested; fixed a latent `IncompleteRun` trap |
-> | 0.2 C's α ladder | **C's cliff is at α≈0.3, not ≥0.5.** Working point **α=0.40** (3/3) |
-> | 0.3 capacity | A′ is faster at width 128 and **fails at 512**; B's width is not binding; D needs ≥256; E's 200 stands |
-> | 0.4 K ladder | **decay clock confirmed** — D reproduces B's collapse. Both terms grow with K |
-> | 0.5 calibration | FedAdam 0.1 · FedYogi 0.1 · FedAvgM (1.0, 0.9). **FedYogi beats FedAdam once both are tuned** |
+> ### Done
 >
-> **Next: Parts 1–3** of `~/.claude/plans/plan-all-that-needs-valiant-hamster.md`
-> — exp2 (three arms), exp3b (structured partitions), and the anchor redo. The
-> budgets they need are now measured; see RESULTS §14.3 for `t_memo(K)`/`delay(K)`
-> per setup. One decision waits for a human: **C runs at α=0.40, not 0.30**, which
-> raises C's cost above the plan's estimate.
-
-> ## RUNNING (launched 2026-08-09, detached)
+> | | | verdict |
+> |---|---|---|
+> | **Part 0** | 129 runs | C's cliff is α≈0.3 **not ≥0.5** (working point **α=0.40**) · A′ is faster at half width and **fails at double** · **decay clock confirmed** — D reproduces B's collapse · calibration: FedAdam 0.1, FedYogi 0.1, FedAvgM (1.0, 0.9), and **FedYogi beats FedAdam once both are tuned** |
+> | **exp2** (Part 1) | 192 runs | **On the anchor aggregation fully compensates** — 50 clients cost 17%. On the AdamW setups it degrades with K then fails, as the decay clock predicts. Floor arm ran for the first time: 6/87 cells grok |
+> | **exp3b** (Part 2, partial) | 54 runs | Anchor replicates: operand beats iid by 11% at K=50, **dirichlet tracks iid** → the effect is *coherence*, not heterogeneity. **`target` is 2× worse than iid.** **D inverts**: iid groks, operand 0/3 |
+> | **diagnostics** | 12 runs | wd=0: B/C/D memorise then sit at chance — decay is load-bearing. **E is different** (74–81% without decay) — decay *finishes* rather than gates. Plus a correction to my own claim, §15.3 |
 >
-> Two chains under `setsid`, so they survive the session:
-> `x_controls` (12 runs) then `run_exp3b_now.sh` (54 runs), which waits for it.
+> ### Next
 >
-> | | |
-> |---|---|
-> | `x_controls` | A′ at E=1/K=2 (the FedAvg identity control) + wd=0 on B, C, E |
-> | `t3b_now` | exp3b on **A, A′, E** — the setups whose seed noise is small enough to see the effect — plus D's iid/operand cells |
+> | | runs | cost | note |
+> |---|---|---|---|
+> | **D's coset arm** | ~9 | ~4 h | **highest value.** Decides whether D's operand failure *contradicts* the headline or *refines* it — coset is S₅'s algebraically coherent split, operand is not |
+> | `persist_local_opt_state=True` | ~12 | ~10 h | separates federation from optimiser restart on the AdamW setups (§15.3). No run has ever used this flag |
+> | exp3b on B, C, D | 54 | ~190 h | **deferred** — `logs/sweeps/split/t3b_later.jsonl`. Their ~1.9× within-cell seed spread buries the ~10% effect at 3 seeds |
+> | **Part 3** anchor redo | ~225 | ~275 h | exp4b (broken step axis) + exp5 (now unblocked by calibration). Repair, not new ground |
 >
-> ```bash
-> tail -f logs/sweeps/exp3b_*.log ; cat EXP3B_STATUS.md
-> ```
-
-> ## DEFERRED: exp3b on B, C and D
+> Stale and **not** to be launched as written: `t1_replication`, `t2_phase_diagram`
+> (both predate Gate A), `t3_algorithm_comparison` (deferred), `t1_probe`'s 6
+> cancelled E=250 cells.
 >
-> `logs/sweeps/split/t3b_later.jsonl` — 54 runs, ~190 slot-h — **written and
-> deliberately not run.** exp3b hunts a ~10% effect (on the anchor, operand groks
-> at 13,700 against iid's 15,200). Within-cell seed spread at exp2's K=10 cells:
->
-> | A | A′ | E | B | C | D |
-> |---|---|---|---|---|---|
-> | 1.1× | 1.0× | 1.0× | **1.9×** | **1.8×** | **1.9×** |
->
-> B, C and D vary by ~2× when the *identical* config is re-run, so a 10% effect is
-> buried and 3 seeds cannot recover it. They are 190 of exp3b's 261 slot-h. Run
-> them when there is budget for more seeds, or when the question for them is a
-> large qualitative one rather than a timing difference.
->
-> D's iid/operand cells are in the NOW split regardless: an earlier probe hinted
-> D's operand shard is much *worse* than iid, and an effect that size is not
-> hidden by 1.9× noise. If it holds it inverts the project's headline.
+> Scratch summaries from the run chains: `PART0_STATUS.md`, `EXP2_STATUS.md`,
+> `EXP3B_STATUS.md`.
 
 > **Read the data, not just this file.** Sweeps get banked faster than these notes
 > get rewritten. Ground truth is `results/data/runs_v2.csv` and
@@ -74,8 +50,8 @@ v1's exp0–exp7 chain on them.
 |---|---|
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`; `main` has nothing this lacks) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
-| Tests | **542/542 pass** (`venv/bin/python -m pytest tests/ -q`, ~9 min incl. FL integration) |
-| Runs banked | **968** in `results/data/runs_v2.csv` (664 grokked, 304 censored) + 870 v1 runs in `runs.csv`. 338 machine-hours |
+| Tests | **545 collected** (`venv/bin/python -m pytest tests/ -q`, ~9 min incl. FL integration) |
+| Runs banked | **1,226** in `results/data/runs_v2.csv` (799 grokked, 427 censored) + 870 v1 runs in `runs.csv`. 594 machine-hours |
 | Setups | A quad-MLP/mod-97 · A′ quad-MLP/mod-97/AdamW (**measured**, §13.3) · B transformer/mod-113 · C transformer/S₅ · D quad-MLP/S₅ · E MLP/MNIST-1k. **D′ dropped** — the gate that would have required it opened (§13.7) |
 | FL algorithms | FedAvg, FedProx, FedAvgM, FedYogi, FedAdam (native) + SCAFFOLD (adapted, **raises under AdamW by design**) |
 | Statistics | censored survival (KM median + fraction-grokked + bootstrap CI); `scripts/summarize_runs.py` |

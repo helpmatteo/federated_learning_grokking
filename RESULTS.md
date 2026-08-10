@@ -1,13 +1,13 @@
 # Results — federated grokking
 
-Everything measured, as of 2026-08-08. Branch `v2-multisetup`.
+Everything measured, as of 2026-08-10. Branch `v2-multisetup`.
 
 Companion documents: `PROGRESS.md` (what is built and what remains),
 `~/.claude/plans/plan-all-that-needs-valiant-hamster.md` (the current plan),
 `~/.claude/plans/plan-all-that-needs-nested-seal.md` (the boundary campaign, closed).
 
 **Data behind every number here:**
-`results/data/runs_v2.csv` (968 v2 runs) and `results/data/runs.csv` (870 v1 runs,
+`results/data/runs_v2.csv` (1,226 v2 runs) and `results/data/runs.csv` (870 v1 runs,
 recovered from logs). Both are committed. Regenerate any table with:
 
 ```bash
@@ -70,6 +70,141 @@ Open: whether K=97 IID *fails* or is merely *slow* — both successes landed wit
 5% of the budget ceiling, so that cell is not yet resolved.
 
 ---
+
+## 15. exp2 and exp3b — main's two central experiments, on six setups
+
+449 runs. Both are ports of `main`'s own experiments, with their arms and seed
+counts unchanged and their grids re-scoped against what Part 0 measured.
+
+### 15.1 exp2 — does aggregation compensate for fragmenting the data?
+
+main's three conditions verbatim (`experiments/exp2_aggregation.py`): `cent_full`
+(one model, all the data), `cent_reduced` (one model, one client's 1/K shard),
+`fl` (K clients, FedAvg). **No v2 manifest had ever carried the floor arm** —
+`reduced_arm` was written, tested and plumbed with nothing calling it.
+
+192 runs. K ∈ {2,5,10,20,50}, 3 seeds, each setup at its own working point.
+FL as a multiple of its own centralized ceiling, on `t_first_cross`:
+
+| K | A (GD) | B | D | E |
+|---|---|---|---|---|
+| 2 | **1.00×** | 1.25× | **1.01×** | 1.53× |
+| 5 | 1.01× | 1.23× | 1.26× | 3.75× |
+| 10 | 1.02× | 1.32× | 3.67× | 7.08× |
+| 20 | 1.06× | 2.07× | 4.39× | 15.56× |
+| 50 | **1.17×** | **0/3** | **0/3** | — |
+
+**On the anchor, aggregation fully compensates.** Fifty clients cost 17% and
+nothing else. That is main's exp2 conclusion, now with a floor arm and a K=2
+control it never had.
+
+**On the AdamW setups it degrades with K and then fails**, exactly as the decay
+clock predicts (§14.3). A is the only setup with no decay clock and the only one
+that holds.
+
+**The floor reproduces main qualitatively**: one client's shard groks in **6 of
+87** cells (7%); main reported 1 of 30.
+
+**The K=2 control earned its place.** It is the cell closest to centralized, so
+`cent_full` and `fl` should agree there. A (1.00×) and D (1.01×) agree exactly,
+which validates the compute-matched step axis. Two setups did not, and they
+failed differently:
+
+- **C is not interpretable at n=3.** FL reads 4.5× *faster* than centralized, but
+  centralized spans 11,200–43,600 across three seeds against FL's 6,500–15,400 —
+  overlapping ranges. C's ~30× seed variance swamps the comparison. No number is
+  reported for C.
+- **A′ reads 13.3× at K=2**, consistently across seeds, with memorisation
+  identical at 200. See §15.3 — this is expected, not a fault.
+
+### 15.2 exp3b — does it matter HOW you shard?
+
+main's exp3b (iid · operand · target) plus **dirichlet**, the control main could
+not run: `t2_k_breakdown` found operand faster than iid at K=50 while dirichlet
+tracked iid exactly, so without it *structure* and *heterogeneity* are confounded.
+
+Run on the setups whose seed noise is small enough to resolve a ~10% effect —
+within-cell spread at exp2's K=10 cells is 1.0–1.1× for A, A′ and E against
+1.8–1.9× for B, C and D. B and C are deferred; **D's iid/operand cells ran
+anyway**, since a 1.9× spread cannot hide a qualitative failure.
+
+Median `t_first_cross`:
+
+| setup | K | iid | operand | target | dirichlet |
+|---|---|---|---|---|---|
+| **A** | 10 | 12,900 | **12,700** | 14,100 | 13,000 |
+| **A** | 50 | 14,700 | **13,100** | **28,200** | 15,000 |
+| D | 10 | 78,900 | **0/3** | — | — |
+| D | 20 | 94,300 | **0/3** | — | — |
+| E | 10 | 5,100 | — | — | **4,000** |
+| E | 20 | 11,200 | — | — | **5,800** |
+
+**The anchor replicates, and the control does its job.** Operand beats iid by
+~1.5% at K=10 and **11% at K=50** — the gap grows with fragmentation. Dirichlet
+tracks iid at both K. So the effect is **coherence, not heterogeneity**.
+
+**`target` is ~2× WORSE than iid at K=50.** Sharding by output class is
+structured and actively harmful. main ran `target` but had no dirichlet arm to
+read it against, so this ordering was not available to it.
+
+**D inverts it: iid groks at both K, operand fails 0/3.** Not slower — flat.
+Before treating that as a contradiction, note that on S₅ the operand partition
+shards by first-operand *element*, which is **not** algebraically coherent the
+way a mod-p operand shard is. S₅'s coherent split is **coset**, and those cells
+have not run. The available reading is therefore "incoherent structure is worse
+than random", which *agrees* with the anchor rather than contradicting it — and
+the coset arm is what decides between "structure helps" and "coherence helps".
+
+**A′ shows no stable ordering** across K and is treated as uninterpretable: it
+sits at its cliff (margin +0.01 against +0.10 for every other setup) and carries
+the confound in §15.3.
+
+**E prefers unstructured non-IID** — dirichlet beats iid at both K. `label_block`
+fails 0/3, consistent with its shards being single-class.
+
+### 15.3 A CORRECTION: the E=1 FedAvg identity covers stateless optimisers only
+
+exp2's A′ column reads 13.3× at K=2, where federation should be nearly a no-op.
+To test it I ran A′ at **E=1**, asserting the cell *must* reproduce the ceiling
+because FedAvg at E=1 is an exact algebraic identity with centralized GD.
+
+It did not — 0.0% test on all three seeds. **The assertion was wrong, not the
+harness.**
+
+`tests/test_fedavg_identity.py` proves that identity at `momentum=0.0,
+weight_decay=0.0` — plain, **stateless** GD. It never claimed to cover AdamW. And
+`training/federated.py` rebuilds the local optimiser every round when
+`persist_local_opt_state=False`, which is standard FedAvg semantics. For GD that
+is a no-op; for AdamW at E=1 **every round is a single cold-start Adam step**,
+which under bias correction is closer to signSGD than to Adam. The cell must
+*not* match the ceiling.
+
+Two consequences:
+
+1. **exp2 stands.** A′'s 13.3× is the optimiser-restart cost of faithful FedAvg
+   with an adaptive optimiser, amplified by A′ sitting at its cliff.
+2. **Every AdamW setup's federated cost conflates federation with optimiser
+   restart** — A′, B, C, D, E alike. `persist_local_opt_state=True` exists to
+   separate them and no run has ever used it. That is the experiment that should
+   have been run here.
+
+### 15.4 Weight decay is load-bearing on three setups, and finishing on the fourth
+
+wd=0 controls, centralized, 3 seeds. Every cell **memorises by epoch 200–400**,
+so none of these is a training failure:
+
+| setup | wd=0 final test | chance | with decay |
+|---|---|---|---|
+| B | 3.2 · 5.9 · 2.5% | 0.88% | 100% |
+| C | 0.3 · 0.4 · 0.4% | 0.83% | 100% |
+| D | 1.5 · 1.2 · 1.2% | 0.83% | 95–98% |
+| **E** | **81.0 · 74.2 · 80.3%** | 10% | 92–95% |
+
+B, C and D memorise and then sit at chance indefinitely: decay is what causes
+grokking. **E is different** — without decay it reaches 74–81%, far above chance
+but short of its 90% bar, so decay *finishes* generalisation rather than gating
+it. That matches Omnigrok, and it means "these setups need weight decay to grok"
+is true for B/C/D and **false as stated for E**.
 
 ## 14. Part 0 — the campaign prerequisites, and the decay clock confirmed
 
