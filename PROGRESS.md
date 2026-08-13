@@ -6,54 +6,53 @@ Closed plans: `plan-all-that-needs-nested-seal.md` (boundary campaign),
 `gate-a-closeout.md` (Gate A).
 
 v2 code is complete across all plan phases (0–5). Gate A, Phase 1 and the
-setup/check phase are all closed; the campaign itself is under way. The state
+setup/check phase are all closed, and the campaign has now RUN to completion.
+The state
 block below is the current summary — read it before anything else in this file,
 which is organised newest-first and keeps older sections for their reasoning.
 
-> # STATE — 2026-08-10
+> # STATE — 2026-08-13
 >
-> **1,226 runs banked · 594 machine-hours · 545 tests collected · 0 failed runs all campaign.**
-> Full readings in `RESULTS.md` §14 (Part 0) and §15 (exp2, exp3b, the diagnostics).
+> **1,421 runs banked · 842 machine-hours · 545 tests collected · 0 failed runs all campaign.**
+> Full readings in `RESULTS.md` §17 (the all-5 campaign), §16 (mechanism),
+> §14 (Part 0) and §15 (exp2 — but read §17.2, not §15.2, for partitions).
+>
+> **The campaign is finished. Nothing is running.** Every manifest that was
+> launched is complete; the only outstanding specs are the three already marked
+> stale, below.
 >
 > ### Done
 >
-> | | | verdict |
+> | | runs | verdict |
 > |---|---|---|
-> | **Part 0** | 129 runs | C's cliff is α≈0.3 **not ≥0.5** (working point **α=0.40**) · A′ is faster at half width and **fails at double** · **decay clock confirmed** — D reproduces B's collapse · calibration: FedAdam 0.1, FedYogi 0.1, FedAvgM (1.0, 0.9), and **FedYogi beats FedAdam once both are tuned** |
-> | **exp2** (Part 1) | 192 runs | **On the anchor aggregation fully compensates** — 50 clients cost 17%. On the AdamW setups it degrades with K then fails, as the decay clock predicts. Floor arm ran for the first time: 6/87 cells grok |
-> | **exp3b** (Part 2, partial) | 54 runs | Anchor replicates: operand beats iid by 11% at K=50, **dirichlet tracks iid** → the effect is *coherence*, not heterogeneity. **`target` is 2× worse than iid.** **D inverts**: iid groks, operand 0/3 |
-> | **mechanism** (§16) | 0 runs | post-hoc on banked checkpoints. **The coherence effect precedes grokking** — the arms separate on spectral IPR by round 6,000 against a first crossing at 11,560 — and predicts *which* iid seeds grok. The per-client channel **cannot** test it on the operand arm (instrument = treatment). Setup D's dip is **masking**, not circuit decay |
-> | **diagnostics** | 12 runs | wd=0: B/C/D memorise then sit at chance — decay is load-bearing. **E is different** (74–81% without decay) — decay *finishes* rather than gates. Plus a correction to my own claim, §15.3 |
+> | **Part 0** | 129 | C's cliff is α≈0.3 **not ≥0.5** (working point **α=0.40**) · A′ is faster at half width and **fails at double** · **decay clock confirmed** · calibration: FedAdam 0.1, FedYogi 0.1, FedAvgM (1.0, 0.9) |
+> | **exp2** | 192 | **On the anchor aggregation fully compensates** — 50 clients cost 17%. On the AdamW setups it degrades with K then fails, as the decay clock predicts |
+> | **exp5** (§17.1) | 90 | **Adaptive optimisers are 10–20× faster than FedAvg** at calibrated LRs — v1's FedAdam claim survives being made fair. **FedProx loses to the baseline**, censored on 2 of 3 cells. SCAFFOLD works |
+> | **exp3b** (§17.2) | 144 | **The partition headline narrows to A and C.** Coset is **1.9× faster** than random shards on C and **fails outright on D** — same task, same partition, different architecture. `target` is the worst partition everywhere |
+> | **tier X** (§17.3) | 51 | D's inherited wd=1.0 survives a fourth check — the only band that groks 9/9. Lower lr is faster, not slower |
+> | **mechanism** (§16) | 0 | post-hoc. **The coherence effect precedes grokking** (arms separate by round 6,000 vs first crossing at 11,560) and predicts *which* seeds grok. The per-client channel **cannot** test it on the operand arm — instrument = treatment. D's dip is **masking**, not circuit decay |
+> | **drift** (§17.4) | 0 | post-hoc on all 601 federated runs. Tracks delay on **every** axis; SCAFFOLD confirms by intervention (188× less divergence, 12× faster). **FedProx falsifies it as a magnitude story** — 51× less divergence, never groks |
 >
-> ### IN FLIGHT — launched 2026-08-10 12:57, two chains on disjoint GPU pools
->
-> | chain | pool | blocks | runs | cost |
-> |---|---|---|---|---|
-> | `run_long_c_k50.sh` | 0–2, **per-gpu 1** | `t3b_bigk` — setup C K=50 | 9 | ~60 slot-h |
-> | `run_main_chain.sh` | 3–7, per-gpu 2 | `t3b_coset` → tier X → exp5 → `t3b_small` | 186 | ~137 slot-h |
->
-> `--per-gpu 1` on the long chain is **required**: a C K=50 run measures 16.8 GB,
-> so two will not fit on a 23 GB L4. Progress lands in `ALL5_STATUS.md` after
-> every block. Costs are from measured `wall_s`, not the §8 fitted model, which
-> over-costs non-anchor setups ~2.6×.
->
-> ### Next, after those land
+> ### Next
 >
 > | | runs | cost | note |
 > |---|---|---|---|
-> | **A′ at `persist_local_opt_state=True`** | ~3 | ~2 h | narrowed from ~12: the flag **has** been run — 12 paired runs in `s5_fl_probe`, and persisting Adam state does *not* recover the ceiling on B. Only A′'s 13.3× is still open (§15.3) |
-> | K=97 iid at a larger budget | ~5 | ~45 h | the one genuinely unresolved cell (§5.3); both successes land within 5% of the ceiling |
+> | **FedAvg damped to FedProx's step size** | ~15 | ~6 h | **the one experiment the campaign earned.** Separates "corrected direction" from "suppressed magnitude" — the two interventions that both cut drift and land on opposite sides of grokking (§17.4). Not written |
+> | **A′ at `persist_local_opt_state=True`** | ~3 | ~2 h | narrowed from ~12: the flag **has** been run (12 paired runs in `s5_fl_probe`); only A′'s 13.3× is still open (§15.3) |
+> | D's coset at a longer budget | ~3 | ~6 h | two of three seeds were still climbing at 250,000 steps (+11.7, +6.7 pts/100k). "≥10× slower than iid" is safe; "never groks" is not |
+> | K=97 iid at a larger budget | ~5 | ~45 h | the one genuinely unresolved cell (§5.3) |
 > | a dedicated cell for §16.2's predictor | ~10 | — | pre-transition spectral IPR orders seeds by an outcome 9,000 rounds away, at n=5 |
-> | exp4b re-run | ~72 | — | the only remaining Part 3 item; its banked `total_steps` sit on the pre-0.6 inflated axis |
 >
-> Stale and **not** to be launched as written: `t1_replication`, `t2_phase_diagram`
-> (both predate Gate A), `t1_probe`'s 6 cancelled E=250 cells.
-> (`t3_algorithm_comparison` is no longer deferred — it is running. Its
-> "placeholder" server LRs already equal §14.5's calibrated values, so its ids
-> did not move.)
+> ### Stale — decide, do not launch as written
+>
+> `t1_replication` (126 of 150) and `t2_phase_diagram` (307 of 415) both predate
+> Gate A; `t1_probe`'s 6 cancelled E=250 cells are retired by cost. **439 specs
+> total**, and they have been "rewrite / re-scope" for weeks — either re-scope
+> them against what Part 0 and exp2 measured, or delete them so the outstanding
+> count stops reading as a backlog.
 >
 > Scratch summaries from the run chains: `PART0_STATUS.md`, `EXP2_STATUS.md`,
-> `EXP3B_STATUS.md`.
+> `EXP3B_STATUS.md`, `ALL5_STATUS.md`.
 
 > **Read the data, not just this file.** Sweeps get banked faster than these notes
 > get rewritten. Ground truth is `results/data/runs_v2.csv` and
@@ -66,7 +65,7 @@ which is organised newest-first and keeps older sections for their reasoning.
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`; `main` has nothing this lacks) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
 | Tests | **545 collected** (`venv/bin/python -m pytest tests/ -q`, ~9 min incl. FL integration) |
-| Runs banked | **1,226** in `results/data/runs_v2.csv` (799 grokked, 427 censored) + 870 v1 runs in `runs.csv`. 594 machine-hours |
+| Runs banked | **1,421** in `results/data/runs_v2.csv` (944 grokked, 477 censored) + 870 v1 runs in `runs.csv`. 842 machine-hours |
 | Setups | A quad-MLP/mod-97 · A′ quad-MLP/mod-97/AdamW (**measured**, §13.3) · B transformer/mod-113 · C transformer/S₅ · D quad-MLP/S₅ · E MLP/MNIST-1k. **D′ dropped** — the gate that would have required it opened (§13.7) |
 | FL algorithms | FedAvg, FedProx, FedAvgM, FedYogi, FedAdam (native) + SCAFFOLD (adapted, **raises under AdamW by design**) |
 | Statistics | censored survival (KM median + fraction-grokked + bootstrap CI); `scripts/summarize_runs.py` |

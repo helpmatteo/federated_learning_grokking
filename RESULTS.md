@@ -1,13 +1,13 @@
 # Results — federated grokking
 
-Everything measured, as of 2026-08-10. Branch `v2-multisetup`.
+Everything measured, as of 2026-08-13. Branch `v2-multisetup`.
 
 Companion documents: `PROGRESS.md` (what is built and what remains),
 `~/.claude/plans/plan-all-that-needs-valiant-hamster.md` (the current plan),
 `~/.claude/plans/plan-all-that-needs-nested-seal.md` (the boundary campaign, closed).
 
 **Data behind every number here:**
-`results/data/runs_v2.csv` (1,226 v2 runs) and `results/data/runs.csv` (870 v1 runs,
+`results/data/runs_v2.csv` (1,421 v2 runs) and `results/data/runs.csv` (870 v1 runs,
 recovered from logs). Both are committed. Regenerate any table with:
 
 ```bash
@@ -85,8 +85,205 @@ partially censored.
     keeps improving straight through the dip while its share of the logit falls.
     The dip is the marginal terms growing over a circuit that never degrades.
 
+15. **Adaptive server optimisers are 10–20× faster than FedAvg on the hard
+    cells** (§17.1), with every method at its own calibrated LR — so v1's
+    FedAdam claim survives being made fair, and the advantage is larger than v1
+    reported. FedYogi ties or beats FedAdam once both are tuned. **FedProx at
+    μ=0.01 loses to the baseline it is meant to improve**: censored on two cells
+    of three.
+
+16. **The partition headline narrows to two setups** (§17.2). Against exactly
+    matched iid baselines, coherent sharding wins on A and on C — 1.9× on C, the
+    strongest instance in the study — and fails on B and D. C and D differ only
+    in architecture, so *whether* coherence helps is a property of the setup.
+    Incoherent structure (`target`) is the worst partition everywhere it ran.
+
+17. **Client drift tracks delay on every design axis and is not the cause**
+    (§17.4). K, E and partition all move drift and delay together, and SCAFFOLD
+    confirms it by intervention — 188× less client divergence, 12× faster. But
+    FedProx cuts divergence 51× and never groks, so drift magnitude is neither
+    necessary nor sufficient. What separates them is whether the *direction* is
+    corrected or the magnitude merely suppressed.
+
 Open: whether K=97 IID *fails* or is merely *slow* — both successes landed within
 5% of the budget ceiling, so that cell is not yet resolved.
+
+---
+
+## 17. The all-5 campaign — exp5, exp3b completed, tier X, and client drift
+
+195 runs, 0 failures, finished 2026-08-11. Two chains on disjoint GPU pools
+(`scripts/run_main_chain.sh`, `scripts/run_long_c_k50.sh`). Costs below are from
+measured `wall_s`, not §8's fitted model, which over-costs non-anchor setups
+~2.6×.
+
+### 17.1 exp5 — v1's FedAdam claim survives calibration (`t3_algorithm_comparison`, 90 runs)
+
+Every method fixed at its own calibrated server LR (§14.5), so this is the fair
+comparison v1 could not make: v1 swept `server_lr` for FedAdam *alone* and then
+reported it ~10× faster than the field. Median `t_first_cross`, 5 seeds:
+
+| | H1 | H2 | H3 |
+|---|---|---|---|
+| FedAvg | 45,500 | 61,000 | 31,000 |
+| **FedAdam** | **3,000** | 3,000 | 3,000 |
+| **FedYogi** | 5,000 | **2,500** | **2,000** |
+| SCAFFOLD | 4,500 | 5,000 | 4,000 |
+| FedAvgM | 7,500 | 10,000 | 6,000 |
+| FedProx | **0/5** | **0/5** | 345,000 |
+
+Cells: H1 α=0.25 K=10 E=25 iid · H2 α=0.25 K=10 E=25 Dirichlet(0.1) · H3 α=0.30
+K=10 E=50 Dirichlet(0.1). The ordering is identical on `t_grok`, so it does not
+depend on which statistic is read.
+
+**The claim survives, and §14.5 was too pessimistic about it.** That section
+warned "the ordering may not survive" once every method was tuned. What
+calibration changes is only *which* adaptive method wins — FedYogi ties or beats
+FedAdam on two cells of three — not the 10–20× advantage over FedAvg, which is
+larger here than v1 reported.
+
+**FedProx at μ=0.01 is worse than doing nothing**: censored on two cells, and
+11× slower than plain FedAvg on the third. It is the only method in the study
+that loses to the baseline it is meant to improve. See §17.4 — this is not a
+tuning accident, it is the shape of what the proximal term does.
+
+**SCAFFOLD works**, and it is the only drift-correction method that does. Third
+behind the two adaptive optimisers on every cell and ahead of FedAvgM.
+
+### 17.2 exp3b completed — the partition claim narrows to two setups
+
+The 54 deferred cells ran, plus coset. Every structured arm is now read against
+an **exactly matched** iid baseline — same setup, K, α, width and budget — rather
+than against a working point borrowed from another sweep. Ratio to that
+baseline, on `t_first_cross`; **bold** beats random shards:
+
+| setup | K | iid (steps) | coherent | incoherent | Dirichlet |
+|---|---|---|---|---|---|
+| **A** | 10 | 12,900 | **0.98×** operand | 1.09× target | 1.01× |
+| **A** | 50 | 14,700 | **0.89×** operand | **1.92×** target | 1.02× |
+| **B** | 10 | 32,500 | 2/3 operand | **0/3** target | **0.16×** |
+| **B** | 20 | 9,100 | 2/3 operand | **0/3** target | **0.90×** |
+| **C** | 5 | 8,100 | **0.53×** coset | — | — |
+| **C** | 10 | 9,900 | — | 1.15× operand · 0/3 target | 1.58× |
+| **C** | 50 | 2/3 | — | 0/3 | 0/3 |
+| **D** | 5 | 27,100 | **0/3** coset | — | — |
+| **D** | 10 | 78,900 | — | 0/3 operand · 0/3 target | 0/3 |
+| **D** | 20 | 94,300 | — | 0/3 | 2/3 |
+| **E** | 10 | 5,100 | — | 0/3 label_block | **0.78×** |
+| **E** | 20 | 11,200 | — | 0/3 label_block | **0.52×** |
+
+Partitions are grouped by what they *are*. The algebraically coherent split is
+`operand` on modular arithmetic but **`coset`** on S₅ — sharding S₅ by
+first-operand element is structured without being coherent, which is why it sits
+with `target`.
+
+**The headline holds on A and C, and on nothing else.** On the anchor operand
+beats iid and the margin grows with fragmentation (0.98× at K=10, 0.89× at
+K=50). On C the coherent split is **1.9× faster than random shards**, which is
+the strongest single instance of the effect in the study and the first on a
+second setup. On B the coherent split is *slower* and Dirichlet wins; on D every
+structured partition fails outright.
+
+> So §5.4's "coherent shards are strictly better than random ones" is **withdrawn
+> as a general claim**. What survives: *where* coherent sharding helps it helps a
+> lot and the margin grows with K, and incoherent structure (`target`) is the
+> worst partition in the study — 0/3 on B, C and D alike, and 1.92× on A.
+
+**C and D are the cleanest contrast the project has.** Same task, same optimiser,
+same coherent partition, same K, differing only in architecture: coset makes the
+transformer 1.9× faster and stops the quadratic MLP grokking at all, where random
+shards grok 3/3. Whether coherence helps is a property of the setup, not of the
+partition.
+
+**A′ is still uninterpretable** and is excluded from the reading above: `target`
+is its *fastest* partition at both K (0.56×, 0.57×), which no account predicts.
+It sits at its cliff (§15.2) and carries §15.3's optimiser-restart confound.
+
+**Two cells that are not what they look like.** D's coset seeds were still
+climbing at the 250,000-step ceiling — +11.7 and +6.7 accuracy points per 100,000
+steps on two of three — so the defensible claim is **≥10× slower than random
+shards**, not "never groks". And C at K=50 is a **training** failure, not a
+partition result: peak train accuracy is 12–15% on operand and 1.6% on target, so
+the model never memorises. That is the decay clock at high K (§14.3), and it
+**corrects §14.3's "C is 3/3 at every K, the only setup that never degrades"** —
+that was measured at α=0.50 under iid. At α=0.40 with structured shards, C
+degrades like every other AdamW setup.
+
+### 17.3 Tier X — D's decay ladder finishes, and the step-size control
+
+`x_d_wd_ladder` (45) and `x_d_lr_control` (18), both centralized setup D, ~1.4
+slot-hours between them. Median `t_first_cross`:
+
+| lr·λ band (wd) | 0.0 | 0.1 | 0.3 | **1.0** | 3.0 |
+|---|---|---|---|---|---|
+| grokked | 0/9 | 6/9 | 6/9 | **9/9** | 6/9 |
+| median | — | 16,613 | 17,388 | **9,650** | 1,100 |
+
+**The inherited wd=1.0 survives a fourth check**, now on the order parameter
+rather than on a time: it is the only band that groks every seed. wd=3.0 is much
+faster *when* it works (1,100) and fails a third of the time — decay accelerating
+generalisation right up to the point where it outruns learning, which is §6.2's
+boundary seen from the other side.
+
+The lr control inverts the naive expectation: **lower is faster.** 2,750 at
+lr=2.5e-4, 5,188 at 1e-3, 15,038 at 4e-3, all 6/6.
+
+### 17.4 Client drift — right on every axis, wrong as a magnitude story
+
+Does client drift delay grokking? Every federated run logs `mean_client_drift`
+(how far each client moves locally) and `client_weight_divergence` (how much
+clients disagree), so this is measurable on all 601 federated runs rather than
+inferred from K and E.
+
+**On every design axis, drift and delay move together.** Setup A, iid, α=0.30:
+
+| K | 2 | 5 | 10 | 20 | 50 | | E | 1 | 5 | 50 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| drift/round | 0.063 | 0.113 | 0.167 | 0.245 | 0.417 | | drift/round | 0.018 | 0.167 | 1.92 |
+| delay | 8,900 | 9,250 | 9,450 | 9,800 | 11,250 | | delay | — | 9,450 | 19,000 |
+
+And with K and E held fixed so only the partition varies, the fastest partition
+is the lowest-drift one in **4 of 4** cells. At K=50: operand 0.349 → 13,418;
+iid 0.417 → 14,950; dirichlet 0.441 → 15,200; target 0.996 → 28,200.
+
+**It has to be disagreement, not movement.** On setup D the failing arms move
+*less* than the arm that groks — which is the datum §12 used to rule drift out,
+and it was measuring the wrong quantity. On `client_weight_divergence` the
+ordering is correct: at K=10, iid 0.0078 groks while operand 0.0119, dirichlet
+0.0499 and target 0.2766 all fail.
+
+**The intervention confirms it — and then falsifies it.** Same cells, same seeds,
+only the aggregation rule changing:
+
+| H2 | divergence | first crossing |
+|---|---|---|
+| FedAvg | 0.0188 | 61,000 |
+| **SCAFFOLD** | 0.00010 (188× lower) | **5,000** |
+| **FedProx** | 0.00037 (51× lower) | **censored** |
+
+SCAFFOLD is the hypothesis confirmed by intervention. FedProx cuts divergence by
+51× and never groks. **Reducing drift is neither necessary nor sufficient**, so
+drift magnitude cannot be the causal variable — and their *movement* magnitudes
+are nearly identical (0.043 vs 0.094), so that does not separate them either.
+
+What does is direction. SCAFFOLD estimates the drift term and subtracts it,
+preserving the descent direction; FedProx penalises movement away from the global
+model, buying low drift by not learning. So the defensible statement is:
+
+> **Client disagreement about the direction of progress delays grokking, and
+> drift is its signature rather than its substance.** The method that corrects
+> the direction wins; the method that merely suppresses the magnitude loses.
+
+**The one test that could separate cause from correlate is a null, and it is
+underpowered.** Within a single cell — everything fixed but the seed — the
+seed that diverged more is no slower: median Kendall τ = **+0.020** across 36
+cells, 18/36 positive. But within-cell divergence spread is 1.69× against 20,182×
+between cells, so there is almost no signal to correlate against. Recorded
+because it is the test that would have been quoted had it come out the other way.
+
+**The control that would settle it** is FedAvg damped to FedProx's effective step
+size, isolating "corrected direction" from "suppressed magnitude". ~15 runs on
+the anchor; not written.
 
 ---
 
@@ -300,6 +497,11 @@ within-cell spread at exp2's K=10 cells is 1.0–1.1× for A, A′ and E against
 1.8–1.9× for B, C and D. B and C are deferred; **D's iid/operand cells ran
 anyway**, since a 1.9× spread cannot hide a qualitative failure.
 
+> **SUPERSEDED by §17.2.** The deferred cells ran on 2026-08-11, plus the coset
+> arm. Read §17.2 instead of this section for the partition comparison: it uses
+> exactly matched iid baselines per cell, where the table below borrows working
+> points across sweeps.
+
 Median `t_first_cross`:
 
 | setup | K | iid | operand | target | dirichlet |
@@ -488,6 +690,11 @@ unified statement is:
 first crossing (36,500) precedes memorisation (44,150). At high K, C stops
 grokking and simply learns: test accuracy reaches the bar before train accuracy
 reaches 99%. C is 3/3 at every K, the only setup that never degrades.
+
+**Corrected by §17.2:** that is true at α=0.50 under iid, which is what this
+ladder ran. At α=0.40 with structured shards C fails 0/3 at K=50 with peak train
+accuracy of 12–15% — it never memorises. C degrades like every other AdamW setup;
+this ladder simply did not reach the regime where it does.
 
 ### 14.4 `t_grok` depends on the BUDGET, not only the logging rate
 
@@ -1193,6 +1400,12 @@ Combined with §4 (Dirichlet ≡ iid at every K), the claim is:
 > **How you partition matters more than how far you fragment. Coherent shards are
 > strictly better than random ones.**
 
+**NARROWED by §17.2 (2026-08-11).** Tested on all six setups against exactly
+matched iid baselines, this holds on the anchor and on C — where the coherent
+split is 1.9× faster than random shards — and fails on B and D. The second
+sentence is withdrawn as a general claim; the first survives, and `target`
+being the worst partition in the study strengthens it.
+
 Unlike the breakdown claim, this one is insensitive to where the budget was set.
 The mechanism hypothesis — coherent shards let clients select a *shared* Fourier
 basis that averaging reinforces, where iid clients pick conflicting sets that
@@ -1304,7 +1517,7 @@ cut wall-clock from ~7.2 h to ~5.9 h for identical work.
 | | runs | grokked | censored |
 |---|---|---|---|
 | **v1** (`results/data/runs.csv`, log-recovered) | 870 | 554 | 316 |
-| **v2** (`results/data/runs_v2.csv`) | 842 | 572 | 270 |
+| **v2** (`results/data/runs_v2.csv`) | 1,421 | 944 | 477 |
 
 v1 by experiment: exp2 333 · exp5 153 · exp3a 100 · exp7 74 · exp4a 72 · exp4b 72 ·
 exp4 36 · exp3b 30.
@@ -1314,31 +1527,43 @@ v2 by campaign — regenerate with
 
 | campaign | runs | status |
 |---|---|---|
+| `aggregation` | 192 | done — §15.1 |
 | `central_anchor` | 131 | done — Gate A ladders, §11 |
-| `d_alpha_high` / `d_alpha_fine` / `d_alpha_cliff` | 150 | done — tier X, setup D's α ladder at 0.025 resolution |
-| `d_internals` | 85 | done — tier X, with checkpoints + the exact circuit instruments. **Unanalysed** |
+| `partitions` | 108 | done — §17.2 (exp3b, complete incl. coset) |
+| `d_alpha_high` | 90 | done — tier X |
+| `algorithms` | 90 | **done — §17.1 (exp5, at calibrated server LRs)** |
+| `d_internals` | 85 | done — §16.3 |
 | `k_fixed_total` | 54 | done — §4 |
-| `fl_probe` | 48 | done — under-budgeted by construction; its censoring is not a federated effect |
+| `fl_probe` | 48 | done — under-budgeted by construction |
+| `d_wd_ladder` | 45 | **done — §17.3** |
 | `aprime_alpha` | 45 | done — §13.3 |
 | `wd_grid` | 45 | done — §6.2 |
-| `mnist_fl` | 36 | done — E groks iid at K=10/20; `label_block` 0/12 |
-| `mnist_working_point` | 33 | done — delay vs shardability, §11 |
+| `server_lr_cal` | 42 | done — §14.5 |
+| `d_alpha_fine` | 40 | done — tier X |
+| `setup_k_ladder` | 39 | done — §14.3 |
+| `mnist_fl` | 36 | done |
+| `capacity` | 33 | done — §14.2 |
+| `mnist_working_point` | 33 | done — §11 |
 | `cd_decay_band` | 30 | done — §13.2 |
-| `c_capacity` | 24 | done — C's failure was censoring, not capacity, §11 |
-| `boundary` | 20 | done — §5 |
-| `probe` | 18 | done (6 E=250 cells cancelled for cost) — §3 |
+| `c_capacity` | 24 | done — §11 |
+| `d_alpha_cliff` | 20 | done — tier X |
+| `boundary` | 20 | done — §5, and the checkpoints behind §16.2 |
+| `d_lr_control` | 18 | **done — §17.3** |
+| `probe` | 18 | done — §3 |
 | `mnist_wd_band` | 15 | done — §6.3 |
-| `d_wd_ladder` | 12 | **partial** (12/45) — tier X, the dip's decay hypothesis |
-| `k_collapse_wd` | 12 | done (18/18 incl. dedup) — §13.6 |
 | `b_decay_band` | 15 | done — §13.5 |
-| `k_collapse_budget` | 11 | done — **§13.7, the gate** |
+| `c_alpha_w256` | 12 | done — §14.1 |
+| `k_collapse_wd` | 12 | done — §13.6 |
+| `k_collapse_budget` | 11 | done — §13.7 |
 | `d_gd_probe` | 9 | done — §13.1 |
-| `probe_rerun` | 9 | done — B K=10 operand and D K=50 iid recover at 5× budget |
+| `wd_zero` | 9 | done — §15.4 |
+| `probe_rerun` | 9 | done |
 | `poly_pilot` | 6 | done — §7 |
-| plus 8 smaller diagnosis groups | 34 | `adam_restart`, `c_alpha`, `k50_hparam`, `k50_ladder`, `grok_confirm_fl` |
+| plus 6 smaller diagnosis groups | 37 | `c_alpha` · `grok_confirm_fl` · `adam_restart` · `k50_hparam` · `k50_ladder` · `e1_identity` |
 
-**v2 compute to date: 236.8 machine-hours.** Checkpoints on disk: 3.9 GB
-(gitignored).
+**v2 compute to date: 842 machine-hours.** Checkpoints on disk: 25 GB across
+383 run directories (gitignored) — **211 runs carry per-client weights**, spanning
+all six setups, which is what §16 reads.
 
 ---
 
@@ -1346,9 +1571,26 @@ v2 by campaign — regenerate with
 
 - **K=97 IID is unresolved** (§5.3). The budget is marginal; the 2/5 fraction has a
   budget-limited denominator.
-- **Every federated result uses one setup** — the quadratic MLP on modular addition.
-  Replication across transformer / S₅ / other primes is written but unrun, so
-  generality of the structure effect is currently untested.
+- **RESOLVED — federated results now span all six setups** (exp2 §15.1, exp3b
+  §17.2). The generality question this caveat raised has an answer, and it is
+  partly negative: the structure effect replicates on C and fails on B and D.
+- **D's coset cells are censored, not stuck** (§17.2). Two of three seeds were
+  still gaining 7–12 accuracy points per 100,000 steps at the ceiling. "≥10×
+  slower than random shards" is supported; "never groks" is not.
+- **A′ has no coherent partition ordering** (§17.2) and is excluded from the
+  partition reading: `target` is its fastest split at both K, which no account
+  predicts. It sits at its cliff and carries §15.3's optimiser-restart confound.
+- **exp5's server LRs were calibrated at E=5** (§14.5) and exp5's hard cells run
+  E=25 and E=50. The calibration is assumed to transfer across the E axis and
+  that has not been checked.
+- **The drift result is observational** (§17.4). The within-cell test that could
+  separate cause from correlate is a null *and* underpowered (1.69× within-cell
+  spread against 20,182× between). The damped-FedAvg control is not written.
+- **Five α=1.0 rows in `d_alpha_high` record `grokked=True` with `t_grok=0`.**
+  They train on the whole grid, so there is no held-out set and `test_acc` is NaN
+  throughout; NaN never compares below the bar, so the sustained-crossing scan
+  returns the first step. `t_first_cross` reports `inf` for the same runs, which
+  is correct. Exclude α=1.0 from any aggregate over that group.
 - **exp4b partial-participation T_grok values in `runs.csv` sit on the old inflated
   step axis** (~2.5× too high on `total_steps`); the Phase 0.6 fix changed that axis
   under `fraction_train < 1.0`. They will be corrected when exp4b is re-run.
