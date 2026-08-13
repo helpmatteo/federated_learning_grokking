@@ -2076,6 +2076,132 @@ def _longest_first(specs):
     return sorted(specs, key=estimate_minutes, reverse=True)
 
 
+def t4b_participation():
+    """PORT of main's exp4b: does PARTIAL PARTICIPATION delay grokking?
+
+    v2 has never run it. All 601 banked federated runs are fraction_train=1.0,
+    so full participation is an untested assumption across the entire study and
+    RESULTS 10 carries it as a limitation. v1's own 72 runs cannot fill the gap:
+    their times sit on the pre-Phase-0.6 step axis, which over-counted work
+    under fraction_train < 1 by ~2.5x. Their OUTCOMES stand (72/72 grokked) but
+    they were measured at alpha=0.30, K=10 -- the plane RESULTS 4 has since
+    shown is uniformly safe, 60/60. This is therefore not a reproduction; it is
+    the same axis asked where federated effects actually appear.
+
+    WHERE. alpha=0.25, K=50, E=5, iid -- t2_boundary's cell, which groks 5/5 at
+    a KM median of 46,800. A failure here is attributable to participation
+    rather than to the working point, which is the whole reason to pay for K=50.
+
+    BUDGET, and why it is not a fixed round count. total_steps accumulates
+    `E * samples_this_round / n_train_total` per round (Phase 0.6), so a cell at
+    fraction f does f x the gradient work per round. Holding rounds fixed would
+    starve the low-f cells by exactly the factor under test -- the mechanism
+    behind seven manufactured boundaries in this project. Rounds are therefore
+    set to reach a COMMON 100,000 total_steps, which is t2_boundary's budget and
+    gave that cell 2.1x headroom over its measured requirement:
+
+        f=1.0 ->  20,000 rounds   <- the control. Emitted WITHOUT a
+                                     fraction_train key so its content hash
+                                     matches t2_boundary's and the three seeds
+                                     dedup instead of re-running.
+        f=0.6 ->  33,400 rounds
+        f=0.4 ->  50,000 rounds
+        f=0.2 -> 100,000 rounds
+
+    > DECISION RULE. Read on total_steps against the f=1.0 control.
+    > (a) Cells track the control -> participation is free once compute is
+    >     matched. v1's null reproduced where it counts, and the axis closes.
+    > (b) Delay grows as f falls at matched compute -> participation costs
+    >     something beyond compute. Then read client_weight_divergence: 17.4
+    >     predicts it rises as f falls, because sampling fewer clients per round
+    >     raises the variance of the aggregate. That would be the first test of
+    >     the drift mechanism on an axis that moves disagreement WITHOUT moving
+    >     K or E, which is exactly what 17.4 says is missing.
+    > (c) Low-f cells censor at 100,000 total_steps -> re-budget before
+    >     concluding anything. The requirement is a lower bound, not a
+    >     prediction.
+    """
+    base = {k: v for k, v in SETUP_A.items()
+            if k not in ("mode", "num_rounds", "eval_every")}
+    common = {"mode": "federated", **base, "alpha": 0.25, "num_clients": 50,
+              "local_epochs": 5, "partition": "iid", "eval_every": FL_EVAL_EVERY,
+              "checkpoint_client_weights": True}
+    tags = {"tier": "T4b", "group": "participation", "experiment": "exp4b",
+            "setup": "A"}
+    specs = []
+    # The control: no fraction_train key, so the id matches t2_boundary's.
+    specs += expand_grid({**common, "num_rounds": 20_000, "checkpoint_every": 1000},
+                         {"seed": SEEDS3}, tags=tags)
+    for frac, rounds in ((0.6, 33_400), (0.4, 50_000), (0.2, 100_000)):
+        specs += expand_grid(
+            {**common, "fraction_train": frac, "num_rounds": rounds,
+             "checkpoint_every": rounds // 20},
+            {"seed": SEEDS3}, tags=tags,
+        )
+    return specs
+
+
+def t3a_dirichlet_band():
+    """PORT of main's exp3a: does the AMOUNT of heterogeneity matter?
+
+    RESULTS 4's "dirichlet tracks iid exactly at every K" is load-bearing -- it
+    is the entire basis for "structure, not heterogeneity" (5.4), which 17.2
+    narrowed but did not withdraw. It rests on TWO concentration values, 0.1 and
+    0.5, both on the heterogeneous side, and both measured on the alpha=0.3
+    plane that is uniformly safe. v1 swept five orders of magnitude and got
+    100/100 grokked, but at alpha>=0.3, K=10 -- away from any boundary, so it
+    could not have found an effect had there been one.
+
+    WHERE. alpha=0.25, E=5, 20,000 rounds. t2_boundary's iid arms at K=20
+    (5/5, 29,800) and K=50 (5/5, 46,800) are the controls and are ALREADY
+    BANKED, so this manifest buys only the ladder.
+
+    WHY TWO CLIENT COUNTS, AND WHY THE LADDER IS SHORTER AT K=50. The Dirichlet
+    partitioner shards over target classes, and mod-97 at alpha=0.25 supplies
+    ~2,350 training samples across 97 classes -- about 24 per class. A
+    near-uniform draw therefore hands each of 50 clients a vanishing share of
+    each class and leaves some client empty, which the partitioner correctly
+    refuses (data/partition.py). Measured before writing this: at K=50,
+    dirichlet_alpha 10 and 1000 raise on 2-3 seeds of 3, while 0.01/0.1/1.0 are
+    feasible; at K=20 the whole ladder is feasible on every seed. So:
+
+        K=20  dirichlet_alpha in {0.01, 0.1, 1.0, 10.0, 1000.0}   full ladder
+        K=50  dirichlet_alpha in {0.01, 0.1, 1.0}                 feasible part
+
+    That constraint is a property of the instrument, not of the phenomenon, and
+    it is the reason the ladder is not simply run at the most fragmented cell.
+
+    > DECISION RULE. Compare each rung to the banked iid arm at its own K, on
+    > t_first_cross.
+    > (a) All rungs track iid -> the claim hardens across five orders of
+    >     magnitude AT the boundary, and "structure, not heterogeneity" becomes
+    >     established rather than assumed.
+    > (b) Low rungs degrade while high rungs track -> the claim needs
+    >     qualifying to MODERATE heterogeneity, and both 5.4 and 17.2 need that
+    >     qualifier written in.
+    > (c) dirichlet_alpha=1000 at K=20 MUST match the iid arm to within seed
+    >     noise. At that concentration the draw is numerically uniform, so a
+    >     discrepancy there is a harness bug and not a finding -- this rung is
+    >     the partitioner's own control, not a data point.
+    """
+    base = {k: v for k, v in SETUP_A.items()
+            if k not in ("mode", "num_rounds", "eval_every")}
+    common = {"mode": "federated", **base, "alpha": 0.25, "local_epochs": 5,
+              "partition": "dirichlet", "num_rounds": 20_000,
+              "eval_every": FL_EVAL_EVERY, "checkpoint_every": 1000,
+              "checkpoint_client_weights": True}
+    tags = {"tier": "T3a", "group": "dirichlet_band", "experiment": "exp3a",
+            "setup": "A"}
+    specs = []
+    specs += expand_grid({**common, "num_clients": 20},
+                         {"dirichlet_alpha": [0.01, 0.1, 1.0, 10.0, 1000.0],
+                          "seed": SEEDS3}, tags=tags)
+    specs += expand_grid({**common, "num_clients": 50},
+                         {"dirichlet_alpha": [0.01, 0.1, 1.0], "seed": SEEDS3},
+                         tags=tags)
+    return specs
+
+
 BUILDERS = {
     "p1_d_gd_probe": p1_d_gd_probe,
     "p1_cd_decay_band": p1_cd_decay_band,
@@ -2099,6 +2225,8 @@ BUILDERS = {
     "s5_mnist_fl": s5_mnist_fl,
     "s5_probe_rerun": s5_probe_rerun,
     "s5_k50_diagnosis": s5_k50_diagnosis,
+    "t4b_participation": t4b_participation,
+    "t3a_dirichlet_band": t3a_dirichlet_band,
     "s5_central_anchor": s5_central_anchor,
     "s5_mnist_working_point": s5_mnist_working_point,
     "s5_fl_probe": s5_fl_probe,
