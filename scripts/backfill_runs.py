@@ -48,6 +48,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from fedgrok.analysis.grokking_metrics import (                # noqa: E402
     compute_t_memo, compute_t_first_cross, count_post_cross_dips,
 )
+from fedgrok.data.registry import grok_threshold             # noqa: E402
 from fedgrok.manifest import build_config, load_manifest, run_id  # noqa: E402
 from fedgrok.run import _write_json_atomic                     # noqa: E402
 
@@ -96,11 +97,23 @@ def _fill_config(row, spec):
             continue
         if key not in row or row[key] is None:
             added[key] = value
+    # grok_threshold is DERIVED from the dataset, not a Config field, so the
+    # loop above never supplies it. Without it `_fill_outcomes` silently skips
+    # t_first_cross -- which is how 109 rows ended up recording grokked=True
+    # with no crossing time, and a run that groks at 7,600 plots as one that
+    # never reached the bar.
+    if row.get("grok_threshold") in (None, ""):
+        added["grok_threshold"] = grok_threshold(cfg)
     return added
 
 
-def _fill_outcomes(row, history):
-    """t_memo, delay and peak_train_acc from the history and the RECORDED t_grok."""
+def _fill_outcomes(row, history, bar=None):
+    """t_memo, delay and peak_train_acc from the history and the RECORDED t_grok.
+
+    `bar` is the grok threshold resolved for this run, passed in because it may
+    have been filled on THIS pass (see `_fill_config`) and so is not yet on the
+    row. Falls back to the recorded value.
+    """
     if history is None:
         return {}
     steps = history.get("total_steps", history.get("epoch", []))
@@ -115,7 +128,7 @@ def _fill_outcomes(row, history):
     # t_first_cross / post_grok_dips need the bar the run was scored at, which is
     # recorded per row precisely because it varies by dataset.
     test_accs = history.get("test_acc", [])
-    bar = row.get("grok_threshold")
+    bar = row.get("grok_threshold") or bar
     if test_accs and bar not in (None, ""):
         bar = float(bar)
         if "t_first_cross" not in row:
@@ -168,7 +181,8 @@ def main():
         history = _history(run, args.histories_root)
         if history is None:
             no_history += 1
-        additions.update(_fill_outcomes(row, history))
+        additions.update(_fill_outcomes(row, history,
+                                        bar=additions.get("grok_threshold")))
 
         if not additions:
             continue
