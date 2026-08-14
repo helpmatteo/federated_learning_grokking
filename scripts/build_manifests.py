@@ -2202,6 +2202,67 @@ def t3a_dirichlet_band():
     return specs
 
 
+def t3a_size_control():
+    """THE CONTROL for exp3a's breakdown: heterogeneity, or starved clients?
+
+    t3a_dirichlet_band found the first breakdown candidate in this project that
+    does not dissolve on inspection. At dirichlet_alpha=0.01 the models memorise
+    (97-100% train) and then sit at 1-5% test with a ZERO slope, at 2-3x the
+    budget the matched iid arm needed: 0/3 at K=50, 1/3 censored at K=20. Not a
+    clock running out -- five of six trajectories are flat.
+
+    But `dirichlet` moves two things at once, and at low concentration it moves
+    them together. Measured on the actual shards:
+
+        K=50   median shard   classes/client   min shard   outcome
+        a=0.1       43              19            18-21     3/3 grok
+        a=0.01    41-51              5             1-8      0/3
+
+    The MEDIAN shard is unchanged, so this is not a bulk data-quantity effect.
+    What collapses is label diversity (19 -> 5) and the size TAIL (one client
+    got a single sample). So "extreme label heterogeneity stops grokking" and
+    "starving a few clients stops grokking" are confounded, and the 0/3 cannot
+    tell them apart.
+
+    `dirichlet_sizes` (data/partition.py) holds the geometry and removes the
+    label structure: it draws the Dirichlet partition through the same rng to
+    get its sizes -- byte-identical per seed, asserted in tests -- then
+    re-assigns every index uniformly at random into shards of exactly those
+    sizes. Same shard sizes, IID labels.
+
+    Cells mirror the band exactly: alpha=0.25, E=5, 20,000 rounds, K in {20,50},
+    dirichlet_alpha in {0.01, 0.1}, 3 seeds. 0.1 is included because it is the
+    graded rung -- it costs ~15% under `dirichlet`, and whether that 15% is
+    labels or geometry is the same question asked where the answer is not
+    binary.
+
+    > DECISION RULE. Compare against the SAME (K, dirichlet_alpha) cell of
+    > t3a_dirichlet_band, on t_first_cross.
+    > (a) Control groks where `dirichlet` failed -> the breakdown is LABEL
+    >     heterogeneity. That is a genuine federated boundary with a mechanism,
+    >     and it is what this project has been looking for since v1.
+    > (b) Control fails too -> the breakdown is shard SIZE. The finding narrows
+    >     to "a client with ~1 sample poisons the aggregate", which is worth
+    >     stating but is not about heterogeneity at all.
+    > (c) Control matches the iid arm outright -> the size profile costs
+    >     nothing on its own and the entire dirichlet ladder is a label effect.
+    """
+    base = {k: v for k, v in SETUP_A.items()
+            if k not in ("mode", "num_rounds", "eval_every")}
+    common = {"mode": "federated", **base, "alpha": 0.25, "local_epochs": 5,
+              "partition": "dirichlet_sizes", "num_rounds": 20_000,
+              "eval_every": FL_EVAL_EVERY, "checkpoint_every": 1000,
+              "checkpoint_client_weights": True}
+    tags = {"tier": "T3a", "group": "size_control", "experiment": "exp3a",
+            "setup": "A"}
+    specs = []
+    for K in (20, 50):
+        specs += expand_grid({**common, "num_clients": K},
+                             {"dirichlet_alpha": [0.01, 0.1], "seed": SEEDS3},
+                             tags=tags)
+    return specs
+
+
 BUILDERS = {
     "p1_d_gd_probe": p1_d_gd_probe,
     "p1_cd_decay_band": p1_cd_decay_band,
@@ -2227,6 +2288,7 @@ BUILDERS = {
     "s5_k50_diagnosis": s5_k50_diagnosis,
     "t4b_participation": t4b_participation,
     "t3a_dirichlet_band": t3a_dirichlet_band,
+    "t3a_size_control": t3a_size_control,
     "s5_central_anchor": s5_central_anchor,
     "s5_mnist_working_point": s5_mnist_working_point,
     "s5_fl_probe": s5_fl_probe,

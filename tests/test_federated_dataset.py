@@ -281,3 +281,55 @@ class TestEmptyShardGuard:
                                       dirichlet_alpha=0.01, rng=rng)
         for shard in shards:
             assert shard.dtype == np.dtype(int)
+
+
+class TestPartitionDirichletSizes:
+    """The control arm for `dirichlet`, and the two properties that make it one.
+
+    `dirichlet` at low concentration changes label diversity AND shard sizes
+    together, so a failure there cannot say which one caused it. This mode holds
+    the size profile fixed and removes the label structure, so the pair is a
+    controlled comparison. Both properties below are load-bearing: if the sizes
+    drift the comparison is not matched, and if the labels stay concentrated the
+    control is not a control.
+    """
+
+    def _shards(self, mode, K, dirichlet_alpha, seed):
+        cfg = FedConfig(task="addition", p=97, alpha=0.25, hidden_width=256,
+                        num_clients=K, partition=mode,
+                        dirichlet_alpha=dirichlet_alpha, seed=seed,
+                        local_epochs=5)
+        client_data, *_ = make_federated_datasets(cfg)
+        return client_data
+
+    @pytest.mark.parametrize("K,dirichlet_alpha,seed",
+                             [(20, 0.01, 42), (20, 0.1, 123), (50, 0.01, 456)])
+    def test_size_profile_is_identical_to_dirichlet(self, K, dirichlet_alpha, seed):
+        """Same seed -> byte-identical shard sizes, not merely a similar spread."""
+        a = [len(y) for _, y in self._shards("dirichlet", K, dirichlet_alpha, seed)]
+        b = [len(y) for _, y in self._shards("dirichlet_sizes", K, dirichlet_alpha, seed)]
+        assert a == b
+
+    @pytest.mark.parametrize("K,dirichlet_alpha,seed",
+                             [(20, 0.01, 42), (50, 0.01, 456)])
+    def test_labels_are_iid_again(self, K, dirichlet_alpha, seed):
+        """The control must undo the label concentration it is controlling for.
+
+        At dirichlet_alpha=0.01 a client sees ~5-10 distinct classes; under the
+        control it should see as many as its shard size allows.
+        """
+        conc = self._shards("dirichlet", K, dirichlet_alpha, seed)
+        ctrl = self._shards("dirichlet_sizes", K, dirichlet_alpha, seed)
+        n_conc = np.median([len(set(y.tolist())) for _, y in conc])
+        n_ctrl = np.median([len(set(y.tolist())) for _, y in ctrl])
+        assert n_ctrl > 3 * n_conc
+
+    def test_partitions_the_training_set_exactly_once(self):
+        """No sample dropped, none duplicated -- the permutation must be a bijection."""
+        shards = self._shards("dirichlet_sizes", 20, 0.01, 42)
+        total = sum(len(y) for _, y in shards)
+        cfg = FedConfig(task="addition", p=97, alpha=0.25, hidden_width=256,
+                        num_clients=20, partition="dirichlet", dirichlet_alpha=0.01,
+                        seed=42, local_epochs=5)
+        _, x_train_full, _, _, _ = make_federated_datasets(cfg)
+        assert total == len(x_train_full)

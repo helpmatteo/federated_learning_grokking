@@ -6,6 +6,10 @@ Partition modes, all operating on the training set:
   - target:    partition by output class (fragments the output space)
   - dirichlet: Dirichlet(dirichlet_alpha) over target classes — continuously
                interpolates between IID (alpha→∞) and one class per client (alpha→0)
+  - dirichlet_sizes: the CONTROL for the above — the same shard-size profile,
+               drawn from the same rng, but with labels assigned IID. Separates
+               "clients hold conflicting labels" from "some client holds almost
+               no data", which `dirichlet` confounds at low concentration.
   - label_block: contiguous blocks of the label-sorted training set — the
                structured partition that works on EVERY dataset, including the
                ones with no algebraic structure to partition on
@@ -109,6 +113,9 @@ def make_federated_datasets(cfg: FedConfig):
     elif cfg.partition == "dirichlet":
         client_indices = _partition_dirichlet(y_train_all, n_classes, K,
                                               cfg.dirichlet_alpha, rng)
+    elif cfg.partition == "dirichlet_sizes":
+        client_indices = _partition_dirichlet_sizes(y_train_all, n_classes, K,
+                                                    cfg.dirichlet_alpha, rng)
     elif cfg.partition == "label_block":
         client_indices = _partition_label_block(y_train_all, K)
     elif cfg.partition == "coset":
@@ -261,3 +268,36 @@ def _partition_dirichlet(y_train, n_classes, num_clients, dirichlet_alpha, rng):
     # dtype=int matters: np.array([]) is float64 and cannot be used as an index,
     # so an empty shard would raise IndexError rather than produce an empty one.
     return [np.array(idx, dtype=int) for idx in client_indices]
+
+
+def _partition_dirichlet_sizes(y_train, n_classes, num_clients, dirichlet_alpha, rng):
+    """Dirichlet's SHARD SIZES, with IID label assignment. The control arm.
+
+    A Dirichlet-over-classes partition changes two things at once, and at low
+    concentration it changes them together: clients get fewer distinct classes
+    AND the size distribution develops a long thin tail. Measured on mod-97 at
+    alpha=0.25, K=50 — dirichlet_alpha 0.1 vs 0.01 leaves the MEDIAN shard
+    unchanged (43 vs 41-51 samples) while classes-per-client falls 19 -> 5 and
+    the smallest shard falls 18 -> 1. So "extreme heterogeneity stops grokking"
+    and "starving a few clients stops grokking" are confounded in that mode,
+    and the 0/3 at dirichlet_alpha=0.01 cannot distinguish them.
+
+    This mode holds the size profile and removes the label structure: it draws
+    the Dirichlet partition to get its sizes, then re-assigns every training
+    index uniformly at random into shards of exactly those sizes. Same geometry,
+    IID labels. If a cell groks here and fails under `dirichlet`, the cause is
+    label heterogeneity; if it fails here too, the cause is shard size.
+
+    The Dirichlet draw is taken through the SAME rng in the SAME order as
+    `dirichlet` would, so for a given seed the sizes are identical run-for-run
+    rather than merely similar in distribution.
+    """
+    shards = _partition_dirichlet(y_train, n_classes, num_clients,
+                                  dirichlet_alpha, rng)
+    sizes = [len(idx) for idx in shards]
+    order = rng.permutation(len(y_train))
+    out, start = [], 0
+    for n in sizes:
+        out.append(np.array(order[start:start + n], dtype=int))
+        start += n
+    return out
