@@ -11,9 +11,9 @@ The state
 block below is the current summary — read it before anything else in this file,
 which is organised newest-first and keeps older sections for their reasoning.
 
-> # STATE — 2026-08-13
+> # STATE — 2026-08-14
 >
-> **1,421 runs banked · 842 machine-hours · 545 tests collected · 0 failed runs all campaign.**
+> **1,466 runs banked · 930 machine-hours · 554 tests collected · 0 failed runs all campaign.**
 > Full readings in `RESULTS.md` §17 (the all-5 campaign), §16 (mechanism),
 > §14 (Part 0) and §15 (exp2 — but read §17.2, not §15.2, for partitions).
 >
@@ -32,13 +32,17 @@ which is organised newest-first and keeps older sections for their reasoning.
 > | **tier X** (§17.3) | 51 | D's inherited wd=1.0 survives a fourth check — the only band that groks 9/9. Lower lr is faster, not slower |
 > | **mechanism** (§16) | 0 | post-hoc. **The coherence effect precedes grokking** (arms separate by round 6,000 vs first crossing at 11,560) and predicts *which* seeds grok. The per-client channel **cannot** test it on the operand arm — instrument = treatment. D's dip is **masking**, not circuit decay |
 > | **drift** (§17.4) | 0 | post-hoc on all 601 federated runs. Tracks delay on **every** axis; SCAFFOLD confirms by intervention (188× less divergence, 12× faster). **FedProx falsifies it as a magnitude story** — 51× less divergence, never groks |
+> | **exp3a** (§18.1–2) | 36 | The Dirichlet knob is **flat** from 1000 to 1.0, costs ~15% at 0.1, and at 0.01 stops measuring heterogeneity — failure tracks the **smallest shard** and survives randomising labels. §4's control was at 0.5, in the flat region, so its claim stands |
+> | **exp4b** (§18.3) | 9 | **Partial participation is free per round** — 10 of 50 clients reach the bar in the same rounds doing a fifth of the work |
+> | **drift, refined** (§18.4) | 0 | three axes now: conflicting labels cost 2.01×, subsampling and unequal shard sizes cost **nothing** at 1.4–1.8× the divergence. **Systematic disagreement delays grokking; sampling noise does not** |
 >
 > ### Next
 >
 > | | runs | cost | note |
 > |---|---|---|---|
-> | **FedAvg damped to FedProx's step size** | ~15 | ~6 h | **the one experiment the campaign earned.** Separates "corrected direction" from "suppressed magnitude" — the two interventions that both cut drift and land on opposite sides of grokking (§17.4). Not written |
+> | **FedAvg damped to FedProx's step size** | ~15 | ~6 h | **the one experiment still owed.** Separates "suppressed magnitude" from "damped learning rate" in FedProx's failure (§17.1, §18.4). Not written |
 > | **A′ at `persist_local_opt_state=True`** | ~3 | ~2 h | narrowed from ~12: the flag **has** been run (12 paired runs in `s5_fl_probe`); only A′'s 13.3× is still open (§15.3) |
+> | extreme non-IID without starvation | ~9 | ~5 h | §18.2 showed `dirichlet` cannot probe dir_a<0.1 here without emptying a shard. A partitioner that concentrates labels at a FLOOR on shard size would test the regime that is currently unreachable |
 > | D's coset at a longer budget | ~3 | ~6 h | two of three seeds were still climbing at 250,000 steps (+11.7, +6.7 pts/100k). "≥10× slower than iid" is safe; "never groks" is not |
 > | K=97 iid at a larger budget | ~5 | ~45 h | the one genuinely unresolved cell (§5.3) |
 > | a dedicated cell for §16.2's predictor | ~10 | — | pre-transition spectral IPR orders seeds by an outcome 9,000 rounds away, at n=5 |
@@ -65,7 +69,7 @@ which is organised newest-first and keeps older sections for their reasoning.
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`; `main` has nothing this lacks) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
 | Tests | **545 collected** (`venv/bin/python -m pytest tests/ -q`, ~9 min incl. FL integration) |
-| Runs banked | **1,421** in `results/data/runs_v2.csv` (944 grokked, 477 censored) + 870 v1 runs in `runs.csv`. 842 machine-hours |
+| Runs banked | **1,466** in `results/data/runs_v2.csv` (982 grokked, 484 censored) + 870 v1 runs in `runs.csv`. 930 machine-hours |
 | Setups | A quad-MLP/mod-97 · A′ quad-MLP/mod-97/AdamW (**measured**, §13.3) · B transformer/mod-113 · C transformer/S₅ · D quad-MLP/S₅ · E MLP/MNIST-1k. **D′ dropped** — the gate that would have required it opened (§13.7) |
 | FL algorithms | FedAvg, FedProx, FedAvgM, FedYogi, FedAdam (native) + SCAFFOLD (adapted, **raises under AdamW by design**) |
 | Statistics | censored survival (KM median + fraction-grokked + bootstrap CI); `scripts/summarize_runs.py` |

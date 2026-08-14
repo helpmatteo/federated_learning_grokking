@@ -1,13 +1,13 @@
 # Results — federated grokking
 
-Everything measured, as of 2026-08-13. Branch `v2-multisetup`.
+Everything measured, as of 2026-08-14. Branch `v2-multisetup`.
 
 Companion documents: `PROGRESS.md` (what is built and what remains),
 `~/.claude/plans/plan-all-that-needs-valiant-hamster.md` (the current plan),
 `~/.claude/plans/plan-all-that-needs-nested-seal.md` (the boundary campaign, closed).
 
 **Data behind every number here:**
-`results/data/runs_v2.csv` (1,421 v2 runs) and `results/data/runs.csv` (870 v1 runs,
+`results/data/runs_v2.csv` (1,466 v2 runs) and `results/data/runs.csv` (870 v1 runs,
 recovered from logs). Both are committed. Regenerate any table with:
 
 ```bash
@@ -105,8 +105,170 @@ partially censored.
     necessary nor sufficient. What separates them is whether the *direction* is
     corrected or the magnitude merely suppressed.
 
+18. **Heterogeneity has a threshold, and below it the instrument breaks first**
+    (§18.1–18.2). The Dirichlet knob is flat from 1000 down to 1.0, costs ~15%
+    at 0.1, and at 0.01 stops measuring heterogeneity: failure there tracks the
+    **smallest shard**, seed for seed, and survives randomising the labels. A
+    client holding one sample poisons the aggregate and no budget fixes it. The
+    eighth apparent boundary in this project to dissolve — and the first that
+    dissolved into something other than a budget artifact.
+
+19. **Partial participation is free per communication round** (§18.3). Sampling
+    10 of 50 clients reaches the bar in the same number of rounds while doing a
+    fifth of the gradient work. Which makes it the test §17.4 wanted: f raises
+    client divergence 1.8× without touching K, E or the data, and costs nothing
+    — so **systematic disagreement delays grokking and sampling noise does
+    not** (§18.4).
+
 Open: whether K=97 IID *fails* or is merely *slow* — both successes landed within
 5% of the budget ceiling, so that cell is not yet resolved.
+
+---
+
+## 18. main's last two experiments, and what they do to the drift story
+
+45 runs, 0 failures, 2026-08-13/14. exp3a and exp4b were the only v1 arms with
+no v2 coverage. Both returned nulls in v1 — 100/100 and 72/72 grokked — but both
+were measured at α≥0.30, K=10, the plane §4 has since shown is uniformly safe at
+60/60, so neither could have found an effect had there been one. Asked at the
+boundary they are new experiments, and they disagree with each other in a way
+that sharpens §17.4.
+
+### 18.1 exp3a — heterogeneity has a threshold, and §4's claim has a domain
+
+α=0.25, E=5, 20,000 rounds, 3 seeds, against t2_boundary's banked iid arms.
+Median `t_first_cross` as a ratio to the matched iid cell:
+
+| K=20 (iid 29,800, 5/5) | dir_α=1000 | 10 | 1.0 | 0.1 | 0.01 |
+|---|---|---|---|---|---|
+| vs iid | 0.97× | 0.97× | 1.00× | **1.15×** | **2.01×** (2/3) |
+| divergence | 0.00162 | 0.00129 | 0.00156 | 0.00204 | 0.00458 |
+
+At K=50 the same shape, harder: 0.94× at dir_α=1.0, 1.14× at 0.1, **0/3** at 0.01.
+
+**The partitioner control passed first.** dir_α=1000 at K=20 gives 28,800
+[26,500–31,700] against iid's 29,800 [27,300–33,100]. At that concentration the
+draw is numerically uniform, so this rung is the instrument checking itself, not
+a data point — and it agrees.
+
+**§4's "dirichlet tracks iid exactly at every K" is unaffected, and now has a
+stated domain.** Both §4 and §17.2 ran their Dirichlet control at **dir_α=0.5**,
+which sits in the flat region. The claim was true where it was measured. What
+was missing is that the knob is flat across three orders of magnitude and only
+bites below ~0.1 — so "structure, not heterogeneity" (§5.4, §17.2) stands as
+argued, on a control that was in the right regime by luck rather than by design.
+
+### 18.2 The tail of that ladder is starvation, not heterogeneity
+
+dir_α=0.01 looked like the first breakdown in this project that survives
+inspection: models memorise to 97–100% train, then sit at 1–5% test with a
+**zero slope** at 2–3× the budget the iid arm needed. Five of six trajectories
+flat. It was recorded here as exactly that, and it was wrong.
+
+`dirichlet` moves two things at once and at low concentration moves them
+together. Measured on the actual shards at K=50, the **median shard is
+unchanged** between dir_α 0.1 and 0.01 (43 vs 41–51 samples) — so this is not a
+bulk data-quantity effect — while classes-per-client falls 19 → 5 **and** the
+size tail collapses, one client receiving a single sample.
+
+`dirichlet_sizes` holds the geometry and removes the labels: the Dirichlet
+partition is drawn through the same RNG to get its sizes (byte-identical per
+seed, asserted in `TestPartitionDirichletSizes`), then every index is re-assigned
+uniformly at random into shards of exactly those sizes.
+
+**Failure tracks the smallest shard, seed for seed**, at dir_α=0.01:
+
+| K | seed | min shard | concentrated | size control |
+|---|---|---|---|---|
+| 20 | 42 | **1** | censored | **censored** |
+| 20 | 123 | 22 | 49,800 | 29,800 |
+| 20 | 456 | 52 | 69,900 | 32,100 |
+| 50 | 42 | **2** | censored | **censored** |
+| 50 | 123 | **1** | censored | **censored** |
+| 50 | 456 | 8 | censored | **47,800** |
+
+Every seed whose smallest client held ≤2 samples dies in **both** arms; labels
+made no difference. Every seed with ≥22 groks in both. The one intermediate case
+is where label concentration decides.
+
+> **So the breakdown is client starvation, not heterogeneity.** A client holding
+> one sample poisons the aggregate, and no budget fixes it — which is why the
+> flat-trajectory check did not catch it. This is the eighth apparent boundary in
+> this project to dissolve, and the first to dissolve into something other than a
+> budget artifact.
+
+**What survives is clean, and it is a label effect.** With the geometry held
+fixed and only the labels randomised:
+
+| | dir_α=0.1, K=20 | K=50 | dir_α=0.01 survivors, K=20 |
+|---|---|---|---|
+| concentrated | 1.15× | 1.14× | 2.01× |
+| **size control** | **1.00×** | **0.98×** | **1.04×** |
+
+Label heterogeneity costs ~15% at dir_α=0.1 and roughly doubles time at 0.01.
+It is real, it is measurable, and it **does not break grokking**.
+
+**The instrument bounds the experiment.** Dirichlet-over-classes on mod-97 at
+α=0.25 spreads ~2,350 samples over 97 classes, so concentrating labels
+necessarily empties someone's shard: this partitioner *cannot* probe extreme
+heterogeneity here without also testing starvation. Any future claim about
+extreme non-IID on this dataset needs the size control beside it. Same species
+as §16.1, where the per-client signature was the partition being tested.
+
+### 18.3 exp4b — partial participation is free per round
+
+α=0.25, K=50, iid. Rounds set to reach a common 100,000 `total_steps`, because
+`total_steps` accumulates `E · samples_this_round / n_train_total` and a fixed
+round count would starve the low-f cells by exactly the factor under test.
+f=1.0 is t2_boundary's cell, deduped by content hash.
+
+| f | clients/round | `t_first_cross` (steps) | → round | vs f=1.0 | divergence |
+|---|---|---|---|---|---|
+| 1.0 | 50 | 43,800 | 8,760 | 1.00× | 0.00193 |
+| 0.6 | 30 | 25,920 | 8,640 | 0.99× | 0.00279 |
+| 0.4 | 20 | 16,680 | 8,340 | 0.95× | 0.00342 |
+| 0.2 | 10 | **8,260** | **8,260** | **0.94×** | **0.00355** |
+
+**In rounds the axis is flat.** Sampling 10 of 50 clients reaches the bar in the
+same number of communication rounds while doing a fifth of the gradient work —
+so on the compute-matched axis it reads as a 5× speedup, and the honest
+statement is that the marginal client contributes almost nothing at this cell.
+v1's null reproduced at the boundary, with the quantitative statement v1 could
+not make because its step axis was broken.
+
+### 18.4 The refinement this forces on §17.4
+
+§17.4 concluded that what matters is whether the drift *direction* is corrected
+rather than its magnitude suppressed, on the SCAFFOLD-vs-FedProx contrast. Two
+new axes say that is close but not quite it.
+
+| axis | divergence | effect on grokking |
+|---|---|---|
+| exp3a, dir_α 1000 → 0.01 | ×3.7 | **2.01× slower** |
+| exp4b, f 1.0 → 0.2 | ×1.8 | **none** (0.94×) |
+| §18.2 control, geometry only | ×1.4 vs iid | **none** (1.00×) |
+
+Three ways of raising client disagreement; one of them costs time. What
+separates them is not magnitude and not direction-correction, but **what the
+disagreement is made of**:
+
+> **Systematic disagreement delays grokking; sampling noise does not.** When
+> clients hold conflicting *labels* they pull toward genuinely different
+> solutions and the delay scales with the conflict. When disagreement comes from
+> subsampling clients (exp4b) or from unequal but unbiased shard sizes (§18.2),
+> it averages out across rounds and costs nothing — even at 1.4–1.8× the
+> divergence.
+
+exp4b is the load-bearing one, because f moves disagreement **without touching
+K, E or the data**, which is the independent test §17.4 said was missing. It
+also explains the FedProx result without needing a separate story: FedProx
+suppresses magnitude indiscriminately, including the systematic component that
+carries the learning signal, which is why it loses to the baseline it is meant to
+improve.
+
+**Still not settled.** The damped-FedAvg control — FedAvg at FedProx's effective
+step size — remains unwritten, and it is what separates "suppressed magnitude"
+from "damped learning rate" in §17.1's FedProx failure.
 
 ---
 
@@ -273,6 +435,15 @@ model, buying low drift by not learning. So the defensible statement is:
 > **Client disagreement about the direction of progress delays grokking, and
 > drift is its signature rather than its substance.** The method that corrects
 > the direction wins; the method that merely suppresses the magnitude loses.
+
+**REFINED by §18.4.** Two axes added since say "direction-correction" is close
+but is not the discriminator. exp4b raises divergence 1.8× by subsampling
+clients and costs nothing; §18.2's size control raises it 1.4× through unequal
+shard sizes and costs nothing; exp3a raises it 3.7× through conflicting labels
+and costs 2.01×. What separates them is what the disagreement is MADE OF —
+systematic conflict delays grokking, sampling noise averages out. exp4b is the
+independent test this section calls for, since f moves disagreement without
+touching K, E or the data.
 
 **The one test that could separate cause from correlate is a null, and it is
 underpowered.** Within a single cell — everything fixed but the seed — the
@@ -1341,6 +1512,12 @@ than iid (non-overlapping CIs). The gap scales with K — ~0 at K=5, ~400 steps 
 K=20, ~1,500 at K=50. Dirichlet tracks iid exactly at every K, so this is
 **structure, not heterogeneity**.
 
+**Domain, measured later (§18.1):** this control ran at `dirichlet_alpha=0.5`.
+The concentration knob is flat from 1000 down to ~1.0, costs ~15% at 0.1, and
+below that stops testing heterogeneity at all (§18.2). The control was in the
+right regime, so the claim stands as argued — but it is a statement about
+moderate heterogeneity, not about all of it.
+
 ---
 
 ## 5. `t2_boundary` — the campaign that settled it (20/20, complete)
@@ -1517,7 +1694,7 @@ cut wall-clock from ~7.2 h to ~5.9 h for identical work.
 | | runs | grokked | censored |
 |---|---|---|---|
 | **v1** (`results/data/runs.csv`, log-recovered) | 870 | 554 | 316 |
-| **v2** (`results/data/runs_v2.csv`) | 1,421 | 944 | 477 |
+| **v2** (`results/data/runs_v2.csv`) | 1,466 | 982 | 484 |
 
 v1 by experiment: exp2 333 · exp5 153 · exp3a 100 · exp7 74 · exp4a 72 · exp4b 72 ·
 exp4 36 · exp3b 30.
@@ -1532,6 +1709,9 @@ v2 by campaign — regenerate with
 | `partitions` | 108 | done — §17.2 (exp3b, complete incl. coset) |
 | `d_alpha_high` | 90 | done — tier X |
 | `algorithms` | 90 | **done — §17.1 (exp5, at calibrated server LRs)** |
+| `dirichlet_band` | 24 | **done — §18.1 (exp3a, the concentration ladder)** |
+| `size_control` | 12 | **done — §18.2 (the control that dissolved the breakdown)** |
+| `participation` | 9 | **done — §18.3 (exp4b)** |
 | `d_internals` | 85 | done — §16.3 |
 | `k_fixed_total` | 54 | done — §4 |
 | `fl_probe` | 48 | done — under-budgeted by construction |
@@ -1561,7 +1741,7 @@ v2 by campaign — regenerate with
 | `poly_pilot` | 6 | done — §7 |
 | plus 6 smaller diagnosis groups | 37 | `c_alpha` · `grok_confirm_fl` · `adam_restart` · `k50_hparam` · `k50_ladder` · `e1_identity` |
 
-**v2 compute to date: 842 machine-hours.** Checkpoints on disk: 25 GB across
+**v2 compute to date: 930 machine-hours.** Checkpoints on disk: 25 GB across
 383 run directories (gitignored) — **211 runs carry per-client weights**, spanning
 all six setups, which is what §16 reads.
 
