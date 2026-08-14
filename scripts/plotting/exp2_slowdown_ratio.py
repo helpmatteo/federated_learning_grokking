@@ -1,15 +1,20 @@
-"""main's exp2_slowdown_ratio.png, one figure per setup.
+"""main's exp2_slowdown_ratio.png, one figure per setup, one line per alpha.
 
     venv/bin/python scripts/plotting/exp2_slowdown_ratio.py            # -> paper/
     venv/bin/python scripts/plotting/exp2_slowdown_ratio.py --out DIR
 
-main plotted T_grok(FL) / T_grok(cent_full) against K with one line per alpha,
-on a single setup (scripts/plot_exp2.py::plot_slowdown_ratio). v2's exp2 runs
-every setup at its OWN working alpha, so alpha is no longer a free axis and the
-figure splits: one panel per setup, one line each.
+main plotted T_grok(FL) / T_grok(cent_full) against K with one line per alpha on
+its single setup (scripts/plot_exp2.py::plot_slowdown_ratio). v2 runs every setup
+at its own working point, so the figure splits into one panel per setup; the
+`aggregation_alpha2` campaign adds a second, easier alpha to each so the panels
+recover main's multi-line form.
 
-Three deliberate departures from main's version, each because v2 measured
-something main could not:
+Each alpha carries its OWN centralized denominator. That is the part of this
+script most able to fail quietly -- a ratio taken against the wrong baseline
+still plots a perfectly plausible line -- so the two arms are matched on the data
+axis and nothing is shared between series.
+
+Departures from main's version, each because v2 measured something main could not:
 
   t_first_cross, not t_grok. The arms are compute-matched (setup A: 50,000
   centralized epochs against 10,000 rounds x E=5), so t_grok is admissible in
@@ -18,40 +23,55 @@ something main could not:
   (RESULTS 13.4, 14.4). t_first_cross is the statistic RESULTS 15.1 reports.
 
   Censored cells are DRAWN, not skipped. main's version dropped any cell whose
-  T_grok was inf, so a setup that stopped grokking left no mark. Here it is an
-  open marker at the top of the axis annotated with the grokked fraction --
-  B and D at K=50 are 0/3, and that is the result rather than missing data.
+  T_grok was inf, so a setup that stopped grokking left no mark. Here each series
+  gets its own censored row above the data, annotated with the grokked fraction.
 
-  PARTLY censored cells are labelled with their grokked fraction. Only setup C
-  at K=50 is affected (2/3), and its median is over the two survivors.
+  PARTLY censored cells are labelled with their fraction, because otherwise their
+  median silently becomes a median over survivors.
 
-  The baseline's own seed spread is shaded. The ratio divides by a 3-seed
-  median, so part of any deviation from 1.0 is noise in the denominator. The
-  band is [min, max] of the centralized seeds over their median: if a point sits
-  inside it, the ratio is not resolved. On setup C the band swallows the whole
-  curve, which is why RESULTS 15.1 reports no number for C.
+  Each series shades its own baseline seed spread. The ratio divides by a 3-seed
+  median, so part of any deviation from 1.0 is noise in the denominator. On setup
+  C that band swallows the curve, which is why RESULTS 15.1 reports no number
+  for C.
 """
 import argparse
 import csv
+import glob
 import os
+import sys
 import numpy as np
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+from fedgrok.manifest import load_manifest, run_id            # noqa: E402
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# Validated with scripts/validate_palette.py (light, surface #fcfcfb, --pairs all):
-# all checks PASS, CVD dE 23.8, normal-vision 31.6, contrast 4.30 / 4.68.
-SERIES, CENSORED = "#2a78d6", "#d03b3b"
+# Categorical slots 1 and 2 of the validated default palette. Verified with
+# scripts/validate_palette.py (light, surface #fcfcfb, --pairs all): every check
+# PASSes, CVD dE 24.7, normal-vision 33.6, contrast 4.30 / 3.12. A third alpha
+# would need slot 3 (#1baf7a) and a re-run -- that slot is sub-3:1 on this
+# surface and would oblige direct labels under the relief rule.
+SERIES = ["#2a78d6", "#eb6834"]
+CENSORED = "#d03b3b"
 INK, INK2, INK3 = "#0b0b0b", "#52514e", "#898781"
 RULE, SURFACE = "#e1e0d9", "#fcfcfb"
 
+# Rows are selected by MANIFEST RUN ID, not by the `group` column. A cell that
+# dedupes against an earlier campaign was executed by that campaign, so its
+# result JSON carries the ORIGINAL group tag -- C's alpha=0.50 arm lives under
+# `setup_k_ladder` and `c_capacity`. Filtering on group silently drops 12 of the
+# 15 points on C's second line; content hashes do not have that failure mode.
+MANIFESTS = ("manifests/t2_aggregation.jsonl",
+             "manifests/t2_aggregation_alpha2.jsonl")
+
 SETUPS = [
-    ("A",  "Quadratic MLP · mod-97 · GD",              "α=0.30"),
-    ("A'", "Quadratic MLP · mod-97 · AdamW",           "α=0.20"),
-    ("B",  "Nanda transformer · mod-113 · AdamW",      "α=0.30"),
-    ("C",  "Transformer · S₅ · AdamW",                 "α=0.40"),
-    ("D",  "Quadratic MLP · S₅ · AdamW",               "α=0.30"),
-    ("E",  "Omnigrok MLP · MNIST-1k · AdamW",          "n_train=2000"),
+    ("A",  "Quadratic MLP · mod-97 · GD"),
+    ("A'", "Quadratic MLP · mod-97 · AdamW"),
+    ("B",  "Nanda transformer · mod-113 · AdamW"),
+    ("C",  "Transformer · S₅ · AdamW"),
+    ("D",  "Quadratic MLP · S₅ · AdamW"),
+    ("E",  "Omnigrok MLP · MNIST-1k · AdamW"),
 ]
 
 
@@ -70,116 +90,158 @@ def _tfc(row):
     return _f(row["t_grok"]) if row["grokked"].lower() == "true" else float("inf")
 
 
+def _axis_value(row):
+    """The setup's data-fraction axis: n_train on MNIST, alpha everywhere else.
+
+    alpha is a live Config field on MNIST but the dataset builder never reads it
+    (data/registry.py dispatches MNIST to load_mnist_subset(n_train, n_test,
+    seed)), so grouping E by alpha would collapse both of its series into one.
+    """
+    return row["n_train"] if row["dataset"] == "mnist" else row["alpha"]
+
+
 def load(csv_path="results/data/runs_v2.csv"):
-    rows = [r for r in csv.DictReader(open(csv_path)) if r["group"] == "aggregation"]
-    out = {}
-    for setup, _, _ in SETUPS:
-        cf = [_tfc(r) for r in rows if r["setup"] == setup and r["arm"] == "cent_full"]
-        cf = [x for x in cf if np.isfinite(x)]
-        if not cf:
+    """{setup: [series]} — one series per data-axis value, each self-contained."""
+    claimed = {}          # run id -> the manifest spec that claims it
+    for m in MANIFESTS:
+        if not os.path.exists(m):
             continue
-        ks = sorted({int(r["num_clients"]) for r in rows
-                     if r["setup"] == setup and r["arm"] == "fl"})
-        cells = []
-        for k in ks:
-            v = [_tfc(r) for r in rows if r["setup"] == setup
-                 and r["arm"] == "fl" and int(r["num_clients"]) == k]
-            fin = [x for x in v if np.isfinite(x)]
-            cells.append({"K": k, "n": len(v), "grokked": len(fin),
-                          "median": float(np.median(fin)) if fin else None,
-                          "lo": min(fin) if fin else None,
-                          "hi": max(fin) if fin else None})
-        out[setup] = {"base": float(np.median(cf)), "base_lo": min(cf),
-                      "base_hi": max(cf), "base_n": len(cf), "cells": cells}
+        for spec in load_manifest(m):
+            claimed.setdefault(run_id(spec), spec)
+    banked = {r["id"]: r for r in csv.DictReader(open(csv_path))}
+
+    rows = []
+    for rid, spec in claimed.items():
+        row = banked.get(rid)
+        if row is None:
+            continue          # not run yet
+        # setup/arm come from the SPEC: a deduped row carries the other
+        # campaign's tags, so the CSV's own arm column cannot be trusted here.
+        rows.append({**row, "_setup": spec.get("setup"), "_arm": spec.get("arm")})
+
+    out = {}
+    for setup, _ in SETUPS:
+        srows = [r for r in rows if r["_setup"] == setup]
+        if not srows:
+            continue
+        series = []
+        for val in sorted({_axis_value(r) for r in srows}, key=float):
+            sub = [r for r in srows if _axis_value(r) == val]
+            base = [_tfc(r) for r in sub if r["_arm"] == "cent_full"]
+            base = [x for x in base if np.isfinite(x)]
+            if not base:
+                continue
+            cells = []
+            for k in sorted({int(r["num_clients"]) for r in sub if r["_arm"] == "fl"}):
+                v = [_tfc(r) for r in sub
+                     if r["_arm"] == "fl" and int(r["num_clients"]) == k]
+                fin = [x for x in v if np.isfinite(x)]
+                cells.append({"K": k, "n": len(v), "grokked": len(fin),
+                              "median": float(np.median(fin)) if fin else None,
+                              "lo": min(fin) if fin else None,
+                              "hi": max(fin) if fin else None})
+            if cells:
+                series.append({"val": val, "base": float(np.median(base)),
+                               "base_lo": min(base), "base_hi": max(base),
+                               "base_n": len(base), "cells": cells})
+        if series:
+            out[setup] = series
     return out
 
 
-def draw(setup, label, wp, d, out_dir):
-    base = d["base"]
-    fig, ax = plt.subplots(figsize=(6.6, 4.5))
+def draw(setup, label, series, out_dir):
+    fig, ax = plt.subplots(figsize=(6.8, 4.7))
     fig.patch.set_facecolor(SURFACE)
     ax.set_facecolor(SURFACE)
+    is_mnist = setup == "E"
+    axis_name = "n_train" if is_mnist else "α"
 
-    ok = [c for c in d["cells"] if c["median"] is not None]
-    cens = [c for c in d["cells"] if c["median"] is None]
-    ratios = [c["median"] / base for c in ok]
-    lo_b, hi_b = d["base_lo"] / base, d["base_hi"] / base
-
-    # Extremes must include the ERROR BAR ends, not just the medians, or the
-    # bars get clipped by the axis (they did, on A at K=50 and B at K=20).
-    highs = [c["hi"] / base for c in ok] + [hi_b, 1.0]
-    lows = [c["lo"] / base for c in ok] + [lo_b, 1.0]
+    highs, lows, all_ks = [1.0], [1.0], set()
+    for s in series:
+        b = s["base"]
+        highs += [c["hi"] / b for c in s["cells"] if c["hi"]] + [s["base_hi"] / b]
+        lows += [c["lo"] / b for c in s["cells"] if c["lo"]] + [s["base_lo"] / b]
+        all_ks |= {c["K"] for c in s["cells"]}
     top, bottom = max(highs), min(lows)
     span = (top - bottom) or 1.0
-    # Reserve headroom for the censored row so its marker never lands on data
-    # or on the subtitle.
-    head = 0.26 if cens else 0.09
-    partial = any(0 < c["grokked"] < c["n"] for c in ok)
-    ymax = top + span * head
-    ymin = bottom - span * (0.17 if partial else 0.09)
-    y_cens = top + span * 0.13
+    n_cens_rows = sum(1 for s in series if any(c["median"] is None for c in s["cells"]))
+    partial = any(0 < c["grokked"] < c["n"] for s in series for c in s["cells"])
+    ymax = top + span * (0.12 + 0.13 * n_cens_rows)
+    # A ratio is a positive quantity, so the padding must not carry the axis
+    # below zero -- on a wide-range panel like C, span*0.17 is larger than the
+    # smallest ratio and would open a band of impossible values under the data.
+    ymin = max(0.0, bottom - span * (0.17 if partial else 0.09))
 
-    band = ax.axhspan(lo_b, hi_b, color=SERIES, alpha=0.10, lw=0, zorder=0)
+    for i, s in enumerate(series):
+        col, b = SERIES[i % len(SERIES)], s["base"]
+        ax.axhspan(s["base_lo"] / b, s["base_hi"] / b, color=col, alpha=0.09, lw=0,
+                   zorder=0)
     ax.axhline(1.0, color=INK3, ls="--", lw=1.1, zorder=1)
 
-    line = None
-    if ok:
-        yerr = [[r - c["lo"] / base for r, c in zip(ratios, ok)],
-                [c["hi"] / base - r for r, c in zip(ratios, ok)]]
-        line = ax.errorbar([c["K"] for c in ok], ratios, yerr=yerr, marker="o",
-                           color=SERIES, capsize=3, lw=1.8, markersize=6,
-                           markeredgecolor=SURFACE, markeredgewidth=1.2, zorder=3)
-        # Labels go HORIZONTALLY off the marker: the error bars are vertical, so
-        # a sideways offset cannot collide with them or with the line.
-        for i, (c, r) in enumerate(zip(ok, ratios)):
-            last = i == len(ok) - 1
-            ax.annotate(f"{r:.2f}×", (c["K"], r), textcoords="offset points",
-                        xytext=(-9 if last else 9, 0),
-                        ha="right" if last else "left", va="center",
-                        fontsize=8.5, color=INK2, family="monospace", zorder=4)
-            # A PARTLY censored cell still plots a marker, so without this the
-            # median silently becomes a median over survivors only. Setup C at
-            # K=50 is 2/3 and would otherwise read as complete.
-            if c["grokked"] < c["n"]:
-                ax.annotate(f"{c['grokked']}/{c['n']}", (c["K"], c["lo"] / base),
-                            textcoords="offset points", xytext=(0, -11),
-                            ha="center", va="top", fontsize=8, color=CENSORED,
-                            family="monospace", zorder=4)
-
-    cmark = None
-    for c in cens:
-        cmark, = ax.plot([c["K"]], [y_cens], marker="o", mfc="none", mec=CENSORED,
-                         mew=1.9, markersize=8, ls="none", zorder=3)
-        ax.annotate(f"{c['grokked']}/{c['n']}", (c["K"], y_cens),
-                    textcoords="offset points", xytext=(0, -13), ha="center",
-                    va="top", fontsize=8, color=CENSORED, family="monospace")
+    handles, names = [], []
+    cens_row = 0
+    for i, s in enumerate(series):
+        col, b = SERIES[i % len(SERIES)], s["base"]
+        ok = [c for c in s["cells"] if c["median"] is not None]
+        cens = [c for c in s["cells"] if c["median"] is None]
+        ratios = [c["median"] / b for c in ok]
+        if ok:
+            yerr = [[r - c["lo"] / b for r, c in zip(ratios, ok)],
+                    [c["hi"] / b - r for r, c in zip(ratios, ok)]]
+            h = ax.errorbar([c["K"] for c in ok], ratios, yerr=yerr, marker="o",
+                            color=col, capsize=3, lw=1.8, markersize=6,
+                            markeredgecolor=SURFACE, markeredgewidth=1.2, zorder=3)
+            handles.append(h)
+            names.append(f"{axis_name} = {float(s['val']):g}"
+                         f"   (baseline {b:,.0f})")
+            for j, (c, r) in enumerate(zip(ok, ratios)):
+                last = j == len(ok) - 1
+                ax.annotate(f"{r:.2f}×", (c["K"], r), textcoords="offset points",
+                            xytext=(-9 if last else 9, 0),
+                            ha="right" if last else "left", va="center",
+                            fontsize=8, color=col, family="monospace", zorder=4)
+                if c["grokked"] < c["n"]:
+                    ax.annotate(f"{c['grokked']}/{c['n']}", (c["K"], c["lo"] / b),
+                                textcoords="offset points", xytext=(0, -11),
+                                ha="center", va="top", fontsize=7.5,
+                                color=CENSORED, family="monospace", zorder=4)
+        if cens:
+            y = top + span * (0.10 + 0.13 * cens_row)
+            cens_row += 1
+            for c in cens:
+                ax.plot([c["K"]], [y], marker="o", mfc="none", mec=CENSORED,
+                        mew=1.9, markersize=8, ls="none", zorder=3)
+                ax.annotate(f"{c['grokked']}/{c['n']}", (c["K"], y),
+                            textcoords="offset points", xytext=(11, 0), ha="left",
+                            va="center", fontsize=7.5, color=CENSORED,
+                            family="monospace")
+            ax.annotate(f"{axis_name}={float(s['val']):g} censored",
+                        (min(all_ks), y), textcoords="offset points",
+                        xytext=(-6, 0), ha="right", va="center", fontsize=7.5,
+                        color=col, family="monospace")
     ax.set_ylim(ymin, ymax)
 
-    ks = [c["K"] for c in d["cells"]]
+    ks = sorted(all_ks)
     ax.set_xscale("log")
     ax.set_xticks(ks)
     ax.set_xticklabels([str(k) for k in ks])
     ax.minorticks_off()
-    ax.set_xlim(min(ks) * 0.72, max(ks) * 1.38)
+    ax.set_xlim(min(ks) * 0.62, max(ks) * 1.42)
     ax.set_xlabel("K  (clients)", fontsize=10, color=INK2)
     ax.set_ylabel("federated / centralized\nfirst crossing", fontsize=10, color=INK2)
-    ax.set_title(f"Setup {setup} — {label}", fontsize=12.5, color=INK, pad=18, loc="left")
-    ax.annotate(f"{wp} · E=5 · FedAvg · 3 seeds", xy=(0, 1.02),
-                xycoords="axes fraction", fontsize=8.5, color=INK3)
+    ax.set_title(f"Setup {setup} — {label}", fontsize=12.5, color=INK, pad=18,
+                 loc="left")
+    ax.annotate("E=5 · FedAvg · iid · 3 seeds · shaded band = that line's "
+                "centralized seed spread",
+                xy=(0, 1.02), xycoords="axes fraction", fontsize=8, color=INK3)
 
-    handles = [h for h in (line, band, cmark) if h is not None]
-    names = []
-    if line is not None:
-        names.append("median, bars = FL seed range")
-    names.append("centralized seed spread")
-    if cmark is not None:
-        names.append("censored — never reached bar")
-    leg = ax.legend(handles, names, fontsize=8, loc="upper left",
-                    frameon=True, framealpha=0.95, borderpad=0.6)
-    leg.get_frame().set_edgecolor(RULE)
-    leg.get_frame().set_facecolor(SURFACE)
-    for t in leg.get_texts():
-        t.set_color(INK2)
+    if handles:
+        leg = ax.legend(handles, names, fontsize=8, loc="upper left", frameon=True,
+                        framealpha=0.95, borderpad=0.6)
+        leg.get_frame().set_edgecolor(RULE)
+        leg.get_frame().set_facecolor(SURFACE)
+        for t in leg.get_texts():
+            t.set_color(INK2)
 
     ax.grid(axis="y", color=RULE, lw=0.9)
     ax.set_axisbelow(True)
@@ -194,7 +256,7 @@ def draw(setup, label, wp, d, out_dir):
     path = os.path.join(out_dir, name)
     fig.savefig(path, dpi=200, bbox_inches="tight", facecolor=SURFACE)
     plt.close(fig)
-    return path, len(ok), len(cens)
+    return path, len(series)
 
 
 def main():
@@ -203,12 +265,13 @@ def main():
     ap.add_argument("--csv", default="results/data/runs_v2.csv")
     a = ap.parse_args()
     data = load(a.csv)
-    for setup, label, wp in SETUPS:
+    for setup, label in SETUPS:
         if setup not in data:
-            print(f"  setup {setup}: no aggregation rows, skipped")
+            print(f"  setup {setup}: no rows, skipped")
             continue
-        path, n_ok, n_cens = draw(setup, label, wp, data[setup], a.out)
-        print(f"  {path}   {n_ok} plotted, {n_cens} censored")
+        path, n = draw(setup, label, data[setup], a.out)
+        vals = ", ".join(f"{float(s['val']):g}" for s in data[setup])
+        print(f"  {path}   {n} line(s): {vals}")
 
 
 if __name__ == "__main__":

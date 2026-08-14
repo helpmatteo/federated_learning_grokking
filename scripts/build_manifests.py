@@ -1372,6 +1372,99 @@ def t2_aggregation():
     return specs
 
 
+def t2_aggregation_alpha2():
+    """exp2's SECOND alpha per setup, so the slowdown-ratio figure gets two lines.
+
+    main's exp2_slowdown_ratio.png carried four lines per panel, one per alpha in
+    {0.25, 0.30, 0.35, 0.50}. v2's version (paper/exp2_slowdown_ratio_*.png)
+    carries one, because t2_aggregation deliberately dropped the alpha sweep and
+    put each setup at its own working point instead. This adds one more rung so
+    every panel shows how the FL/centralized ratio moves with alpha.
+
+    THE SECOND RUNG IS EASIER, ONE STEP ON EACH SETUP'S OWN LADDER. Harder is not
+    available: A' is 0/5 at alpha=0.175 (13.3) and C is 1/3 at 0.30 and 0/3 at
+    0.25 (14.1), so on two of six setups a harder rung would be a censored line.
+    Stepping one rung rather than jumping to 0.50 keeps a usable baseline --
+    measured centralized t_first_cross at the new rung:
+
+        A   0.30 -> 0.40    8,800     B   0.30 -> 0.40    1,400
+        A'  0.20 -> 0.30      300     C   0.40 -> 0.50   15,200
+        D   0.30 -> 0.40   12,600     E   n_train 2000 -> 4000
+
+    A' IS THE ONE TO READ CAREFULLY. At alpha=0.30 it crosses at 300 steps, so
+    E=5 leaves federation 60 rounds to act -- 13.3's "there is no delay left to
+    disrupt", and A' already reads 13.3x at K=2 from optimiser restart alone
+    (15.3). Its second line is that fixed cost over a short baseline, not an
+    alpha effect. There is no better rung: every easier alpha is faster still
+    (0.25 -> 500, 0.40 -> 200) and there is no harder one.
+
+    BUDGETS. Federated num_rounds is each setup's existing exp2 value, unchanged:
+    they were sized for the HARDER working alpha, so they are generous here, and
+    holding C's at 40,000 is what lets its cells dedup. Centralized epochs are
+    exp2's too, except A' (5,000, matching aprime_alpha) and C (100,000, matching
+    c_capacity) where a banked budget with ample headroom buys the arm for free.
+
+    DEDUP, verified by exact config comparison rather than assumed: C's
+    K in {5,10,20,50} at alpha=0.50 already exist in setup_k_ladder (R=40,000,
+    E=5, w256, wd=1.0, eval_every=20, checkpoint_every=4,000, client weights on,
+    seeds 42/123/456), and A' and C's centralized arms exist in aprime_alpha and
+    c_capacity. 18 of 105 specs are already banked.
+
+    ARMS. fl + cent_full only. The ratio is FL / cent_full and main's figure never
+    used the floor, so reduced_arm is not built here.
+
+    > DECISION RULE. Per setup, plot FL/cent_full against K at both alphas.
+    > If the easier alpha's curve sits BELOW the working alpha's, the slowdown
+    > grows as data gets scarce -- main's reading, and the delay law's prediction.
+    > If the two curves coincide, the ratio is set by K alone and alpha only moves
+    > the baseline. If the easier curve sits ABOVE, the ratio is dominated by a
+    > fixed per-round cost divided by a shrinking baseline, which is what A' is
+    > expected to show and what would make that panel uninterpretable.
+    """
+    # (label, base, working-point overrides, num_rounds, ceiling epochs, Ks)
+    BLOCKS = [
+        ("A",  {**{k: v for k, v in SETUP_A.items()
+                   if k not in ("mode", "num_rounds", "eval_every")}},
+         {"alpha": 0.40}, 10_000, 50_000, [2, 5, 10, 20, 50]),
+        ("A'", SETUP_A_PRIME, {"alpha": 0.30}, 20_000, 5_000, [2, 5, 10, 20, 50]),
+        ("B",  SETUP_B, {"alpha": 0.40}, 20_000, 100_000, [2, 5, 10, 20, 50]),
+        ("C",  SETUP_C, {"alpha": 0.50, "hidden_width": 256},
+         40_000, 100_000, [2, 5, 10, 20, 50]),
+        ("D",  SETUP_D, {"alpha": 0.40}, 50_000, 250_000, [2, 5, 10, 20, 50]),
+        ("E",  {k: v for k, v in SETUP_E.items() if k != "batch_size"},
+         {"n_train": 4000, "n_test": 5000, "batch_size": 100},
+         8_000, 40_000, [2, 5, 10, 20]),
+    ]
+    specs = []
+    for label, base, wp, rounds, cent_epochs, Ks in BLOCKS:
+        tags = {"tier": "T2", "group": "aggregation_alpha2", "experiment": "exp2",
+                "setup": label}
+        # `strategy` and `fraction_train` are OMITTED, not set to their defaults.
+        # run_id hashes the raw spec, so a key present with its default value
+        # hashes differently from the same key absent -- and t1_setup_k_ladder,
+        # which already holds C's K in {5,10,20,50} at this alpha, omits both.
+        # Writing them out would re-run 12 banked C cells for ~50 slot-hours and
+        # produce bit-identical results. FedConfig defaults are strategy="fedavg"
+        # and fraction_train=1.0, so the resolved config is unchanged.
+        specs += expand_grid(
+            {"mode": "federated", **base, **wp, "local_epochs": 5,
+             "partition": "iid",
+             "num_rounds": rounds, "eval_every": FL_EVAL_EVERY,
+             "checkpoint_every": max(1, rounds // 10),
+             "checkpoint_client_weights": True},
+            {"num_clients": Ks, "seed": SEEDS3},
+            tags={**tags, "arm": "fl"},
+        )
+        specs += expand_grid(
+            {"mode": "centralized", **{k: v for k, v in base.items()
+                                       if k not in _FED_ONLY},
+             **wp, "epochs": cent_epochs, "log_every": max(10, cent_epochs // 500)},
+            {"seed": SEEDS3},
+            tags={**tags, "arm": "cent_full"},
+        )
+    return specs
+
+
 def p0_c_alpha_width256():
     """PART 0.2: C's alpha ladder at the capacity it will actually use.
 
@@ -2270,6 +2363,7 @@ BUILDERS = {
     "t3b_partitions": t3b_partitions,
     "x_controls": x_controls,
     "t2_aggregation": t2_aggregation,
+    "t2_aggregation_alpha2": t2_aggregation_alpha2,
     "p0_c_alpha_width256": p0_c_alpha_width256,
     "p0_capacity": p0_capacity,
     "t1_setup_k_ladder": t1_setup_k_ladder,
