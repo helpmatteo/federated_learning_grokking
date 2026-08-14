@@ -2409,7 +2409,13 @@ def main():
         # Only the new staged manifests are reordered. The completed ones are
         # left byte-for-byte as they ran, so their record stays exactly as
         # executed -- and write_manifest would refuse to orphan their ids anyway.
-        if name.startswith(("s5_", "x_", "p1_")):
+        # t2_aggregation_alpha2 is named explicitly rather than by a "t2_"
+        # prefix: the other t2_ manifests have already run and their files are
+        # the record of the order they ran in. Simulated on the outstanding
+        # cells, FIFO in build order finishes in 16.7 h against 14.2 h
+        # longest-first, because setup D's 6.2 h K=50 runs sit in the fifth
+        # block and would start last.
+        if name.startswith(("s5_", "x_", "p1_")) or name == "t2_aggregation_alpha2":
             specs = _longest_first(specs)
         path = os.path.join(MANIFEST_DIR, name + ".jsonl")
 
