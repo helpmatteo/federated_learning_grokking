@@ -14,7 +14,7 @@
 # hashes), so resume, dedup and collect_runs behave as one sweep.
 # COMPUTE ONLY: no commits, no result-dependent decisions.
 set -u
-cd /home/jse44/modules/ToDL/federated_learning_grokking
+cd "$(dirname "$(readlink -f "$0")")/.."   # repo root, wherever the tree lives
 PY=venv/bin/python
 
 step () { echo; echo "=============================================="

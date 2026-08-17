@@ -15,7 +15,7 @@
 #
 # COMPUTE ONLY. No commits, no decisions that depend on a result.
 set -u
-cd /home/jse44/modules/ToDL/federated_learning_grokking
+cd "$(dirname "$(readlink -f "$0")")/.."   # repo root, wherever the tree lives
 PY=venv/bin/python
 GPUS=0,1,2,3,4,5,6,7
 

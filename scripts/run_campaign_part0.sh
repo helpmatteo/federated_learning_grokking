@@ -8,7 +8,7 @@
 # take any decision that depends on a result -- the C working-point verdict
 # (0.2) and the per-setup budgets (0.4) are judgement calls for a human.
 set -u
-cd /home/jse44/modules/ToDL/federated_learning_grokking
+cd "$(dirname "$(readlink -f "$0")")/.."   # repo root, wherever the tree lives
 PY=venv/bin/python
 GPUS=0,1,2,3,4,5,6,7
 
