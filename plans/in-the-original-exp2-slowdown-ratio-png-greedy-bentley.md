@@ -162,13 +162,17 @@ setsid nohup venv/bin/python -u scripts/launch_sweep.py \
 >
 > - `--gpus 0 --per-gpu 1`. Autodetect still works but there is only one card, and
 >   a second concurrent run on it will not fit.
-> - **B's K=50 cells (3 runs) will not fit in VRAM.** Flower puts the whole client
->   population on the one card (`num_gpus = 1.0/num_clients`), and a K=50
->   transformer run measures ~12 GB against the 8 GB available. Either run those
->   three elsewhere or drop them and say so — the other 84 runs are groknet/mlp and
->   are fine.
-> - Each client reserves `num_cpus: 1`, so K=50 wants 50 cores and gets 16. Ray
->   queues rather than fails; expect it to be slow, not broken.
+> - **Set `FEDGROK_GPU_CLIENT_CAP=8`.** Measured on B's K=50 cell, 300 rounds:
+>   the default co-schedules all 50 clients and takes **723 s at 5,787 MiB**; a cap
+>   of 8 takes **253 s at 3,086 MiB**. Capping is 2.9× faster *and* uses half the
+>   memory, because 50 client processes on 16 cores spend their time contending
+>   rather than computing. `FEDGROK_CLIENT_CPU=1` is the fallback: 308 s at
+>   **389 MiB**, i.e. no GPU ceiling at all for 22% more wall-clock.
+> - **B's K=50 cells do fit**, contrary to what this note first said. The ~12 GB
+>   figure in `run_campaign_part0.sh` is from the 64-core L4 box, where all 50
+>   clients really could co-schedule; here `num_cpus: 1` against 16 cores already
+>   throttles them to 5,787 MiB of the 8,192 available. It fits with ~2.4 GB spare
+>   at the default, and comfortably under the cap.
 > - The two aborted launches of 2026-08-14 (`logs/sweeps/agg_alpha2_*.log`) left 16
 >   spec-only run dirs under `results/runs/`. They carry no result JSON, so resume
 >   re-runs them correctly — nothing to clean up.

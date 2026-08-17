@@ -599,3 +599,63 @@ class TestFitConfigCompleteness:
         assert fc["server_round"] == 42
         # and reconstruction ignores it (not a FedConfig field)
         assert _fit_config_to_cfg(fc).p == 17
+
+
+# ── Client placement knobs (VRAM) ────────────────────────────────────────────
+# These control how many client processes hold a CUDA context at once. They are
+# env vars rather than Config fields on purpose: a Config field would be hashed
+# into the run id and orphan every banked run. The tests below pin that
+# property, since it is the one that is expensive to get wrong.
+
+class TestClientPlacement:
+    """FEDGROK_CLIENT_CPU / FEDGROK_GPU_CLIENT_CAP."""
+
+    def test_cap_unset_uses_every_client(self, monkeypatch):
+        from fedgrok.training.federated import _gpu_client_cap
+        monkeypatch.delenv("FEDGROK_GPU_CLIENT_CAP", raising=False)
+        # Unset must reproduce the original 1/K allocation exactly.
+        assert _gpu_client_cap(50) == 50
+
+    def test_cap_limits_concurrency(self, monkeypatch):
+        from fedgrok.training.federated import _gpu_client_cap
+        monkeypatch.setenv("FEDGROK_GPU_CLIENT_CAP", "8")
+        assert _gpu_client_cap(50) == 8
+
+    def test_cap_never_exceeds_client_count(self, monkeypatch):
+        from fedgrok.training.federated import _gpu_client_cap
+        monkeypatch.setenv("FEDGROK_GPU_CLIENT_CAP", "64")
+        # A cap above K would hand each client more than a whole GPU.
+        assert _gpu_client_cap(10) == 10
+
+    def test_cap_rejects_zero_and_negative(self, monkeypatch):
+        from fedgrok.training.federated import _gpu_client_cap
+        for bad in ("0", "-1"):
+            monkeypatch.setenv("FEDGROK_GPU_CLIENT_CAP", bad)
+            with pytest.raises(ValueError, match="positive integer"):
+                _gpu_client_cap(10)
+
+    def test_blank_cap_is_treated_as_unset(self, monkeypatch):
+        from fedgrok.training.federated import _gpu_client_cap
+        monkeypatch.setenv("FEDGROK_GPU_CLIENT_CAP", "   ")
+        assert _gpu_client_cap(10) == 10
+
+    def test_client_cpu_flag_forces_cpu(self, monkeypatch):
+        from fedgrok.training.federated import _client_device, _clients_on_cpu
+        monkeypatch.setenv("FEDGROK_CLIENT_CPU", "1")
+        assert _clients_on_cpu() is True
+        assert _client_device().type == "cpu"
+
+    def test_client_cpu_accepts_word_forms(self, monkeypatch):
+        from fedgrok.training.federated import _clients_on_cpu
+        for truthy in ("1", "true", "TRUE", "yes"):
+            monkeypatch.setenv("FEDGROK_CLIENT_CPU", truthy)
+            assert _clients_on_cpu() is True
+        for falsy in ("", "0", "no", "false"):
+            monkeypatch.setenv("FEDGROK_CLIENT_CPU", falsy)
+            assert _clients_on_cpu() is False
+
+    def test_client_device_follows_get_device_when_unset(self, monkeypatch):
+        from fedgrok.training.federated import _client_device
+        from fedgrok.core.utils import get_device
+        monkeypatch.delenv("FEDGROK_CLIENT_CPU", raising=False)
+        assert _client_device() == get_device()

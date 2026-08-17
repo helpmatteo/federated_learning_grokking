@@ -76,6 +76,23 @@ take under a minute; the identical arithmetic federated across 5 clients takes ~
 Cost scales with *client count*, not training length, so order manifests
 longest-job-first and do not size the work in GPU-hours.
 
+**VRAM is CUDA contexts, not tensors.** Every client is a separate Ray actor
+*process*, and each pays a full CUDA context — ~226 MiB measured, before any model
+or data exists. Setup B's transformer is 0.9 MB and a K=50 client's shard is
+0.09 MB, so a K=50 run wants ~180 MB of actual memory and ~11 GB of context. VRAM
+therefore scales with **how many clients run at once**, and the model size barely
+enters. Two env vars control it, neither of which changes what is computed:
+
+```bash
+FEDGROK_GPU_CLIENT_CAP=8   # at most 8 clients hold a context at once
+FEDGROK_CLIENT_CPU=1       # clients train on CPU; server still evaluates on GPU
+```
+
+FedAvg is synchronous, so running K clients in waves of N is the same computation —
+verified bit-identical on accuracy, with losses agreeing to 4e-9. They are env vars
+rather than config fields because run ids are content hashes of the spec: an added
+field would re-id every banked run.
+
 ## Layout
 
 ```

@@ -94,6 +94,53 @@ def _get_cached_datasets(cfg):
 _client_cache = {}
 
 
+# ── Client placement: the two knobs that set a run's VRAM ────────────────────
+# Each Flower client is a separate Ray actor PROCESS, so every concurrently
+# scheduled client pays a full CUDA context. Measured on an RTX 3080: ~226 MiB
+# per process before any model or data exists. That overhead, not the workload,
+# is what a federated run's VRAM is made of -- setup B's transformer is 0.9 MB
+# and a K=50 client's data slice is 0.09 MB, so fifty clients need ~180 MB of
+# actual memory against ~11 GB of context.
+#
+# Both knobs are environment variables and deliberately NOT Config fields.
+# `manifest.py` hashes the spec to make the run id, so an experiment axis added
+# here would have to appear in specs and would re-id every banked run. Where a
+# client's tensors live is a scheduling decision, not an experiment axis: it
+# changes what the machine can hold, not what is computed.
+#
+#   FEDGROK_CLIENT_CPU=1     Clients train on CPU; the server still evaluates on
+#                            GPU. Removes the VRAM ceiling outright.
+#   FEDGROK_GPU_CLIENT_CAP=N At most N clients hold a CUDA context at once, so
+#                            VRAM stops scaling with K. FedAvg is synchronous --
+#                            every selected client trains from the same global
+#                            weights and all must return before aggregation --
+#                            so running K clients in waves of N computes the
+#                            same thing as running them all at once.
+
+def _clients_on_cpu():
+    return os.environ.get("FEDGROK_CLIENT_CPU", "").strip().lower() in ("1", "true", "yes")
+
+
+def _client_device():
+    """Device for client-side training. The server's device is chosen separately."""
+    if _clients_on_cpu():
+        return torch.device("cpu")
+    return get_device()
+
+
+def _gpu_client_cap(num_clients):
+    """How many clients may hold a CUDA context concurrently (default: all K)."""
+    raw = os.environ.get("FEDGROK_GPU_CLIENT_CAP", "").strip()
+    if not raw:
+        return num_clients
+    cap = int(raw)
+    if cap < 1:
+        raise ValueError(
+            f"FEDGROK_GPU_CLIENT_CAP must be a positive integer, got {raw!r}"
+        )
+    return min(cap, num_clients)
+
+
 def _get_warm_client(cfg, partition_id, device):
     """Return a cached (model, x_local, y_local_oh, y_local) for this client.
 
@@ -204,7 +251,7 @@ class GrokClient(NumPyClient):
 
     def fit(self, parameters, config):
         cfg = _fit_config_to_cfg(config)
-        device = get_device()
+        device = _client_device()
 
         # Warm model + on-device data (built once per client, reused each round).
         # y_local_target is one-hot (MSE) or class indices (CE) per the loss.
@@ -696,9 +743,13 @@ def fed_train(cfg: FedConfig):
     # on one device; MPS is used via PyTorch directly (not managed by Ray), so
     # num_gpus stays 0 for MPS. The launcher pins one device per run with
     # CUDA_VISIBLE_DEVICES, so "one GPU" here means that run's assigned device.
+    #
+    # The divisor is the concurrency cap, not K, so FEDGROK_GPU_CLIENT_CAP can
+    # hold VRAM flat as K grows -- see the client-placement note above. Left
+    # unset the divisor is K, which is the original behaviour exactly.
     num_gpus = 0.0
-    if torch.cuda.is_available():
-        num_gpus = 1.0 / cfg.num_clients
+    if torch.cuda.is_available() and not _clients_on_cpu():
+        num_gpus = 1.0 / _gpu_client_cap(cfg.num_clients)
 
     # Ray init tuning: the dashboard and the metrics exporter agent are pure
     # overhead for a short-lived single-run simulation. The exporter in
