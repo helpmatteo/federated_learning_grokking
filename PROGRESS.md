@@ -1,9 +1,15 @@
 # v2-multisetup — progress and resume notes
 
-Working branch for the multi-setup rewrite. Current plan:
-`~/.claude/plans/plan-all-that-needs-valiant-hamster.md` (the setup/check phase).
-Closed plans: `plan-all-that-needs-nested-seal.md` (boundary campaign),
-`gate-a-closeout.md` (Gate A).
+Working branch for the multi-setup rewrite. **Plans now live in `plans/` in this
+repo** — see `plans/README.md` for the index. They were moved in from
+`~/.claude/plans/` on 2026-08-17 when the project changed machines.
+
+The one open plan is `plans/in-the-original-exp2-slowdown-ratio-png-greedy-bentley.md`
+(exp2's second α — 87 of 105 specs still to run). Everything else is under
+`plans/closed/`, kept for its reasoning: the multi-setup campaign
+(`plan-all-that-needs-valiant-hamster.md`), the boundary campaign
+(`plan-all-that-needs-nested-seal.md`), Gate A (`gate-a-closeout.md`), and the v2
+build plan (`i-want-to-replicate-merry-badger.md`).
 
 v2 code is complete across all plan phases (0–5). Gate A, Phase 1 and the
 setup/check phase are all closed, and the campaign has now RUN to completion.
@@ -20,6 +26,14 @@ which is organised newest-first and keeps older sections for their reasoning.
 > **The campaign is finished. Nothing is running.** Every manifest that was
 > launched is complete; the only outstanding specs are the three already marked
 > stale, below.
+>
+> **Correction, 2026-08-17.** That paragraph predates the last two commits of the
+> 14th. `t2_aggregation_alpha2` (`5400ebc`, `f32344b`) was launched twice that
+> evening and killed both times within minutes — see the two 500-byte logs in
+> `logs/sweeps/`. **87 of its 105 specs are outstanding and are NOT stale**; they
+> are the project's one piece of live work, planned in
+> `plans/in-the-original-exp2-slowdown-ratio-png-greedy-bentley.md`. Outstanding
+> specs are therefore 508, not 421: 87 live + 421 stale.
 >
 > ### Done
 >
@@ -614,10 +628,10 @@ if a big-K sweep is slow, lower `--per-gpu` or make `num_cpus` fractional in
 ## Resume
 
 ```bash
-cd /home/jse44/modules/ToDL/federated_learning_grokking
+cd <repo root>                               # moved 2026-08-17; no longer /home/jse44/...
 git checkout v2-multisetup
 venv/bin/python -m pytest tests/ -q          # ~530 passed, ~10.5 min
-nvidia-smi                                   # SHARED box -- check what is free first
+nvidia-smi                                   # check what is free first
 ```
 
 **First, find the real state.** These notes lag the banked data; the CSV and the
