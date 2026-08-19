@@ -52,7 +52,7 @@ import matplotlib.pyplot as plt
 # PASSes, CVD dE 24.7, normal-vision 33.6, contrast 4.30 / 3.12. A third alpha
 # would need slot 3 (#1baf7a) and a re-run -- that slot is sub-3:1 on this
 # surface and would oblige direct labels under the relief rule.
-SERIES = ["#2a78d6", "#eb6834"]
+SERIES = ["#2a78d6", "#eb6834", "#1baf7a"]
 CENSORED = "#d03b3b"
 INK, INK2, INK3 = "#0b0b0b", "#52514e", "#898781"
 RULE, SURFACE = "#e1e0d9", "#fcfcfb"
@@ -100,6 +100,80 @@ def _axis_value(row):
     return row["n_train"] if row["dataset"] == "mnist" else row["alpha"]
 
 
+# ── v1 fallback for setup A ──────────────────────────────────────────────────
+# v1 was a single-setup study on A and swept alpha, so its runs.csv already holds
+# complete K ladders at alpha 0.35 and 0.50 that v2 has never re-measured. They
+# are drawn here rather than re-run.
+#
+# THE STATISTIC IS NOT THE SAME and the figure must not pretend otherwise. v1
+# recorded `t_grok` only; the per-run histories it computed that from are
+# gitignored and gone, and the surviving logs print one point per 1,000 rounds --
+# too coarse to recover a first crossing (the whole transition on A/K=2 happens
+# inside a single printed interval). RESULTS 14.4 shows t_grok is not comparable
+# across budgets, so these series are dashed and labelled with their statistic.
+V1_CSV = "results/data/runs.csv"
+V1_ALPHAS = ("0.35", "0.5")
+
+
+def _v1_num(row, key):
+    try:
+        return float(row[key])
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def load_v1_setup_a(csv_path=V1_CSV):
+    """Series dicts for setup A from v1's runs.csv, shaped like load()'s."""
+    if not os.path.exists(csv_path):
+        return []
+    rows = list(csv.DictReader(open(csv_path)))
+    out = []
+    for alpha in V1_ALPHAS:
+        # fraction_train must be 1.0: Phase 0.6 fixed a step-axis bug that only
+        # affects partial participation, and v1's alpha=0.50 ladder contains
+        # ft in {0.2,0.4,0.6} rows whose x-axis is off by up to 2.5x.
+        # experiment == "exp2" is load-bearing, not tidiness. Selecting on
+        # (alpha, K, E, fraction_train, partition) alone pools v1's exp3a
+        # (Dirichlet), exp3b (operand/target shards), exp4a/b/c (other E and
+        # participation) and exp7 (other tasks and primes -- p=53, division,
+        # multiplication) into the same cell: 53 rows where exp2 contributes 3.
+        # That is the silent-pooling failure Phase 0.4 fixed for v2, arriving
+        # here through the back door.
+        fed = [r for r in rows
+               if r.get("experiment") == "exp2"
+               and r.get("alpha") == alpha
+               and r.get("task") == "addition" and r.get("p") == "97"
+               and (r.get("num_clients") or "") not in ("", "None")
+               and r.get("local_epochs") == "5"
+               and r.get("fraction_train") == "1.0"
+               and (r.get("partition") or "iid") == "iid"]
+        cent = [r for r in rows
+                if r.get("experiment") == "exp2"
+                and r.get("alpha") == alpha
+                and r.get("task") == "addition" and r.get("p") == "97"
+                and (r.get("num_clients") or "") in ("", "None")
+                and (r.get("grokked") or "").lower() == "true"]
+        base = [t for t in (_v1_num(r, "t_grok") for r in cent) if t]
+        if not fed or not base:
+            continue
+        by_k = {}
+        for r in fed:
+            by_k.setdefault(int(float(r["num_clients"])), []).append(r)
+        cells = []
+        for k in sorted(by_k):
+            v = by_k[k]
+            fin = [t for t in (_v1_num(r, "t_grok") for r in v
+                               if (r.get("grokked") or "").lower() == "true") if t]
+            cells.append({"K": k, "n": len(v), "grokked": len(fin),
+                          "median": float(np.median(fin)) if fin else None,
+                          "lo": min(fin) if fin else None,
+                          "hi": max(fin) if fin else None})
+        out.append({"val": alpha, "base": float(np.median(base)),
+                    "base_lo": min(base), "base_hi": max(base),
+                    "base_n": len(base), "cells": cells, "legacy": True})
+    return out
+
+
 def load(csv_path="results/data/runs_v2.csv"):
     """{setup: [series]} — one series per data-axis value, each self-contained."""
     claimed = {}          # run id -> the manifest spec that claims it
@@ -144,6 +218,8 @@ def load(csv_path="results/data/runs_v2.csv"):
                 series.append({"val": val, "base": float(np.median(base)),
                                "base_lo": min(base), "base_hi": max(base),
                                "base_n": len(base), "cells": cells})
+        if setup == "A":
+            series += load_v1_setup_a()
         if series:
             out[setup] = series
     return out
@@ -188,16 +264,26 @@ def draw(setup, label, series, out_dir):
         if ok:
             yerr = [[r - c["lo"] / b for r, c in zip(ratios, ok)],
                     [c["hi"] / b - r for r, c in zip(ratios, ok)]]
-            h = ax.errorbar([c["K"] for c in ok], ratios, yerr=yerr, marker="o",
+            legacy = s.get("legacy", False)
+            h = ax.errorbar([c["K"] for c in ok], ratios, yerr=yerr,
+                            marker="s" if legacy else "o",
+                            ls="--" if legacy else "-",
                             color=col, capsize=3, lw=1.8, markersize=6,
                             markeredgecolor=SURFACE, markeredgewidth=1.2, zorder=3)
             handles.append(h)
+            # Name the statistic on the legacy series. Dropping it would put a
+            # t_grok line and a t_first_cross line on one axis unlabelled, which
+            # RESULTS 14.4 says are not the same quantity.
             names.append(f"{axis_name} = {float(s['val']):g}"
-                         f"   (baseline {b:,.0f})")
+                         f"   (baseline {b:,.0f})"
+                         + ("   [v1, T_grok]" if legacy else ""))
             for j, (c, r) in enumerate(zip(ok, ratios)):
                 last = j == len(ok) - 1
+                # Stagger vertically by series: at easy alpha every line sits
+                # on 1.00x for the low-K cells and the labels would overprint.
+                dy = (i - (len(series) - 1) / 2) * 9
                 ax.annotate(f"{r:.2f}×", (c["K"], r), textcoords="offset points",
-                            xytext=(-9 if last else 9, 0),
+                            xytext=(-9 if last else 9, dy),
                             ha="right" if last else "left", va="center",
                             fontsize=8, color=col, family="monospace", zorder=4)
                 if c["grokked"] < c["n"]:
@@ -228,7 +314,13 @@ def draw(setup, label, series, out_dir):
     ax.minorticks_off()
     ax.set_xlim(min(ks) * 0.62, max(ks) * 1.42)
     ax.set_xlabel("K  (clients)", fontsize=10, color=INK2)
-    ax.set_ylabel("federated / centralized\nfirst crossing", fontsize=10, color=INK2)
+    # The v1 series are t_grok, not first crossing, so a panel carrying one
+    # cannot label its axis "first crossing"; the legend names each line's
+    # statistic and the axis stays neutral.
+    ylab = ("federated / centralized\ngrokking time"
+            if any(x.get("legacy") for x in series)
+            else "federated / centralized\nfirst crossing")
+    ax.set_ylabel(ylab, fontsize=10, color=INK2)
     ax.set_title(f"Setup {setup} — {label}", fontsize=12.5, color=INK, pad=18,
                  loc="left")
     ax.annotate("E=5 · FedAvg · iid · 3 seeds · shaded band = that line's "

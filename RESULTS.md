@@ -2,9 +2,10 @@
 
 Everything measured, as of 2026-08-14. Branch `v2-multisetup`.
 
-Companion documents: `PROGRESS.md` (what is built and what remains),
-`~/.claude/plans/plan-all-that-needs-valiant-hamster.md` (the current plan),
-`~/.claude/plans/plan-all-that-needs-nested-seal.md` (the boundary campaign, closed).
+Companion documents: `PROGRESS.md` (what is built and what remains) and `plans/`
+(index in `plans/README.md`) — the multi-setup campaign and the boundary campaign
+are both under `plans/closed/`. They moved into the repo on 2026-08-17; earlier
+revisions of this file cited them at `~/.claude/plans/`, which no longer resolves.
 
 **Data behind every number here:**
 `results/data/runs_v2.csv` (1,466 v2 runs) and `results/data/runs.csv` (870 v1 runs,
@@ -1683,6 +1684,14 @@ K=5 → 22 min, K=20 → 33 min, K=50 → 75 min, K=97 → 2.25 h.
 take **48 s**; the identical arithmetic federated across 5 clients takes **22 min** —
 27× — all of it Flower/Ray shipping weights between client processes each round.
 Cost therefore scales with *client count*, not with training length.
+
+**Hardware provenance.** This model and every `wall_s` in this file were measured on
+the 8× L4 box the project ran on until 2026-08-17. It has since moved to a single
+RTX 3080 Laptop (8 GB, 16 cores). Because the cost is orchestration, **the figures
+transfer**: re-measured 2026-08-19 on setup E at K=20, 235 ms/round here with four
+runs sharing the card against 244 ms/round banked single-slot on the L4. What no
+longer transfers is the *pool* — eight concurrent cards became one, so a sweep's
+wall-clock is its slot-hours divided by ~4, not by ~8-16.
 
 Practical consequence: order manifests **longest-job-first**. On `t2_boundary` that
 cut wall-clock from ~7.2 h to ~5.9 h for identical work.

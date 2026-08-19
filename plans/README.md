@@ -8,7 +8,8 @@ referenced them by paths that no longer resolved).
 
 | plan | what it is |
 |---|---|
-| [`in-the-original-exp2-slowdown-ratio-png-greedy-bentley.md`](in-the-original-exp2-slowdown-ratio-png-greedy-bentley.md) | **The one live plan.** A second α per setup for `paper/exp2_slowdown_ratio_*.png`, so each panel carries two lines instead of one. The builder and the plotting change are **done and committed** (`5400ebc`, `f32344b`); what remains is execution — **87 of 105 specs**, launched twice on 2026-08-14 and killed both times. Read its execution section first: it was written for the 8× L4 box and carries a note on what changed. |
+| [`in-the-original-exp2-slowdown-ratio-png-greedy-bentley.md`](in-the-original-exp2-slowdown-ratio-png-greedy-bentley.md) | **Running.** A second α per setup for `paper/exp2_slowdown_ratio_*.png`, so each panel carries two lines instead of one. Builder and plotting are **done and committed** (`5400ebc`, `f32344b`); execution restarted 2026-08-19 after two aborted launches on the 14th — **79 of 105 specs left**, split per setup under `logs/sweeps/alpha2_split/`, E block in flight. Read its execution section first: it was written for the 8× L4 box and carries a note on what changed. |
+| [`exp3a-dirichlet-ladder-across-setups.md`](exp3a-dirichlet-ladder-across-setups.md) | **Written, not launched.** main's `exp3a_t_grok_vs_dir_alpha` figure on the five setups that lack it — **setup A is already banked** (§18.1) and is the reference the others are measured against. 72 runs, ~139 slot-h, ~35 h wall. Its K=10 choice is what keeps §18.2's starvation confound out of the grid. |
 
 ## Closed
 

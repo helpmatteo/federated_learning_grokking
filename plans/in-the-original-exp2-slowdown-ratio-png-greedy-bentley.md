@@ -160,8 +160,16 @@ setsid nohup venv/bin/python -u scripts/launch_sweep.py \
 > let the launcher autodetect around three other users. This machine has **one
 > RTX 3080 Laptop (8 GB) and 16 cores**, so:
 >
-> - `--gpus 0 --per-gpu 1`. Autodetect still works but there is only one card, and
->   a second concurrent run on it will not fit.
+> - `--gpus 0 --per-gpu 1`. Autodetect still works but there is only one card.
+>
+> **Superseded 2026-08-19 by measurement: use `--per-gpu 4`.** "A second
+> concurrent run will not fit" was wrong. Four concurrent E cells at K=20 ran at
+> 235 ms/round each — against 244 ms/round banked single-slot on the L4 — so
+> concurrency is close to free at K ≤ 20, because the cost is Ray orchestration
+> rather than the card. The run in flight uses `--gpus 0 --per-gpu 4` with
+> `FEDGROK_GPU_CLIENT_CAP=4`. Splitting the manifest per setup
+> (`logs/sweeps/alpha2_split/`) is a scheduling convenience only: same specs, same
+> content-hash ids, so the parts dedup against the parent and against each other.
 > - **Set `FEDGROK_GPU_CLIENT_CAP=8`.** Measured on B's K=50 cell, 300 rounds:
 >   the default co-schedules all 50 clients and takes **723 s at 5,787 MiB**; a cap
 >   of 8 takes **253 s at 3,086 MiB**. Capping is 2.9× faster *and* uses half the

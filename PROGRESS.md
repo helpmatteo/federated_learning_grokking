@@ -30,10 +30,16 @@ which is organised newest-first and keeps older sections for their reasoning.
 > **Correction, 2026-08-17.** That paragraph predates the last two commits of the
 > 14th. `t2_aggregation_alpha2` (`5400ebc`, `f32344b`) was launched twice that
 > evening and killed both times within minutes — see the two 500-byte logs in
-> `logs/sweeps/`. **87 of its 105 specs are outstanding and are NOT stale**; they
-> are the project's one piece of live work, planned in
-> `plans/in-the-original-exp2-slowdown-ratio-png-greedy-bentley.md`. Outstanding
-> specs are therefore 508, not 421: 87 live + 421 stale.
+> `logs/sweeps/`. Its specs are outstanding and are NOT stale; they are the
+> project's one piece of live work, planned in
+> `plans/in-the-original-exp2-slowdown-ratio-png-greedy-bentley.md`.
+>
+> **Update, 2026-08-19 — alpha2 is RUNNING.** The manifest was split per setup
+> into `logs/sweeps/alpha2_split/alpha2_{A,Aprime,B,C,D,E}.jsonl` (a scheduling
+> convenience only — same specs, same ids, so the split deduplicates against the
+> parent manifest and against each other). The **E block is in flight** at
+> `--gpus 0 --per-gpu 4`, 9 of 15 done. Manifest-wide **79 of 105 outstanding**,
+> down from 87. Outstanding specs are therefore 500: 79 live + 421 stale.
 >
 > ### Done
 >
@@ -54,6 +60,7 @@ which is organised newest-first and keeps older sections for their reasoning.
 >
 > | | runs | cost | note |
 > |---|---|---|---|
+> | **exp3a's Dirichlet ladder on the other five setups** | 72 | ~139 slot-h | main's `exp3a_t_grok_vs_dir_alpha` figure exists for **setup A only** (§18.1, `t3a_dirichlet_band`). K=10, five new rungs × 3 seeds per setup; the `dir_α=0.5` rung and every iid control are **already banked**. Planned in `plans/exp3a-dirichlet-ladder-across-setups.md` |
 > | **FedAvg damped to FedProx's step size** | ~15 | ~6 h | **the one experiment still owed.** Separates "suppressed magnitude" from "damped learning rate" in FedProx's failure (§17.1, §18.4). Not written |
 > | **A′ at `persist_local_opt_state=True`** | ~3 | ~2 h | narrowed from ~12: the flag **has** been run (12 paired runs in `s5_fl_probe`); only A′'s 13.3× is still open (§15.3) |
 > | extreme non-IID without starvation | ~9 | ~5 h | §18.2 showed `dirichlet` cannot probe dir_a<0.1 here without emptying a shard. A partitioner that concentrates labels at a FLOOR on shard size would test the regime that is currently unreachable |
@@ -83,13 +90,13 @@ which is organised newest-first and keeps older sections for their reasoning.
 | Branch | `v2-multisetup` (branched from `main` @ `41c3fa8`; `main` has nothing this lacks) |
 | Frozen reference | tag `v1-single-setup` — the state that produced the 32 figures in `results/figures/` |
 | Tests | **545 collected** (`venv/bin/python -m pytest tests/ -q`, ~9 min incl. FL integration) |
-| Runs banked | **1,466** in `results/data/runs_v2.csv` (982 grokked, 484 censored) + 870 v1 runs in `runs.csv`. 930 machine-hours |
+| Runs banked | **1,478** result JSONs; `results/data/runs_v2.csv` lags at 1,466 (982 grokked, 484 censored) — re-run `collect_runs.py`. Plus 870 v1 runs in `runs.csv`. 930 machine-hours |
 | Setups | A quad-MLP/mod-97 · A′ quad-MLP/mod-97/AdamW (**measured**, §13.3) · B transformer/mod-113 · C transformer/S₅ · D quad-MLP/S₅ · E MLP/MNIST-1k. **D′ dropped** — the gate that would have required it opened (§13.7) |
 | FL algorithms | FedAvg, FedProx, FedAvgM, FedYogi, FedAdam (native) + SCAFFOLD (adapted, **raises under AdamW by design**) |
 | Statistics | censored survival (KM median + fraction-grokked + bootstrap CI); `scripts/summarize_runs.py` |
 | deps | torch 2.10 + torchvision 0.25 (pinned pair); flwr 1.27 |
 | Env | `venv/` (py3.10, torch 2.10, flwr 1.27); package installed via `pip install -e . --no-deps` |
-| Hardware | 8× L4, **shared with other users** — check `nvidia-smi` before sizing; the launcher auto-skips busy GPUs |
+| Hardware | **1× RTX 3080 Laptop (8 GB), 16 cores, 30 GB RAM** since 2026-08-17 — was 8× L4 (23 GB, 64 cores, shared). Every `--gpus 0,1,...` in this file and in `scripts/run_*.sh` is a historical record, not a runnable command. Use `--gpus 0 --per-gpu 4` (measured, below) |
 
 ## RESOLVED: there was never a K≈30 collapse
 
@@ -219,7 +226,7 @@ the federated arm had been reading a censored cell as a result.
 ```bash
 venv/bin/python scripts/build_manifests.py               # regenerate manifests/
 venv/bin/python scripts/launch_sweep.py manifests/t0_wd_grid.jsonl --dry-run
-venv/bin/python scripts/launch_sweep.py manifests/t0_wd_grid.jsonl --per-gpu 2
+venv/bin/python scripts/launch_sweep.py manifests/t0_wd_grid.jsonl --gpus 0 --per-gpu 4
 venv/bin/python scripts/collect_runs.py                  # per-run JSONs -> results/data/runs_v2.csv
 ```
 Resume is automatic (skips runs whose result JSON exists). One run = one subprocess with `CUDA_VISIBLE_DEVICES` pinned.
@@ -522,7 +529,7 @@ too expensive (2.5M steps/run). See the E RANGE note in `scripts/build_manifests
 
 ```bash
 venv/bin/python scripts/build_manifests.py                       # (re)generate manifests/
-venv/bin/python scripts/launch_sweep.py manifests/<name>.jsonl --gpus 0,2,4,5,6,7 --per-gpu 2
+venv/bin/python scripts/launch_sweep.py manifests/<name>.jsonl --gpus 0 --per-gpu 4
 venv/bin/python scripts/collect_runs.py                          # -> results/data/runs_v2.csv
 venv/bin/python scripts/summarize_runs.py results/data/runs_v2.csv --group <cols>
 ```
@@ -589,12 +596,22 @@ runs one config and dumps history JSON; diff against `ref_run1.json` (archived c
 trajectory). Worst |Δ| < 1e-5 = fp32 noise = OK. It has now caught two real bugs (the 1.1
 RNG-order bug and the stale `ipr` reference in 2b).
 
-## Open tuning note (carried from 1.1)
+## Concurrency on one card — MEASURED, 2026-08-19
 
-Client `num_gpus=1/K`, `num_cpus=1` reservations are unchanged. Under heavy concurrency
-(12 runs × large K × 1 CPU each on 64 cores) Ray will queue/serialise rather than deadlock;
-if a big-K sweep is slow, lower `--per-gpu` or make `num_cpus` fractional in
-`fedgrok/training/federated.py`. Not a blocker — the smoke tests ran clean.
+Client `num_gpus=1/K`, `num_cpus=1` reservations are unchanged. The old note here
+worried about 12 runs × large K on 64 cores; the box is now 16 cores and one 8 GB
+card, so the question is settled differently:
+
+**`--gpus 0 --per-gpu 4` is the working default at K ≤ 20.** Measured on the live
+alpha2 E block: K=20 ran at **235 ms/round with four runs sharing the card**,
+against **244 ms/round banked single-slot on an L4**. Per-run wall is unchanged and
+throughput is ~4×, because the workload is orchestration-bound rather than
+GPU-bound — the same fact that makes cost scale with client count.
+
+Above K=20, cap the client population instead of lowering `--per-gpu`:
+`FEDGROK_GPU_CLIENT_CAP=8` (see the README's VRAM section). Ray queues rather than
+deadlocks when clients outnumber cores, so an uncapped K=50 run is slow, not
+broken — 50 client processes on 16 cores contend instead of computing.
 
 ## Findings worth not re-deriving
 
@@ -631,7 +648,7 @@ if a big-K sweep is slow, lower `--per-gpu` or make `num_cpus` fractional in
 cd <repo root>                               # moved 2026-08-17; no longer /home/jse44/...
 git checkout v2-multisetup
 venv/bin/python -m pytest tests/ -q          # ~530 passed, ~10.5 min
-nvidia-smi                                   # check what is free first
+nvidia-smi                                   # one card now; check it is free first
 ```
 
 **First, find the real state.** These notes lag the banked data; the CSV and the

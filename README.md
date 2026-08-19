@@ -34,6 +34,12 @@ Versions are pinned in `pyproject.toml`; `torch` and `torchvision` are a pinned 
 and `flwr>=1.27` is required for the `run_simulation` API. Runs assume CUDA — the
 launcher pins one GPU per subprocess via `CUDA_VISIBLE_DEVICES`.
 
+**Hardware.** This project ran on an 8× L4 box until 2026-08-17 and now runs on a
+single **RTX 3080 Laptop (8 GB), 16 cores**. Multi-GPU pools in `scripts/run_*.sh`
+are records of what was run, not runnable commands. Banked `wall_s` figures come
+from the L4 and still transfer: the work is orchestration-bound, so per-run wall is
+about the same here (measured, §Concurrency in `PROGRESS.md`).
+
 ## Running a sweep
 
 Experiments are declared as **manifests** — JSONL files of run specs — rather than as
@@ -43,7 +49,7 @@ resume free and makes duplicate work across manifests impossible.
 ```bash
 venv/bin/python scripts/build_manifests.py                    # (re)generate manifests/
 venv/bin/python scripts/validate_manifest.py manifests/<name>.jsonl
-venv/bin/python scripts/launch_sweep.py manifests/<name>.jsonl --gpus 0,1,2,3 --per-gpu 1
+venv/bin/python scripts/launch_sweep.py manifests/<name>.jsonl --gpus 0 --per-gpu 4
 venv/bin/python scripts/collect_runs.py                       # -> results/data/runs_v2.csv
 venv/bin/python scripts/summarize_runs.py results/data/runs_v2.csv --group setup,num_clients
 ```
@@ -53,7 +59,7 @@ should be detached, or it dies with its shell:
 
 ```bash
 setsid nohup venv/bin/python -u scripts/launch_sweep.py manifests/<name>.jsonl \
-    --gpus 0,1,2,3,4,5,6,7 --per-gpu 1 > logs/sweeps/<name>.log 2>&1 < /dev/null &
+    --gpus 0 --per-gpu 4 > logs/sweeps/<name>.log 2>&1 < /dev/null &
 ```
 
 Sweep logs go in `logs/sweeps/`, not `logs/` — the latter holds v1 experiment logs and
@@ -92,6 +98,11 @@ FedAvg is synchronous, so running K clients in waves of N is the same computatio
 verified bit-identical on accuracy, with losses agreeing to 4e-9. They are env vars
 rather than config fields because run ids are content hashes of the spec: an added
 field would re-id every banked run.
+
+On the 8 GB card, `--per-gpu 4` is the measured working default up to K=20 — four
+concurrent runs cost nothing per-run against the banked single-slot L4 rate. Past
+K=20, cap the clients rather than the runs: 50 client processes on 16 cores contend
+rather than compute, and capping to 8 is 2.9× faster *and* halves peak VRAM.
 
 ## Layout
 
