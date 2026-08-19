@@ -128,6 +128,11 @@ def _client_device():
     return get_device()
 
 
+def _compile_clients():
+    """Compile the client forward with CUDA graphs (see the placement note)."""
+    return os.environ.get("FEDGROK_COMPILE", "").strip().lower() in ("1", "true", "yes")
+
+
 def _gpu_client_cap(num_clients):
     """How many clients may hold a CUDA context concurrently (default: all K)."""
     raw = os.environ.get("FEDGROK_GPU_CLIENT_CAP", "").strip()
@@ -159,7 +164,16 @@ def _get_warm_client(cfg, partition_id, device):
         y_local_target = build_loss(cfg).prepare_target(y_local, dataset_dims(cfg)[1])
 
         model = _make_model(cfg).to(device)
-        entry = (model, x_local, y_local_target, y_local)
+        # A compiled forward for the TRAINING steps only. It shares parameters
+        # with `model`, so the optimizer, the weight copy-in and every
+        # state_dict path below still operate on the eager module and are
+        # unaffected. `reduce-overhead` is the mode that matters here: it backs
+        # the forward with CUDA graphs, which is what removes the per-launch
+        # cost that dominates a 103-sample step. Metrics stay eager on purpose --
+        # they run under model.eval(), and switching modes on a compiled module
+        # forces a recapture every round.
+        train_fwd = torch.compile(model, mode="reduce-overhead") if _compile_clients() else model
+        entry = (model, x_local, y_local_target, y_local, train_fwd)
         _client_cache[key] = entry
     return entry
 
@@ -255,7 +269,8 @@ class GrokClient(NumPyClient):
 
         # Warm model + on-device data (built once per client, reused each round).
         # y_local_target is one-hot (MSE) or class indices (CE) per the loss.
-        model, x_local, y_local_target, y_local = _get_warm_client(cfg, self.partition_id, device)
+        model, x_local, y_local_target, y_local, train_fwd = _get_warm_client(
+            cfg, self.partition_id, device)
 
         # Overwrite the model with this round's global weights, in place.
         _load_ndarrays_into(model, parameters)
@@ -292,7 +307,7 @@ class GrokClient(NumPyClient):
 
         def _step(xb, yb):
             """One gradient step on a batch (+ FedProx / SCAFFOLD corrections)."""
-            loss = loss_fn(model(xb), yb)
+            loss = loss_fn(train_fwd(xb), yb)
             if proximal_mu > 0:
                 prox = sum(
                     torch.sum((p - gp) ** 2)

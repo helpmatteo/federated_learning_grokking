@@ -555,7 +555,8 @@ class TestLossPropagation:
         _client_cache.clear()
         cfg = FedConfig(p=7, loss="ce", num_clients=2, partition="iid",
                         hidden_width=16, seed=42)
-        _, _, y_target, y_local = _get_warm_client(cfg, 0, torch.device("cpu"))
+        # 5-tuple: the last slot is the (optionally compiled) training forward.
+        _, _, y_target, y_local, _ = _get_warm_client(cfg, 0, torch.device("cpu"))
         assert y_target.dim() == 1            # class indices, not (n, p) one-hot
         assert y_target.dtype == torch.int64
         assert torch.equal(y_target, y_local)
