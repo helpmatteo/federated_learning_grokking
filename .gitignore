@@ -52,6 +52,12 @@ paper/*.pdf
 #   becomes unclonable. Shared out of band instead.
 #   Per-run stdout logs. ~12 GB, and 9 of them exceed GitHub's 100 MB hard limit
 #   outright -- they are Flower/Ray retry tracebacks, not evidence.
+# results/baselines/ is the Config DEFAULT output_dir, so the test suite and any
+# ad-hoc run land there. Only its 17 committed v1 figures belong in git; the
+# histories that appear beside them are transient. (Before this file listed
+# committed paths explicitly, a blanket results/**/*.json hid them.)
+results/baselines/**/*.json
+
 results/**/checkpoints/
 results/checkpoints/
 # ...with ONE tracked exception, 740 files / 629 MB under
