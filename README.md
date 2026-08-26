@@ -19,7 +19,8 @@ the FedAvg family, using Flower.
 Active work is on branch **`v2-multisetup`**. `main` is the frozen single-setup study
 (tag `v1-single-setup`) and is 60+ commits behind; everything below describes v2.
 
-- **`PROGRESS.md`** — what is built, what is running, what is next. Start here.
+- **`RUNS_TODO.md`** — what still needs running, and what was decided against. Start here.
+- **`PROGRESS.md`** — what is built, how to run it, and the reasoning worth not re-deriving.
 - **`RESULTS.md`** — every measured number, with the run data behind it.
 - Ground truth is `results/data/runs_v2.csv`, not the prose. The docs lag the data.
 

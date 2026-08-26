@@ -16,6 +16,11 @@ dist/
 # Logs
 logs/
 
+# Run-chain scratch summaries. scripts/run_*.sh write these -- they are
+# regenerable output of summarize_runs.py, not source, and RESULTS.md is the
+# place a reading gets written down.
+*_STATUS.md
+
 # LaTeX build artifacts
 paper/*.aux
 paper/*.log
@@ -33,6 +38,12 @@ paper/*.pdf
 results/**/*.json
 results/**/checkpoints/
 results/checkpoints/
+# ...with ONE tracked exception, 740 files / 629 MB under
+# results/experiments/exp7_mechanistic/*/checkpoints/. Those predate this rule
+# and are not orphans: analysis/mechanistic.py::run_analysis and
+# scripts/plotting/plot_exp7_mechanistic.py read them directly, so untracking
+# them would leave both unable to run from a fresh clone. Everything written
+# since is ignored as intended.
 results/runs/
 results/data/runs/
 

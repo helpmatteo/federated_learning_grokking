@@ -2,10 +2,9 @@
 
 What still needs to be run, decided from scratch.
 
-This supersedes every "Next" / "Outstanding" / "Stale" list in `PROGRESS.md`,
-`RESULTS.md`, `plans/` and the `*_STATUS.md` files. Nothing carries over by
-default — an item appears here only after it has been looked at explicitly and
-kept.
+This supersedes every "Next" / "Outstanding" / "Stale" list that used to live in
+`PROGRESS.md`, `RESULTS.md` and `plans/`. Nothing carries over by default — an
+item appears here only after it has been looked at explicitly and kept.
 
 Ground truth for what is already banked: `results/data/runs_v2.csv` and
 `results/data/runs/*.json`.

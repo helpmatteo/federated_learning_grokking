@@ -1,8 +1,14 @@
 """Grokking step detection and multi-seed result aggregation.
 
-Definitions from experiment_plan.md Section 3.1:
-- T_grok: smallest step t_j such that test_acc >= threshold for ALL subsequent steps
-- T_50: smallest step t_j such that test_acc >= 50%
+- T_grok: smallest step t_j such that test_acc >= threshold for ALL subsequent
+  steps. Not comparable across budgets or logging rates -- extending a run can
+  report a LATER t_grok on an identical trajectory prefix, because the bar has
+  more chances to be broken. Use t_first_cross to compare cells.
+- t_first_cross: first step at or above the threshold, sustained or not.
+- T_50: first step where test_acc >= 50%.
+- T_memo: first step where TRAIN accuracy >= 99%. The delay that defines
+  grokking is t_grok - t_memo, and a cell that never memorised has failed to
+  train rather than failed to grok -- a different diagnosis with a different fix.
 """
 
 import math

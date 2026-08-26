@@ -1,6 +1,6 @@
 # Results — federated grokking
 
-Everything measured, as of 2026-08-14. Branch `v2-multisetup`.
+Everything measured, as of 2026-08-24. Branch `v2-multisetup`.
 
 Companion documents: `PROGRESS.md` (what is built and what remains) and `plans/`
 (index in `plans/README.md`) — the multi-setup campaign and the boundary campaign
@@ -8,7 +8,7 @@ are both under `plans/closed/`. They moved into the repo on 2026-08-17; earlier
 revisions of this file cited them at `~/.claude/plans/`, which no longer resolves.
 
 **Data behind every number here:**
-`results/data/runs_v2.csv` (1,466 v2 runs) and `results/data/runs.csv` (870 v1 runs,
+`results/data/runs_v2.csv` (1,529 v2 runs) and `results/data/runs.csv` (870 v1 runs,
 recovered from logs). Both are committed. Regenerate any table with:
 
 ```bash
@@ -1720,7 +1720,7 @@ cut wall-clock from ~7.2 h to ~5.9 h for identical work.
 | | runs | grokked | censored |
 |---|---|---|---|
 | **v1** (`results/data/runs.csv`, log-recovered) | 870 | 554 | 316 |
-| **v2** (`results/data/runs_v2.csv`) | 1,466 | 982 | 484 |
+| **v2** (`results/data/runs_v2.csv`) | 1,529 | 1,016 | 513 |
 
 v1 by experiment: exp2 333 · exp5 153 · exp3a 100 · exp7 74 · exp4a 72 · exp4b 72 ·
 exp4 36 · exp3b 30.
@@ -1731,6 +1731,12 @@ v2 by campaign — regenerate with
 | campaign | runs | status |
 |---|---|---|
 | `aggregation` | 192 | done — §15.1 |
+| `aggregation_alpha2` | 30 | exp2's second α — 60 specs still outstanding |
+| `b_wd_zero_alpha` | 15 | **done** — B's α ladder at wd=0; groks from α=0.60 (`RUNS_TODO` 2) |
+| `b_wd01_alpha_ladder` | 12 | done — B's α ladder at wd=0.1, the low-decay reference |
+| `wd_zero` | 9 | done — §15.4, the wd=0 controls |
+| `b_wd_zero_a04_long` | 3 | **done** — α=0.40 to 1,000,000 steps; the gradient dies (`RUNS_TODO` 3) |
+| `b_k20_wd_control` | 3 | done — the K=20 cell behind the 2026-08-20 decay decision |
 | `central_anchor` | 131 | done — Gate A ladders, §11 |
 | `partitions` | 108 | done — §17.2 (exp3b, complete incl. coset) |
 | `d_alpha_high` | 90 | done — tier X |
@@ -1767,7 +1773,7 @@ v2 by campaign — regenerate with
 | `poly_pilot` | 6 | done — §7 |
 | plus 6 smaller diagnosis groups | 37 | `c_alpha` · `grok_confirm_fl` · `adam_restart` · `k50_hparam` · `k50_ladder` · `e1_identity` |
 
-**v2 compute to date: 930 machine-hours.** Checkpoints on disk: 25 GB across
+**v2 compute to date: ~965 machine-hours.** Checkpoints on disk: 25 GB across
 383 run directories (gitignored) — **211 runs carry per-client weights**, spanning
 all six setups, which is what §16 reads.
 

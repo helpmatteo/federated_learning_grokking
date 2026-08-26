@@ -119,10 +119,6 @@ def _coset_labels_cached(n: int, subgroup: str):
     return np.array([label_of[i] for i in range(len(elements))], dtype=np.int64)
 
 
-def num_cosets(n: int, subgroup: str) -> int:
-    """|S_n| / |H| — the number of cosets (= client count for the coset split)."""
-    return int(coset_labels(n, subgroup).max()) + 1
-
 
 def make_sn_dataset(cfg):
     """Build S_n composition and split into train/test (mirrors make_dataset).
