@@ -33,21 +33,32 @@ paper/*.bbl
 paper/*.blg
 paper/*.pdf
 
-# Large / regenerable results: per-round histories, checkpoints, and the
-# per-run summary JSONs + launcher logs the sweep produces.
-results/**/*.json
+# Results: what is committed and what is not.
+#
+# COMMITTED -- the reproducible evidentiary base:
+#   results/data/*.csv        the tidy per-run summaries (runs.csv, runs_v2.csv)
+#   results/data/runs/*.json  the per-run result rows those CSVs are BUILT from.
+#                             ~6 MB. collect_runs.py regenerates the CSV from
+#                             these; nothing regenerates these but re-running the
+#                             work, so committing them is what makes the CSV a
+#                             reproducible artifact rather than an unbacked one.
+#   results/runs/*/*.json     per-round histories + the run's spec. ~550 MB raw
+#                             and ~34% of that packed, which is what lets any
+#                             training curve be re-plotted from the repo alone.
+#
+# NOT COMMITTED -- large and effectively incompressible:
+#   *.pt under any checkpoints/ dir. ~34 GB of model checkpoints and per-client
+#   weights; a sample gzips to 92% of its size, so git buys nothing and the tree
+#   becomes unclonable. Shared out of band instead.
+#   Per-run stdout logs. ~12 GB, and 9 of them exceed GitHub's 100 MB hard limit
+#   outright -- they are Flower/Ray retry tracebacks, not evidence.
 results/**/checkpoints/
 results/checkpoints/
 # ...with ONE tracked exception, 740 files / 629 MB under
 # results/experiments/exp7_mechanistic/*/checkpoints/. Those predate this rule
 # and are not orphans: analysis/mechanistic.py::run_analysis and
 # scripts/plotting/plot_exp7_mechanistic.py read them directly, so untracking
-# them would leave both unable to run from a fresh clone. Everything written
-# since is ignored as intended.
-results/runs/
-results/data/runs/
-
-# results/data/*.csv is deliberately NOT ignored -- the tidy per-run summaries
-# (runs.csv from the log harvest, runs_v2.csv from collect_runs.py) are the
-# committed evidentiary base for the paper.
-!results/data/*.csv
+# them would leave both unable to run from a fresh clone.
+*.pt
+results/data/runs/*.log
+results/**/*.log
