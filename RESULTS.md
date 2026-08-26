@@ -56,6 +56,23 @@ partially censored.
    (§13.2, §13.5). On B, decay leaves memorisation untouched at epoch 150 and
    acts purely on the generalisation timescale.
 
+   **Superseded for new transformer work, 2026-08-20: B and C now run at
+   `weight_decay = 0.1`, not 1.0.** The check above was centralized, and
+   centrally 1.0 is right — on C's band at α=0.5, wd=1.0 crosses at 19,900
+   against 70,200 at 0.1, and below 0.03 C does not grok at all. **Under
+   federation the conclusion inverts.** At K=20 on B (α=0.40, 10,000 steps),
+   wd=1.0 stops *memorisation*: two of three seeds sat at ~41% peak train with
+   `t_memo` infinite, while the identical cell at wd=0.1 memorised completely
+   on all three (`t_memo` 3,600–4,200) and was merely waiting to generalise.
+   High decay drives generalisation on these setups, but once federation has
+   slowed memorisation enough, it starts blocking that too — the decay clock
+   (§14.3) reaching the phase it usually leaves alone.
+
+   Two consequences. **Budgets need ~3.5× the banked wd=1.0 numbers**, which is
+   the ratio C's band measures. And the **305 banked wd=1.0 transformer runs are
+   not comparable** to new ones, so any figure mixing them must label which
+   decay each line carries.
+
 10. **Seven budget-manufactured boundaries so far.** Every headline failure this
     project has reported has, on re-measurement, been a clock running out — the
     latest being setup C's supposed α≥0.5 cliff, which was a ladder cut off at the

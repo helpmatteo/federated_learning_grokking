@@ -41,6 +41,21 @@ which is organised newest-first and keeps older sections for their reasoning.
 > `--gpus 0 --per-gpu 4`, 9 of 15 done. Manifest-wide **79 of 105 outstanding**,
 > down from 87. Outstanding specs are therefore 500: 79 live + 421 stale.
 >
+> ### Standing decisions
+>
+> **Transformer weight decay is 0.1 (2026-08-20).** Setups **B** and **C** — the two
+> `model: transformer` setups — use `weight_decay = 0.1` for all new work, replacing
+> the 1.0 inherited from Nanda. A new manifest builder must override it explicitly
+> (`{**SETUP_B, "weight_decay": 0.1}`); `SETUP_B`/`SETUP_C` in
+> `scripts/build_manifests.py` stay at 1.0 on purpose, because `weight_decay` is
+> inside the run-id hash and editing the constant would rewrite `t2_aggregation`
+> and orphan all 305 banked wd=1.0 transformer runs.
+>
+> Two things this costs. **Budget ~3.5× the banked wd=1.0 numbers** — C's decay band
+> measures 70,200 at wd=0.1 against 19,900 at 1.0 (α=0.5). And **new transformer runs
+> are not comparable to the banked ones**, so a mixed figure has to say which decay
+> each line carries. Rationale and evidence in `RESULTS.md` §"short version" item 9.
+>
 > ### Done
 >
 > | | runs | verdict |
