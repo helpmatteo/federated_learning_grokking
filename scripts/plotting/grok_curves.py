@@ -196,12 +196,41 @@ def _section_for(row, args):
     return (args.section_labels or {}).get(key, key)
 
 
-def build(panels, title, heading=None, standfirst=None):
+def build(panels, title, heading=None, standfirst=None, footnotes=None):
     payload = json.dumps(panels, separators=(",", ":"))
+    notes = json.dumps([[h, t] for h, t in (footnotes or _DEFAULT_FOOTNOTES)],
+                       separators=(",", ":"))
     return (_TEMPLATE.replace("__DATA__", payload)
             .replace("__TITLE__", title)
             .replace("__HEADING__", heading or _DEFAULT_HEADING)
-            .replace("__STANDFIRST__", standfirst or _DEFAULT_STANDFIRST))
+            .replace("__STANDFIRST__", standfirst or _DEFAULT_STANDFIRST)
+            .replace("__FOOTNOTES__", notes))
+
+
+# The original four-setups page's caveats. They are the DEFAULT and not a
+# constant on the page because they are specific to that page's runs: two of the
+# three describe federated cells and one says "one seed per cell". Any page whose
+# runs differ must pass its own with --footnote, or it will publish a caption
+# that contradicts its own panels.
+_DEFAULT_FOOTNOTES = [
+    ("How to read the x axis",
+     "Both modes are plotted on the compute-matched total_steps axis: a federated "
+     "round of E local steps across K clients touches the same number of per-sample "
+     "gradients as E full-batch steps, so the axes are comparable by gradient work. "
+     "They are NOT comparable by parameter-update count \u2014 FedAvg performs "
+     "K\u00d7E updates per round to centralized training's E."),
+    ("Why the federated runs reach the bar sooner",
+     "Every new setup uses AdamW, and client optimizer state is rebuilt each round "
+     "by default, so each round is E bias-corrected cold-start Adam steps. That is a "
+     "genuine no-op for the original GD setup but not here, and it is the most likely "
+     "explanation for the gap \u2014 not a federated speedup. The s5_fl_probe "
+     "manifest carries a 12-run A/B on persist_local_opt_state to settle it."),
+    ("What this is and is not",
+     "One seed per cell, chosen to demonstrate that each setup trains and groks end "
+     "to end. It is not a survival estimate: no fraction-grokked, no confidence "
+     "interval, and no claim about which setup is faster. Those need the 5-seed cells "
+     "in the staged manifests."),
+]
 
 
 _DEFAULT_HEADING = "Four new setups, both centrally and under FedAvg — every one groks"
@@ -609,25 +638,10 @@ bC.onclick=()=>{chartView.classList.remove("hidden");tvWrap.classList.add("hidde
 bT.onclick=()=>{tvWrap.classList.remove("hidden");chartView.classList.add("hidden");
   bT.setAttribute("aria-pressed","true");bC.setAttribute("aria-pressed","false");};
 
-// Caveats belong on the page, not in a covering note.
-[["How to read the x axis",
-  "Both modes are plotted on the compute-matched total_steps axis: a federated round "+
-  "of E local steps across K clients touches the same number of per-sample gradients "+
-  "as E full-batch steps, so the axes are comparable by gradient work. They are NOT "+
-  "comparable by parameter-update count — FedAvg performs K×E updates per round to "+
-  "centralized training's E."],
- ["Why the federated runs reach the bar sooner",
-  "Every new setup uses AdamW, and client optimizer state is rebuilt each round by "+
-  "default, so each round is E bias-corrected cold-start Adam steps. That is a genuine "+
-  "no-op for the original GD setup but not here, and it is the most likely explanation "+
-  "for the gap — not a federated speedup. The s5_fl_probe manifest carries a 12-run "+
-  "A/B on persist_local_opt_state to settle it."],
- ["What this is and is not",
-  "One seed per cell, chosen to demonstrate that each setup trains and groks end to "+
-  "end. It is not a survival estimate: no fraction-grokked, no confidence interval, "+
-  "and no claim about which setup is faster. Those need the 5-seed cells in the "+
-  "staged manifests."]
-].forEach(([h,t])=>{
+// Caveats belong on the page, not in a covering note. Supplied by the caller
+// (--footnote 'Heading=Text'); they describe THIS page's runs, so they are not
+// hardcoded -- a stale caveat that contradicts the panels is worse than none.
+__FOOTNOTES__.forEach(([h,t])=>{
   const p=document.createElement("p");
   const b=document.createElement("b"); b.textContent=h+". ";
   p.append(b, document.createTextNode(t));
@@ -653,6 +667,11 @@ def main():
     ap.add_argument("--section-labels", default=None,
                     help="rename sections, ';'-separated so labels may "
                          "contain commas: 'width=exp0 - width;boundary=exp1 - cliff'")
+    ap.add_argument("--footnote", action="append", metavar="HEADING=TEXT",
+                    help="a caveat paragraph for the page footer, repeatable. "
+                         "Replaces the built-in four-setups caveats, which "
+                         "describe federated one-seed-per-cell runs and are wrong "
+                         "for any other page.")
     ap.add_argument("--runs-root", default="results/data/runs")
     ap.add_argument("--hist-root", default="results/runs")
     args = ap.parse_args()
@@ -690,7 +709,9 @@ def main():
         panels.sort(key=lambda p: (p["mode"] != "centralized", p["setup"]))
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as fh:
-        fh.write(build(panels, args.title, args.heading, args.standfirst))
+        notes = ([tuple(f.split("=", 1)) for f in args.footnote if "=" in f]
+                 if args.footnote else None)
+        fh.write(build(panels, args.title, args.heading, args.standfirst, notes))
     print(f"\nWrote {len(panels)} panels -> {args.out}")
 
 

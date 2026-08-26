@@ -462,6 +462,27 @@ def t2_boundary():
 #
 # `setup` is a TAG, not a config field, so adding it costs no run ids.
 
+# ── TRANSFORMER WEIGHT DECAY: 1.0 HERE IS HISTORY, NOT THE CURRENT CHOICE ────
+# As of 2026-08-20 new transformer work (B and C) uses **weight_decay = 0.1**.
+# A new builder must override it explicitly:  {**SETUP_B, "weight_decay": 0.1}.
+#
+# The constants below stay at 1.0 deliberately. weight_decay is a Config field,
+# so it is inside the content hash: changing it here changes every B and C spec
+# id, main()'s `unchanged` check then fails, and write_manifest rewrites
+# t2_aggregation and the rest -- orphaning all 305 banked wd=1.0 transformer
+# runs from the ids `scripts/plotting/exp2_slowdown_ratio.py` selects on.
+#
+# Budget accordingly: on C's centralized decay band at alpha=0.5, wd=0.1 first
+# crosses at 70,200 against 19,900 at wd=1.0 -- **3.5x slower** -- and below
+# wd=0.03 C does not grok at all. Sizing a wd=0.1 cell from a banked wd=1.0
+# number is how a cell gets censored.
+#
+# Why the change is nonetheless right for federated work: at K=20 on B, wd=1.0
+# stops MEMORISATION -- two of three seeds sat at ~41% train through 10,000
+# steps with t_memo infinite, while at wd=0.1 all three memorised cleanly
+# (t_memo 3,600-4,200) and were merely waiting to generalise. High decay drives
+# generalisation on these setups but blocks memorisation once federation has
+# slowed it.
 SETUP_B = {"dataset": "modular", "task": "addition", "p": 113,
            "model": "transformer", "hidden_width": 128, "n_heads": 4,
            "d_mlp": 512, "loss": "ce", "optimizer": "adamw", "lr": 1e-3,
@@ -2356,7 +2377,196 @@ def t3a_size_control():
     return specs
 
 
+def x_b_wd_zero_fl():
+    """Setup B at wd=0, federated -- does the memorisation collapse need DECAY?
+
+    THE CONTROL THAT IS MISSING. RESULTS 14.3's decay clock says memorisation
+    blows up with K on setups with decoupled decay and stays flat on those
+    without, because AdamW's decay is applied per local step and is independent
+    of shard size while the learning signal from a 1/K shard is not. The
+    evidence for it is B/C/D/E (AdamW, wd>0) degrading against A (GD, wd=0).
+
+    But A differs from B in the OPTIMISER as well as the decay, so "AdamW" and
+    "decoupled decay" are confounded in exactly the comparison the mechanism
+    rests on. B at wd=0 is AdamW with no decay clock at all, and it separates
+    them on a single setup with everything else held fixed.
+
+    > DECISION RULE. Read t_memo(K) against the banked wd ladder at the same
+    > alpha, K and budget.
+    >   If t_memo at wd=0 stays FLAT in K (~ the centralized 200) while wd=0.1
+    >   and wd=1.0 climb, the decay clock is about decay and the mechanism
+    >   stands as written.
+    >   If t_memo at wd=0 climbs with K anyway, the collapse is a property of
+    >   AdamW under fragmentation and 14.3's mechanism is wrong -- the paper
+    >   would then say "adaptive optimiser", not "decay clock".
+    > Generalisation is expected to fail either way: 15.4 has B at wd=0 sitting
+    > at 2.5-5.9% test for 100,000 centralized epochs against a 0.88% chance
+    > level, so decay is what CAUSES grokking here. A federated null on
+    > t_first_cross is therefore the centralized result reproduced, not a
+    > federated effect, and t_memo is the reading that matters.
+
+    alpha=0.30, NOT 0.40. It is the plane with a complete wd ladder already
+    banked at both K (below), and the centralized wd=0 arm in `x_controls` is at
+    0.30 too, so the ceiling comes free and matched.
+
+    BUDGET 20,000 rounds = 100,000 steps, and it is set from the arm it has to
+    out-live rather than from this arm's expectation. Banked t_first_cross at
+    wd=0.1 reaches 77,200 (K=10) and 98,200 (K=20); anything shorter turns an
+    honest null into the eighth censored boundary. It also matches the wd=1.0
+    aggregation arm's 20,000 rounds and the centralized arm's 100,000 epochs, so
+    all four wd levels are read at one budget.
+
+    The comparison set this completes -- setup B, alpha=0.30, iid, E=5, 3 seeds,
+    median t_memo / t_first_cross:
+
+        wd    centralized        K=10                    K=20
+        1.0   150 / 45,050       4,800-8,000 / 3/3       6,100-12,300 / 3/3
+        0.1   150 / 4,350        1,300-1,400 / 3/3       3,500-4,100 / 3/3
+        0.0   200 / never        THIS                    THIS
+
+    NOT a new setup and not a working-point change: B's published config stays
+    wd=1.0 (13.5), and new transformer work runs at 0.1 (the 2026-08-20 standing
+    decision). This is a mechanism control, tagged tier X like the other ones.
+    """
+    base = {**SETUP_B, "weight_decay": 0.0, "alpha": 0.30}
+    tags = {"tier": "X", "group": "b_wd_zero", "experiment": "control",
+            "setup": "B"}
+
+    # The ceiling. Already banked in x_controls -- reproduced here so the
+    # manifest declares the whole comparison; identical spec, identical content
+    # hash, so the launcher skips it and it costs nothing.
+    specs = expand_grid(
+        {"mode": "centralized", **base, "epochs": 100_000, "log_every": 200},
+        {"seed": SEEDS3},
+        tags=tags,
+    )
+
+    # The federated arm. K=10 and K=20 are where the wd ladder above is complete.
+    specs += expand_grid(
+        {"mode": "federated", **base, "local_epochs": 5, "partition": "iid",
+         "strategy": "fedavg", "fraction_train": 1.0,
+         "num_rounds": 20_000, "eval_every": FL_EVAL_EVERY},
+        {"num_clients": [10, 20], "seed": SEEDS3},
+        tags=tags,
+    )
+    return specs
+
+
+def x_b_wd_zero_alpha():
+    """Is there ANY alpha at which setup B groks with no weight decay at all?
+
+    WHY BUDGET CANNOT ANSWER IT. B's centralized decay band at alpha=0.30 fits
+    t_first_cross ~ 4,500 / wd almost exactly -- 4,350 / 18,100 / 45,050
+    measured at wd 1.0 / 0.3 / 0.1 against 4,500 / 15,000 / 45,000 predicted.
+    Two things follow. The wd=0.03 and wd=0.01 cells of `p1_b_decay_band` were
+    given 50,000 steps against a predicted 150,000 and 450,000, so they are
+    CENSORED rather than decided and 13.5's "sharp threshold below wd=0.1" is a
+    clock artifact. And the law has no finite value at wd=0: raising the budget
+    is not a route, which is why the wd=0 control sat at 2.5-5.9% test after
+    100,000 centralized epochs and was still creeping at +0.001 to +0.058 points
+    per 1,000 steps.
+
+    WHY ALPHA IS THE KNOB THAT CAN. B's low-decay alpha ladder at wd=0.1
+    (60,000 epochs, 3 seeds, 3/3 everywhere, t_memo=150 throughout):
+
+        alpha        0.3      0.4      0.5     0.6     0.7
+        t_fc      45,050   15,500    7,050   3,150   1,550
+
+    alpha 0.3 -> 0.7 buys 29x; dropping wd 1.0 -> 0.1 costs 10x. So alpha more
+    than compensates for a decade of decay, and by alpha=0.7 the whole delay is
+    ~1,400 steps over t_memo. That is the regime where the memorising and the
+    generalising solution have nearly converged -- 70% of the grid makes the
+    held-out pairs close to interpolation -- and it is the plausible place for
+    generalisation to happen with nothing driving it. No one has measured it:
+    every wd=0 run in the project is at alpha=0.30 (B) or 0.40 (C).
+
+    > DECISION RULE. Report the LOWEST alpha that groks 3/3, not the highest.
+    > 13.3 records that A' has no usable federated working point above
+    > alpha=0.20 because "there is no delay left for federation to disrupt", and
+    > the same trap applies here: a federated K effect needs a delay to act on,
+    > so the useful rung is the marginal one. If NO rung groks, alpha is not the
+    > knob and the next candidate is init_scale < 1 (Omnigrok's norm-travel
+    > story, decay's mechanism without decay) -- which is NOT currently wired
+    > into the transformer, only into `models/mlp.py`.
+
+    BUDGET 100,000 epochs, 1.67x the wd=0.1 ladder it is read against. Compare
+    on t_first_cross, which 14.4 establishes as the statistic that survives a
+    budget difference; t_grok does not. log_every=50 matches the wd=0.1 ladder
+    so the two are read at one logging rate as well.
+
+    alpha=0.30 is not a rung: it is banked (group `wd_zero`, 100,000 epochs,
+    0/3, final test 2.5-5.9%) and is the ladder's negative anchor.
+    """
+    return expand_grid(
+        {"mode": "centralized", **SETUP_B, "weight_decay": 0.0,
+         "epochs": 100_000, "log_every": 50},
+        {"alpha": [0.4, 0.5, 0.6, 0.7, 0.8], "seed": SEEDS3},
+        tags={"tier": "X", "group": "b_wd_zero_alpha", "experiment": "control",
+              "setup": "B"},
+    )
+
+
+def x_b_wd_zero_a04_long():
+    """The low-alpha anchor for the wd=0 budget curve. One rung, ten times the budget.
+
+    `x_b_wd_zero_alpha` established that setup B groks with NO weight decay from
+    alpha=0.60, and that the rungs below it are censored rather than decided --
+    every cell at alpha>=0.5 was still climbing at the 100,000-epoch ceiling.
+    That leaves the curve anchored at only two usable points, because alpha=0.80
+    has no delay left to measure:
+
+        alpha            0.6        0.7      0.8
+        delay        95,150     28,850      450   (t_first_cross - t_memo)
+
+    Two points cannot say HOW the requirement diverges as alpha falls, and that
+    divergence is the alpha-direction counterpart to the decay-direction law
+    t_first_cross ~ 4,500/wd that B's decay band already fits. Together they are
+    a two-parameter statement -- data and decay are exchangeable, at a rate this
+    project can measure -- which is worth more than either alone.
+
+    ALPHA=0.40 AND NOT 0.30. Both were considered at long budgets. At alpha=0.30
+    all three banked seeds extrapolate to 1.65M / 4.4M / 88M steps and none is
+    accelerating, so 1,000,000 buys three more censored cells. At alpha=0.40 one
+    seed is unambiguously mid-transition -- seed 123's quarterly slope runs
+    +0.096 -> +0.297 -> +0.365 accuracy points per 1,000 steps -- and
+    extrapolates to ~283,000.
+
+    > EXPECTED: 1/3 or 2/3, NOT 3/3, and that is the honest prior rather than a
+    > disappointment. Seed 123 (~283,000) is safe; seed 42 (~834,000, slopes
+    > noisy at +0.155 -> +0.058 -> +0.111) is a coin flip; seed 456 is
+    > DECELERATING (+0.116 -> +0.176 -> +0.020, ~4.1M) and will not make it.
+    > Read the result as a point on the budget-vs-alpha curve, not as "alpha=0.40
+    > groks" -- the fraction is the wrong headline for a cell chosen because it
+    > straddles the transition.
+
+    NOT A FEDERATED WORKING POINT, and not intended as one. A centralized
+    requirement near 300,000 steps puts the matching federated arm at ~86
+    slot-hours across K=10 and K=20 on measured rates, before federation's own
+    added delay. The federated wd=0 arm belongs at alpha=0.60-0.70. This manifest
+    buys a curve, not a working point.
+
+    log_every=50 matches `x_b_wd_zero_alpha` exactly. 14.4 is the reason: a
+    t_first_cross is quantised by the logging rate, so a rung read at a different
+    rate is not on the same curve as the others. It costs 20,000 evaluations
+    rather than 2,000, and the ~8.8 h/run estimate already includes them.
+
+    Cost: 3 runs, ~8.8 h each, ~26.5 slot-hours, ~9 h wall at --per-gpu 4.
+    These are new run ids -- `epochs` is inside the content hash, so the banked
+    100,000-epoch cells cannot be extended and are re-run from scratch.
+    """
+    return expand_grid(
+        {"mode": "centralized", **SETUP_B, "weight_decay": 0.0, "alpha": 0.40,
+         "epochs": 1_000_000, "log_every": 50},
+        {"seed": SEEDS3},
+        tags={"tier": "X", "group": "b_wd_zero_a04_long", "experiment": "control",
+              "setup": "B"},
+    )
+
+
 BUILDERS = {
+    "x_b_wd_zero_a04_long": x_b_wd_zero_a04_long,
+    "x_b_wd_zero_alpha": x_b_wd_zero_alpha,
+    "x_b_wd_zero_fl": x_b_wd_zero_fl,
     "p1_d_gd_probe": p1_d_gd_probe,
     "p1_cd_decay_band": p1_cd_decay_band,
     "p1_b_decay_band": p1_b_decay_band,
